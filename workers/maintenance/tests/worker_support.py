@@ -42,11 +42,13 @@ def request() -> RequestContext:
     )
 
 
-async def sign_in(container: WorkerContainer) -> OpContext:
-    """A session in a seeded org. The worker signs nobody in, so the sign-in
-    runs through a manager over the same storage with the local sign-in on."""
+async def sign_in(container: WorkerContainer, slug: str = "acme") -> OpContext:
+    """A session in a seeded org, `acme` unless named, whose owner is
+    `ann@<slug>.test`. The worker signs nobody in, so the sign-in runs
+    through a manager over the same storage with the local sign-in on."""
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    email = "ann@example.test" if slug == "acme" else f"ann@{slug}.test"
+    _, org = await tenancy.bootstrap(request(), slug.title(), slug, email, "Ann")
     signing = TenancyManagerImpl(
         container.storage.get_tenancy_storage(),
         container.managers.outbox,
@@ -55,7 +57,7 @@ async def sign_in(container: WorkerContainer) -> OpContext:
         identity_provider=IdentityProviderAbsentImpl(),
         entitlements=container.managers.billing,
     )
-    login = await signing.dev_sign_in(request(), "ann@example.test")
+    login = await signing.dev_sign_in(request(), email)
     identity = await tenancy.authenticate_login(request(), login.token)
     issued = await tenancy.exchange_login(identity, org.id)
     return await tenancy.authenticate(request(), issued.token)

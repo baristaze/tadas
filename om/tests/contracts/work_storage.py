@@ -21,7 +21,6 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "create_item",
         "read_item",
         "read_item_by_key",
-        "requeue_stale",
         "write_item_if_held",
     }
 )
@@ -46,6 +45,14 @@ def make_item(*, lane: str = "default", available_in: timedelta = timedelta(0)) 
         lane=lane,
         available_at=now + available_in,
     )
+
+
+async def drain_expired(storage: WorkStorageInterface) -> None:
+    """Moves every lease that has expired so far, whoever holds it: the
+    requeue reaches every tenant, and a suite over one database shares it
+    with the cases that ran before."""
+    while await storage.requeue_stale(utcnow(), timedelta(0), limit=1000):
+        pass
 
 
 class WorkStorageContract:
@@ -120,18 +127,24 @@ class WorkStorageContract:
         assert claimed is not None and claimed[1].id == max(first.id, second.id)
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE) is None
 
-    async def test_requeue_stale_is_per_tenant_conditional_and_staggered(
+    async def test_requeue_stale_reaches_every_tenant_conditional_and_staggered(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
+        # One call across tenants. Each tenant's items are staggered by their
+        # position among that tenant's own, as they were when the sweep ran
+        # per tenant, so a tenant's recovered items do not all return at once
+        # and one tenant's backlog does not push another's back.
+        await drain_expired(storage)
         org_a, org_b = new_id(), new_id()
-        stale = [make_item(lane=lane) for _ in range(3)]
-        stale[1] = stale[1].model_copy(update={"max_attempts": 1})
-        for item in stale:
+        stale_a = [make_item(lane=lane) for _ in range(3)]
+        stale_a[1] = stale_a[1].model_copy(update={"max_attempts": 1})
+        stale_b = [make_item(lane=lane) for _ in range(2)]
+        for item in stale_a:
             await storage.create_item(org_a, item)
-        elsewhere = make_item(lane=lane)
-        await storage.create_item(org_b, elsewhere)
+        for item in stale_b:
+            await storage.create_item(org_b, item)
         expired = timedelta(seconds=-1)
-        for _ in range(4):
+        for _ in range(5):
             assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", expired) is not None
         live = make_item(lane=lane)
         await storage.create_item(org_a, live)
@@ -139,50 +152,84 @@ class WorkStorageContract:
 
         now = utcnow()
         stagger = timedelta(seconds=5)
-        changed = await storage.requeue_stale(org_a, now, stagger, limit=10)
-        assert [item.id for item in changed] == sorted(item.id for item in stale)
-        for position, item in enumerate(changed):
-            assert item.claimed_by is None and item.lease_expires_at is None
-            assert item.claim_token is None
-            assert item.last_error == "lease expired" and item.updated_at == now
-            assert item.updated_by == EMPTY_UUID, "the requeue is the platform's write"
-            if item.max_attempts == 1:
-                assert item.status is WorkStatus.FAILED
-            else:
-                assert item.status is WorkStatus.QUEUED
-                assert item.available_at == now + stagger * position
-            assert await storage.read_item(org_a, item.id) == item
+        changed = await storage.requeue_stale(now, stagger, limit=10)
+        assert [item.id for _, item in changed] == sorted(i.id for i in stale_a + stale_b)
+        for org, mine in ((org_a, stale_a), (org_b, stale_b)):
+            theirs = [item for owner, item in changed if owner == org]
+            assert [item.id for item in theirs] == sorted(item.id for item in mine)
+            for position, item in enumerate(theirs):
+                assert item.claimed_by is None and item.lease_expires_at is None
+                assert item.claim_token is None
+                assert item.last_error == "lease expired" and item.updated_at == now
+                assert item.updated_by == EMPTY_UUID, "the requeue is the platform's write"
+                if item.max_attempts == 1:
+                    assert item.status is WorkStatus.FAILED
+                else:
+                    assert item.status is WorkStatus.QUEUED
+                    assert item.available_at == now + stagger * position
+                assert await storage.read_item(org, item.id) == item
         held = await storage.read_item(org_a, live.id)
         assert held is not None and held.status is WorkStatus.CLAIMED
-        other = await storage.read_item(org_b, elsewhere.id)
-        assert other is not None and other.status is WorkStatus.CLAIMED
-        assert await storage.requeue_stale(org_a, utcnow(), stagger, limit=10) == []
+        assert await storage.requeue_stale(utcnow(), stagger, limit=10) == []
 
     async def test_requeue_stale_takes_a_batch_and_leaves_the_rest_for_the_next(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
-        # The bound is in the statement: the first `limit` stale items by id
-        # move, staggered from zero, and the next call moves the rest.
-        org = new_id()
-        items = [make_item(lane=lane) for _ in range(5)]
-        for item in items:
+        # The bound is in the statement: the first `limit` expired items by
+        # id, whatever their tenant, move, each tenant's staggered from zero,
+        # and the next call moves the rest.
+        await drain_expired(storage)
+        org_a, org_b = new_id(), new_id()
+        owners = [org_a, org_b, org_a, org_b, org_a]
+        items = [make_item(lane=lane) for _ in owners]
+        for org, item in zip(owners, items, strict=True):
             await storage.create_item(org, item)
         for _ in items:
             expired = timedelta(seconds=-1)
             assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", expired) is not None
-        ids = sorted(item.id for item in items)
+        # Ids are minted in order, so the items' order is the creation order.
+        assert [item.id for item in items] == sorted(item.id for item in items)
         now = utcnow()
         stagger = timedelta(seconds=5)
-        first = await storage.requeue_stale(org, now, stagger, limit=2)
-        assert [item.id for item in first] == ids[:2]
-        assert [item.available_at for item in first] == [now, now + stagger]
-        for item_id in ids[2:]:
-            left = await storage.read_item(org, item_id)
+        first = await storage.requeue_stale(now, stagger, limit=3)
+        assert [(org, item.id) for org, item in first] == [
+            (org, item.id) for org, item in zip(owners[:3], items[:3], strict=True)
+        ]
+        assert [item.available_at for _, item in first] == [now, now, now + stagger]
+        for org, item in zip(owners[3:], items[3:], strict=True):
+            left = await storage.read_item(org, item.id)
             assert left is not None and left.status is WorkStatus.CLAIMED
-        rest = await storage.requeue_stale(org, now, stagger, limit=10)
-        assert [item.id for item in rest] == ids[2:]
-        assert [item.available_at for item in rest] == [now + stagger * i for i in range(3)]
-        assert await storage.requeue_stale(org, now, stagger, limit=10) == []
+        rest = await storage.requeue_stale(now, stagger, limit=10)
+        assert [(org, item.id) for org, item in rest] == [
+            (org, item.id) for org, item in zip(owners[3:], items[3:], strict=True)
+        ]
+        assert [item.available_at for _, item in rest] == [now, now]
+        assert await storage.requeue_stale(now, stagger, limit=10) == []
+
+    async def test_requeue_stale_leaves_a_renewed_lease_and_fences_the_old_holder(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        # The statement re-checks the lease it moves: a lease renewed before
+        # the requeue stays with its holder. One it moved refuses the holder
+        # it had, whose token is gone from the row.
+        await drain_expired(storage)
+        org = new_id()
+        renewed, lost = make_item(lane=lane), make_item(lane=lane)
+        for item in (renewed, lost):
+            await storage.create_item(org, item)
+        expired = timedelta(seconds=-1)
+        first = await storage.claim_next(lane, [WorkKind.NOOP], "w1", expired)
+        second = await storage.claim_next(lane, [WorkKind.NOOP], "w2", expired)
+        assert first is not None and second is not None
+        kept, gone = first[1], second[1]
+        assert kept.claim_token is not None and gone.claim_token is not None
+        extended = kept.model_copy(update={"lease_expires_at": utcnow() + LEASE})
+        assert await storage.write_item_if_held(org, kept.claim_token, extended) == extended
+        moved = await storage.requeue_stale(utcnow(), timedelta(0), limit=10)
+        assert [(owner, item.id) for owner, item in moved] == [(org, gone.id)]
+        done = gone.model_copy(update={"status": WorkStatus.DONE, "claim_token": None})
+        assert await storage.write_item_if_held(org, gone.claim_token, done) is None
+        assert await storage.read_item(org, kept.id) == extended
 
     async def test_write_if_held_is_conditional_on_the_claim_token(
         self, storage: WorkStorageInterface, lane: str
@@ -220,7 +267,7 @@ class WorkStorageContract:
         assert first is not None
         stale = first[1]
         assert stale.claim_token is not None
-        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0), limit=10)) == 1
+        await drain_expired(storage)
         second = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert second is not None
         fresh = second[1]

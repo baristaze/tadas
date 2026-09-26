@@ -117,8 +117,8 @@ class LeaseLosingWork(WorkManagerInterface):
         self.renewals += 1
         raise LeaseLost("held elsewhere")
 
-    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
-        return await self._inner.requeue_stale(ctx, limit)
+    async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
+        return await self._inner.requeue_stale(rctx, limit)
 
     async def purge_items(self) -> int:
         return await self._inner.purge_items()
@@ -547,26 +547,36 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
 
 
 class RequeueRecordingWork(LeaseLosingWork):
-    """Decorates the real manager: records the batch size every sweep passes."""
+    """Decorates the real manager: records the batch size every requeue
+    passes and how many items each call moved."""
 
     def __init__(self, inner: WorkManagerInterface) -> None:
         super().__init__(inner)
         self.requeue_limits: list[int] = []
+        self.requeued: list[int] = []
 
     async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
         return await self._inner.extend_lease(ctx, item, lease)
 
-    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
+    async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
         self.requeue_limits.append(limit)
-        return await self._inner.requeue_stale(ctx, limit)
+        moved = await self._inner.requeue_stale(rctx, limit)
+        self.requeued.append(moved)
+        return moved
 
 
-async def test_sweep_requeues_a_batch_per_tenant_and_the_rest_next_tick(tmp_path: Path) -> None:
+async def test_one_pass_requeues_every_tenants_expired_leases_a_batch_at_a_time(
+    tmp_path: Path,
+) -> None:
+    # Two tenants' items whose worker is gone. The requeue is one call across
+    # tenants, made again while its batch comes back full, so the first pass
+    # moves all three, a batch of one at a time, and the loop runs them.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    items = [make_item(ctx) for _ in range(3)]
-    for item in items:
-        await container.managers.work.enqueue(ctx, item)
+    other = await sign_in(container, "beta")
+    items = [make_item(ctx), make_item(other), make_item(ctx)]
+    for owner, item in zip((ctx, other, ctx), items, strict=True):
+        await container.managers.work.enqueue(owner, item)
         lost = await container.managers.work.claim(
             request(), "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
         )
@@ -577,7 +587,7 @@ async def test_sweep_requeues_a_batch_per_tenant_and_the_rest_next_tick(tmp_path
     await until(lambda: sorted(h.id for h in handler.handled) == sorted(i.id for i in items))
     loop.stop()
     await task
-    assert loop.sweeps >= 3, "one stale item per sweep, so three sweeps at least"
+    assert work.requeued[:4] == [1, 1, 1, 0], "the first pass took all three, one by one"
     assert set(work.requeue_limits) == {1}
 
 
@@ -687,14 +697,12 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
     assert held is not None and held.status is WorkStatus.CLAIMED
     # The sweep deems the lease expired (its clock runs an hour ahead) and
     # hands the item back before this worker's handler finishes.
-    requeued = await storage.requeue_stale(
-        ctx.org_id, utcnow() + timedelta(hours=1), timedelta(0), limit=10
-    )
-    assert [r.id for r in requeued] == [item.id]
+    requeued = await storage.requeue_stale(utcnow() + timedelta(hours=1), timedelta(0), limit=10)
+    assert [(org_id, r.id) for org_id, r in requeued] == [(ctx.org_id, item.id)]
     await until(lambda: len(handler.finished) == 1)
     await until(lambda: loop.running == 0)
     stored = await storage.read_item(ctx.org_id, item.id)
-    assert stored == requeued[0], "complete() saw the lease was lost and wrote nothing"
+    assert stored == requeued[0][1], "complete() saw the lease was lost and wrote nothing"
     loop.stop()
     await task
 

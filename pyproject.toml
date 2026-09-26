@@ -134,6 +134,7 @@ tenantless = [
     "TenancyStorageInterface.write_totp_secret",
     "WorkStorageInterface.claim_next",
     "WorkStorageInterface.purge_items",
+    "WorkStorageInterface.requeue_stale",
 ]
 
 # The sites that build a stage above the request stage, the same list

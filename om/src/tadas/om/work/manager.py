@@ -89,11 +89,15 @@ class WorkManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
-        """The sweep, for one tenant: returns up to `limit` items whose lease
-        expired to the queue, or fails them when their attempts are spent;
-        returns how many it moved. `limit` is the sweep's batch size; what is
-        left over waits for the next sweep."""
+    async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
+        """Platform-internal: the sweep, across tenants, like the claim: returns
+        up to `limit` items whose lease expired to the queue, or fails them
+        when their attempts are spent; returns how many it moved. `limit` is
+        the batch; the sweep calls again while a batch comes back full. A
+        failed item is a dead letter, as `fail` makes one, and its audit event
+        is written under the service context of its tenant, minted from
+        `rctx`; a tenant that is gone gets the log line and the counter
+        only, as the claim's orphan does."""
         ...
 
     @abstractmethod

@@ -3,9 +3,9 @@ on the lane while a slot is free, run each item as a task that names the
 request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
-effort, sweep on a timer (stale leases, every namespace's purge, and the
-standing chores per tenant, then the outbox and done outbox rows, within a
-time budget), and drain first on stop."""
+effort, sweep on a timer (the expired leases across tenants, then every
+namespace's purge and the standing chores per tenant, then the outbox and
+done outbox rows, within a time budget), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -62,7 +62,9 @@ class LoopOptions(Platform):
     sweep_interval: timedelta = timedelta(seconds=30)
     poll_interval: timedelta = timedelta(seconds=5)
     outbox_batch: int = 100  # pending rows relayed per sweep
-    requeue_batch: int = 100  # stale work items requeued per tenant per sweep
+    # Expired leases one requeue statement moves, across tenants; it is
+    # called again while its batch comes back full and the budget lasts.
+    requeue_batch: int = 100
     # Done rows are purged after this. It outlives the database backup retention
     # (`backup_retention_days` in the database module), so a role restored to an
     # earlier point than its siblings is reconciled by relaying the outbox again.
@@ -397,23 +399,36 @@ class WorkerLoop:
             await asyncio.sleep(self._options.sweep_interval.total_seconds())
 
     async def _sweep_once(self) -> None:
-        """One service context per tenant, the system scope first and deleted
-        tenants included (their purges run there), then every step under each;
-        then the cross-tenant steps of the outbox and the queue. Every step is
-        idempotent and wrapped, so a failing tenant or step never stops the
-        rest.
+        """First the expired leases go back to the queue, across tenants.
+        Then one service context per tenant, the system scope first and
+        deleted tenants included (their purges run there), and every step
+        under each; then the cross-tenant steps of the outbox and the queue.
+        Every step is idempotent and wrapped, so a failing tenant or step
+        never stops the rest.
 
-        The pass has a budget. It takes no new tenant once the budget is
-        spent, and the next pass starts at the tenant this one stopped at, so
-        every tenant is reached in turn however many there are. A tenant it
-        takes runs every step at least once; a step whose batch came back
-        full runs again, in turn with the others, while the budget lasts. The
-        cross-tenant steps run on every pass."""
+        The pass has a budget. The requeue runs on every pass, again while
+        its batch comes back full and the budget lasts, so a crashed
+        worker's item waits one pass at most. The pass takes no new tenant once the
+        budget is spent, but always takes one, and the next pass starts at
+        the tenant this one stopped at, so every tenant is reached in turn
+        however many there are. A tenant it takes runs every step at least
+        once; a step whose batch came back full runs again, in turn with the
+        others, while the budget lasts. The cross-tenant purges run on every
+        pass."""
         clock = asyncio.get_running_loop().time
         started = clock()
         deadline = started + self._options.sweep_budget.total_seconds()
+        rctx = self._request()
         try:
-            contexts = await self._work.maintenance_contexts(self._request())
+            await self._while_full(
+                lambda: self._work.requeue_stale(rctx, self._options.requeue_batch),
+                self._options.requeue_batch,
+                deadline,
+            )
+        except Exception:
+            log.exception("sweep: requeue_stale failed")
+        try:
+            contexts = await self._work.maintenance_contexts(rctx)
         except Exception:
             log.exception("sweep: maintenance_contexts failed")
             contexts = []
@@ -432,16 +447,19 @@ class WorkerLoop:
         except Exception:
             log.exception("sweep: outbox relay failed")
         try:
-            await self._purge_across(
+            await self._while_full(
                 lambda: self._outbox.purge_done(
                     self._options.outbox_retention, self._options.purge_batch
                 ),
+                self._options.purge_batch,
                 deadline,
             )
         except Exception:
             log.exception("sweep: outbox purge failed")
         try:
-            purged = await self._purge_across(self._work.purge_items, deadline)
+            purged = await self._while_full(
+                self._work.purge_items, self._options.purge_batch, deadline
+            )
             if purged:
                 log.info("sweep: purged %d settled work items", purged)
         except Exception:
@@ -483,11 +501,6 @@ class WorkerLoop:
         which nothing was left anywhere is marked purged, and the sweep leaves
         it out from then on."""
         settled = True
-        try:
-            settled = await self._work.requeue_stale(ctx, self._options.requeue_batch) == 0
-        except Exception:
-            settled = False
-            log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
         full: list[tuple[str, PurgeStep]] = []
         for name, purge in self._purges.items():
             purged = await self._purge(ctx, name, purge)
@@ -528,15 +541,16 @@ class WorkerLoop:
             log.info("sweep: purged %d %s rows in org %s", purged, name, ctx.org_id)
         return purged
 
-    async def _purge_across(self, step: Callable[[], Awaitable[int]], deadline: float) -> int:
-        """A cross-tenant purge, called again while its batch comes back full
-        and the budget lasts; returns how many rows went in all."""
+    @staticmethod
+    async def _while_full(step: Callable[[], Awaitable[int]], batch: int, deadline: float) -> int:
+        """A cross-tenant step, called again while its batch comes back full
+        and the budget lasts; returns how many rows it moved in all."""
         clock = asyncio.get_running_loop().time
-        purged = await step()
-        total = purged
-        while purged >= self._options.purge_batch and clock() < deadline:
-            purged = await step()
-            total += purged
+        moved = await step()
+        total = moved
+        while moved >= batch and clock() < deadline:
+            moved = await step()
+            total += moved
         return total
 
     # Shutdown.

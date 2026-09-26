@@ -6,6 +6,7 @@ import pytest
 from contracts.work_storage import make_item
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
@@ -209,7 +210,7 @@ async def test_the_same_worker_re_claiming_after_a_requeue_refuses_its_stale_cop
     )
     assert first is not None
     stale_ctx, stale = first
-    assert await managers.work.requeue_stale(ctx, limit=100) == 1
+    assert await managers.work.requeue_stale(request(), limit=100) == 1
     second = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert second is not None
     fresh_ctx, fresh = second
@@ -237,7 +238,7 @@ async def test_transitions_refuse_a_lost_lease_and_a_missing_item(
     )
     assert claimed is not None
     work_ctx, held = claimed
-    assert await managers.work.requeue_stale(ctx, limit=100) == 1
+    assert await managers.work.requeue_stale(request(), limit=100) == 1
 
     with pytest.raises(LeaseLost):
         await managers.work.complete(work_ctx, held)
@@ -261,37 +262,93 @@ async def test_transitions_refuse_a_lost_lease_and_a_missing_item(
     assert done.status is WorkStatus.DONE
 
 
-async def test_requeue_stale_runs_per_tenant_under_a_maintenance_context(
-    managers: Managers, ctx: OpContext
+async def second_tenant(managers: Managers) -> OpContext:
+    """Bob's context in a second team org, Beta."""
+    tenancy = managers.tenancy
+    _, beta = await tenancy.bootstrap(request(APP), "Beta", "beta", "bob@example.test", "Bob")
+    login = await tenancy.dev_sign_in(request(APP), "bob@example.test")
+    identity = await tenancy.authenticate_login(request(APP), login.token)
+    issued = await tenancy.exchange_login(identity, beta.id)
+    return await tenancy.authenticate(request(APP), issued.token)
+
+
+async def test_requeue_stale_runs_once_across_tenants_and_dead_letters_in_each(
+    managers: Managers, infra: InfraLocalImpl, ctx: OpContext
 ) -> None:
-    await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
+    # One call reaches every tenant's expired leases, a batch at a time. An
+    # item whose attempts are spent is a dead letter, and its audit event
+    # lands in its own tenant's stream under the service role, as `fail`
+    # writes one; the other tenant's stream is untouched.
+    seen: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    bob = await second_tenant(managers)
+    retried = make_item().model_copy(update={"created_by": ctx.user_id})
     exhausted = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 1})
+    bobs = make_item().model_copy(update={"created_by": bob.user_id})
+    await managers.work.enqueue(ctx, retried)
     await managers.work.enqueue(ctx, exhausted)
+    await managers.work.enqueue(bob, bobs)
     expired = timedelta(seconds=-1)
-    assert (
-        await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", expired) is not None
-    )
-    assert (
-        await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", expired) is not None
-    )
+    for _ in range(3):
+        claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", expired)
+        assert claimed is not None
 
-    contexts = await managers.work.maintenance_contexts(request())
-    # The system scope, the tenant, and its owner's personal org.
-    assert [c.org_id for c in contexts][:1] == [EMPTY_UUID] and len(contexts) == 3
-    assert ctx.org_id in [c.org_id for c in contexts]
-    assert all(c.security.role is Role.SERVICE for c in contexts)
-    assert await managers.work.requeue_stale(contexts[0], limit=100) == 0, (
-        "nothing queued under the system"
-    )
-    tenant = next(c for c in contexts if c.org_id == ctx.org_id)
-    # The sweep's batch bounds one pass; the next pass takes the rest.
-    assert await managers.work.requeue_stale(tenant, limit=1) == 1
-    assert await managers.work.requeue_stale(tenant, limit=1) == 1
-    assert await managers.work.requeue_stale(tenant, limit=100) == 0
+    # The batch bounds one call; the next call takes the rest.
+    assert await managers.work.requeue_stale(request(), limit=2) == 2
+    assert await managers.work.requeue_stale(request(), limit=2) == 1
+    assert await managers.work.requeue_stale(request(), limit=2) == 0
 
-    again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
-    assert again is not None and again[1].attempts == 2 and again[1].id != exhausted.id
+    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [(e.kind, e.target_id, e.payload["last_error"]) for e in events] == [
+        (DEAD_LETTER_KIND, exhausted.id, "lease expired")
+    ]
+    assert events[0].actor_id == EMPTY_UUID, "the sweep's service context, the system user"
+    assert [(p.org_id, p.kind) for p in seen if isinstance(p, EntityChangedPayload)] == [
+        (ctx.org_id, DEAD_LETTER_KIND)
+    ]
+    assert await managers.events.get_events(bob, after_seq=0, limit=10) == []
+    ids = set()
+    for _ in range(2):
+        again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
+        assert again is not None and again[1].attempts == 2
+        ids.add(again[1].id)
+    assert ids == {retried.id, bobs.id}
     assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE) is None
+
+
+async def test_a_dead_letter_in_a_gone_tenant_is_counted_without_an_event(
+    managers: Managers, storage: StorageMemoryImpl, ctx: OpContext
+) -> None:
+    # A tenant that is gone has no stream to write into, as the claim's
+    # orphan says: the requeue fails the item and counts it, and the other
+    # tenants' items still move.
+    bob = await second_tenant(managers)
+    doomed = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 1})
+    bobs = make_item().model_copy(update={"created_by": bob.user_id})
+    await managers.work.enqueue(ctx, doomed)
+    await managers.work.enqueue(bob, bobs)
+    expired = timedelta(seconds=-1)
+    for _ in range(2):
+        claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", expired)
+        assert claimed is not None
+    org = await storage.get_tenancy_storage().read_org(ctx.org_id)
+    assert org is not None
+    await storage.get_tenancy_storage().write_org(
+        ctx.org_id, org.model_copy(update={"deleted_at": utcnow(), "deleted_by": ctx.user_id})
+    )
+
+    counted = OUTCOMES.labels(subsystem="work", outcome="dead_letter")._value.get()
+    assert await managers.work.requeue_stale(request(), limit=100) == 2
+    assert OUTCOMES.labels(subsystem="work", outcome="dead_letter")._value.get() == counted + 1
+    failed = await storage.get_work_storage().read_item(ctx.org_id, doomed.id)
+    assert failed is not None and failed.status is WorkStatus.FAILED
+    assert await storage.get_event_storage().read_after(ctx.org_id, 0, 10) == []
+    moved = await storage.get_work_storage().read_item(bob.org_id, bobs.id)
+    assert moved is not None and moved.status is WorkStatus.QUEUED
 
 
 async def test_enqueue_stamps_the_actor_and_clears_the_claim_whatever_the_caller_sent(
@@ -525,9 +582,7 @@ async def test_every_write_after_the_enqueue_is_the_platforms(
 
     expired = timedelta(seconds=-1)
     assert await managers.work.claim(request(), "stale", [WorkKind.NOOP], "w1", expired) is not None
-    assert await managers.work.requeue_stale(ctx, limit=100) == 1, (
-        "the sweep runs under a person here"
-    )
+    assert await managers.work.requeue_stale(request(), limit=100) == 1
     requeued = await storage.get_work_storage().read_item(ctx.org_id, items["stale"].id)
     assert requeued is not None and requeued.updated_by == EMPTY_UUID
 
