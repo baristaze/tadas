@@ -4,6 +4,7 @@ any order; a cancellation that holds the plan to its period's end; a
 per-seat subscription that follows the members; an operator's grant; and
 the levers of the tasks and tenancy managers that read the plan."""
 
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -11,8 +12,10 @@ from uuid import UUID
 import pytest
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
-from tadas.infra.cache import CacheScope
+from tadas.infra.cache import CacheInterface, CacheScope
+from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.infra.impl.valkey import ValkeyConnection
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.payments.deliveries import sign
@@ -20,7 +23,8 @@ from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinIm
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions
 from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
-from tadas.om.billing.types.account import SubscriptionStatus
+from tadas.om.billing.types.account import BillingAccount, SubscriptionStatus
+from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
 from tadas.om.exceptions import (
     InvalidCredential,
@@ -62,9 +66,10 @@ class World:
         self.storage = StorageMemoryImpl()
         self.twin = PaymentsTwinImpl(environment="test")
         self.now = utcnow()
+        self.infra = InfraLocalImpl(tmp_path)
         self.managers: Managers = build_managers(
             self.storage,
-            InfraLocalImpl(tmp_path),
+            self.infra,
             TenancyOptions(totp_encryption_key=TOTP_KEY, dev_sign_in=True),
             integrations=IntegrationsOverImpl(IdentityProviderAbsentImpl(), self.twin),
         )
@@ -73,6 +78,7 @@ class World:
             self.twin,
             self.managers.outbox,
             lambda: self.managers.tenancy,
+            self.infra.get_cache(CacheScope.BILLING_ACCOUNT),
             BillingOptions(),
             clock=lambda: self.now,
         )
@@ -481,7 +487,10 @@ class Plane:
             billing=storage.get_billing_storage(),
         )
         self.billing = BillingOperatorManagerImpl(
-            storage.get_billing_storage(), storage.get_tenancy_storage(), world.managers.outbox
+            storage.get_billing_storage(),
+            storage.get_tenancy_storage(),
+            world.managers.outbox,
+            world.infra.get_cache(CacheScope.BILLING_ACCOUNT),
         )
 
     async def admit(self, role: OperatorRole, email: str) -> OperatorContext:
@@ -583,3 +592,164 @@ async def test_the_seed_grants_its_own_team_a_plan_and_a_tenants_credential_cann
     with pytest.raises(NotAuthorized):
         await world.billing.grant_seeded_plan(owner, Plan.MAX)
     assert (await world.billing.get_billing(owner)).plan is Plan.TEAM
+
+
+# The cached account (ADR 0066).
+
+
+class Reads:
+    """Counts the account reads that reach storage."""
+
+    def __init__(self, world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.count = 0
+        storage = world.storage.get_billing_storage()
+        read = storage.read_account
+
+        async def counted(org_id: UUID) -> BillingAccount | None:
+            self.count += 1
+            return await read(org_id)
+
+        monkeypatch.setattr(storage, "read_account", counted)
+
+
+class Unbumped(CacheInterface):
+    """A cache whose every `increment` is lost, as a Valkey unreachable
+    between the commit and the bump leaves it."""
+
+    def __init__(self, inner: CacheInterface) -> None:
+        self._inner = inner
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        return await self._inner.get(org_id, key)
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        await self._inner.put(org_id, key, value, ttl)
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        await self._inner.invalidate(org_id, key)
+
+    async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
+        return 0, ttl
+
+    def describe(self) -> str:
+        return "unbumped"
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+def billing_over(world: World, cache: CacheInterface, ttl: timedelta) -> BillingManagerImpl:
+    return BillingManagerImpl(
+        world.storage.get_billing_storage(),
+        world.twin,
+        world.managers.outbox,
+        lambda: world.managers.tenancy,
+        cache,
+        BillingOptions(account_ttl=ttl),
+        clock=lambda: world.now,
+    )
+
+
+async def test_a_second_read_of_the_plan_is_answered_by_the_cache(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = await world.org("acme")
+    await world.billing.grant_seeded_plan(ctx, Plan.TEAM)
+    reads = Reads(world, monkeypatch)
+    assert (await world.billing.get_billing(ctx)).plan is Plan.TEAM
+    assert (await world.billing.get_entitlements(ctx)).plan is Plan.TEAM
+    assert (await world.billing.get_billing(ctx)).plan is Plan.TEAM
+    assert reads.count == 1
+    other = await world.org("other")
+    assert (await world.billing.get_billing(other)).plan is Plan.FREE, "keyed by org"
+    assert reads.count == 2
+
+
+async def test_every_writer_of_the_account_makes_the_next_read_fresh(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each write is read back right after it, through a cache the read
+    before it filled: the generation the write bumped orphans that entry."""
+    ctx = await world.org("acme")
+    billing = world.billing
+
+    async def plan() -> Billing:
+        cached = await billing.get_billing(ctx)
+        assert await billing.get_billing(ctx) == cached
+        return cached
+
+    assert (await plan()).account is None
+    start = await billing.start_checkout(ctx, Plan.MAX, 2, "Acme", SUCCESS, CANCEL)
+    account = (await plan()).account
+    assert account is not None and account.customer_id is not None, "the customer is made"
+    assert await world.deliver(world.twin.complete_checkout(start.url))
+    assert (await plan()).plan is Plan.MAX, "a delivery"
+    await billing.cancel(ctx)
+    assert (await plan()).ends_at is not None, "a cancellation"
+    await billing.resume(ctx)
+    assert (await plan()).ends_at is None, "a cancellation taken back"
+    await billing.sync_seats(ctx, 12, "item-1-12")
+    account = (await plan()).account
+    assert account is not None and account.quantity == 12, "a seat count"
+    await billing.grant_seeded_plan(ctx, Plan.TEAM)
+    assert (await plan()).comped_plan is Plan.TEAM, "the seed's grant"
+    operator = Plane(world, tmp_path)
+    admin = await operator.admit(OperatorRole.WRITE, "root@example.test")
+    await operator.billing.comp_plan(admin, ctx.org_id, None)
+    assert (await plan()).comped_plan is None, "an operator's grant"
+    await billing.close_account(ctx)
+    assert (await plan()).plan is Plan.FREE, "the account closed at the processor"
+    reads = Reads(world, monkeypatch)
+    await plan()
+    assert reads.count == 0, "and each fresh read is cached again"
+
+
+async def test_a_lost_bump_is_stale_for_the_ttl_and_no_longer(world: World) -> None:
+    ttl = timedelta(milliseconds=100)
+    cache = world.infra.get_cache(CacheScope.BILLING_ACCOUNT)
+    reader = billing_over(world, cache, ttl)
+    writer = billing_over(world, Unbumped(cache), ttl)
+    ctx = await world.org("acme")
+    await writer.grant_seeded_plan(ctx, Plan.PRO)
+    assert (await reader.get_billing(ctx)).plan is Plan.PRO
+    await writer.grant_seeded_plan(ctx, Plan.MAX)
+    assert (await reader.get_billing(ctx)).plan is Plan.PRO, "the bump was lost"
+    await asyncio.sleep(0.15)
+    assert (await reader.get_billing(ctx)).plan is Plan.MAX, "the TTL bounds it"
+
+
+async def test_a_valkey_that_cannot_be_reached_reads_storage(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The connection is closed before the first call, so each call answers
+    at once as a Valkey that cannot be reached does: a miss, a dropped put,
+    and a count of none."""
+    connection = ValkeyConnection("valkey://127.0.0.1:1/0", timedelta(seconds=1))
+    await connection.close()
+    try:
+        down = billing_over(
+            world,
+            CacheValkeyImpl(connection, CacheScope.BILLING_ACCOUNT),
+            timedelta(seconds=60),
+        )
+        ctx = await world.org("acme")
+        await down.grant_seeded_plan(ctx, Plan.TEAM)
+        reads = Reads(world, monkeypatch)
+        assert (await down.get_billing(ctx)).plan is Plan.TEAM
+        assert (await down.get_entitlements(ctx)).plan is Plan.TEAM
+        assert reads.count == 2, "every read a miss, none an error"
+    finally:
+        await connection.close()
+
+
+async def test_the_permission_is_asked_before_the_cache(world: World) -> None:
+    ctx = await world.org("acme")
+    await world.billing.get_billing(ctx)
+    blind = ctx.model_copy(update={"security": ctx.security.model_copy(update={"permissions": ()})})
+    with pytest.raises(NotAuthorized):
+        await world.billing.get_billing(blind)
+    with pytest.raises(NotAuthorized):
+        await world.billing.get_entitlements(blind)

@@ -9,7 +9,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import add_member, build_container, sign_in
+from api_support import account_written, add_member, build_container, sign_in
 
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
@@ -46,6 +46,7 @@ async def regrant(container: AppContainer, org_id: UUID, plan: Plan) -> None:
     account = await storage.read_account(org_id)
     assert account is not None
     await storage.write_account(org_id, account.model_copy(update={"comped_plan": plan}), ())
+    await account_written(container, org_id)
 
 
 async def test_an_invitation_past_the_seats_is_refused_before_anything_is_sent(

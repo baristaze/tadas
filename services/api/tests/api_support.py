@@ -11,9 +11,11 @@ from uuid import UUID
 
 import httpx
 
+from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.root import IntegrationsInterface
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.impl.cache import account_changed
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
@@ -106,6 +108,14 @@ async def on_plan(container: AppContainer, org_id: UUID, plan: Plan) -> None:
         ),
         (),
     )
+    await account_written(container, org_id)
+
+
+async def account_written(container: AppContainer, org_id: UUID) -> None:
+    """What the billing managers do after a write of the account commits: a
+    test that writes the account in storage bumps the org's generation too,
+    or a plan read cached before the write answers until its TTL."""
+    await account_changed(container.infra.get_cache(CacheScope.BILLING_ACCOUNT), org_id)
 
 
 async def sign_in(
