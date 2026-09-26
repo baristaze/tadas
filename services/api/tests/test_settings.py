@@ -79,6 +79,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "realtime_control_buffer_size": "the local size is the size",
     "realtime_recheck_seconds": "the local interval is the interval",
     "realtime_head_max_age_seconds": "the local bound is the bound",
+    "billing_account_cache_seconds": "the local bound is the bound",
     "readiness_timeout_seconds": "shorter than every probe interval the deployment sets",
     "admission_limit_reads": "the local bound is the bound until a replica is measured",
     "admission_limit_writes": "the local bound is the bound until a replica is measured",

@@ -84,7 +84,9 @@ def worker_managers(
         ),
         events_options=events_options(settings),
         billing_options=BillingOptions(
-            retention=timedelta(days=settings.billing_delivery_retention_days), purge_batch=batch
+            retention=timedelta(days=settings.billing_delivery_retention_days),
+            purge_batch=batch,
+            account_ttl=timedelta(seconds=settings.billing_account_cache_seconds),
         ),
         slack_options=SlackOptions(
             retention=timedelta(days=settings.slack_retention_days), purge_batch=batch
