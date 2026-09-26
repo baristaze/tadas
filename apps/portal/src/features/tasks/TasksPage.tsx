@@ -3,6 +3,7 @@ import { useState, type DragEvent } from "react";
 import { AppNav } from "../../app/AppNav";
 import { Banner, Button, Card, LinkButton, Muted, Page, SegmentedControl } from "../../design/kit";
 import { tokens } from "../../design/tokens";
+import { ArchivedTasks } from "./ArchivedTasks";
 import { TaskItem } from "./TaskItem";
 import type { DropSide } from "./tasksModel";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
@@ -163,6 +164,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
           </div>
         ) : null}
       </Card>
+      <ArchivedTasks scope={vm.scope} canWrite={vm.canWrite} />
     </>
   );
 }

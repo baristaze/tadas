@@ -39,7 +39,9 @@ Zustand, one realtime channel.
   `queries/imports.ts`), with no polling: a progress line (created N of M,
   skipped K), and when the import parks on the plan's active tasks, the
   one upgrade dialog and Resume. An import that ended shows what it did
-  until dismissed.
+  until dismissed. Under the done list, "Show archived" opens the done
+  tasks the daily cleanup archived (`ArchivedTasks.tsx`), each with
+  Restore.
 - The app's one retry is the transport client's, and no other layer has
   one: TanStack Query's is off in `src/app/queryClient.ts`, so a failing
   API sees these attempts and no multiple of them. Only a failure that

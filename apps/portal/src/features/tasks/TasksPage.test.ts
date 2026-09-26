@@ -37,6 +37,7 @@ vi.mock("../imports/useImportVm", () => ({ useImportVm: () => imports }));
 vi.mock("../../app/AppNav", () => ({ AppNav: () => null }));
 vi.mock("../billing/PaymentNotice", () => ({ PaymentNotice: () => null }));
 vi.mock("./TaskItem", () => ({ TaskItem: () => null }));
+vi.mock("./ArchivedTasks", () => ({ ArchivedTasks: () => null }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 let root: ReturnType<typeof createRoot>;

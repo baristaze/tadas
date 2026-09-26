@@ -49,6 +49,7 @@ export const keys = {
     all: ["task"] as const,
     open: (scope: string) => ["task", "open", scope] as const,
     done: (scope: string) => ["task", "done", scope] as const,
+    archived: (scope: string) => ["task", "archived", scope] as const,
   },
   // The org's one Slack installation. The server pushes it as
   // `slack.installation.<action>`, so the key starts with the entity name.
