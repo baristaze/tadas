@@ -449,10 +449,13 @@ export function Menu({
 export function MenuItem({
   onSelect,
   disabled,
+  tone = "plain",
   children,
 }: {
   onSelect: () => void;
   disabled?: boolean;
+  /** `danger` is a choice that changes many things at once, in red. */
+  tone?: "plain" | "danger";
   children: ReactNode;
 }) {
   const { close } = useContext(MenuContext);
@@ -462,6 +465,7 @@ export function MenuItem({
       role="menuitem"
       tabIndex={-1}
       disabled={disabled}
+      data-tone={tone === "danger" ? tone : undefined}
       onClick={() => {
         close();
         onSelect();
@@ -522,5 +526,197 @@ export function Caret() {
     <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ flexShrink: 0 }}>
       <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/** Three dots: the mark of a button that opens more actions. */
+export function MoreIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <circle cx="3.5" cy="8" r="1.4" fill="currentColor" />
+      <circle cx="8" cy="8" r="1.4" fill="currentColor" />
+      <circle cx="12.5" cy="8" r="1.4" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** A cross: the mark of a button that closes or clears. */
+export function CloseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A card whose body folds away under its title. The title is a button that
+ * says whether the body is shown (`aria-expanded`), so a click, Enter, or
+ * Space folds and unfolds it; `actions` sit at the other end of the title
+ * row and stay reachable while it is folded. A folded body stays mounted
+ * and hidden, so what it holds is not read again when it unfolds. */
+export function FoldingCard({
+  title,
+  folded,
+  onToggle,
+  actions,
+  children,
+}: {
+  title: string;
+  folded: boolean;
+  onToggle: () => void;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const bodyId = useId();
+  return (
+    <section className="tadas-card" data-folded={folded || undefined}>
+      <div className="tadas-fold-head">
+        <h2 className="tadas-card-title tadas-fold-title">
+          <button type="button" className="tadas-fold-toggle" aria-expanded={!folded} aria-controls={bodyId} onClick={onToggle}>
+            <span className="tadas-fold-caret">
+              <Caret />
+            </span>
+            {title}
+          </button>
+        </h2>
+        {actions ? <div className="tadas-fold-actions">{actions}</div> : null}
+      </div>
+      <div id={bodyId} hidden={folded} className="tadas-fold-body">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** The focusable things inside an element, in order: what Tab moves through. */
+function focusables(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return [
+    ...root.querySelectorAll<HTMLElement>("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"),
+  ].filter((element) => !(element as HTMLButtonElement).disabled);
+}
+
+/** A question over the page before a change of many things: the title asks
+ * it, the body says what follows, and two buttons answer. The keyboard lands
+ * on `Cancel`, Tab stays inside, Escape and a click on the backdrop cancel,
+ * and closing puts the keyboard back where it was. */
+export function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  tone = "accent",
+  busy = false,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  children?: ReactNode;
+  confirmLabel: string;
+  tone?: "accent" | "danger";
+  /** The confirm waits: its answer, or a number it needs, is not in yet. */
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const dialog = useRef<HTMLDivElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  useReturnFocus();
+  useEffect(() => cancel.current?.focus(), []);
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const items = focusables(dialog.current);
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  };
+  return (
+    <div className="tadas-dialog-backdrop" onClick={onCancel}>
+      <div
+        ref={dialog}
+        className="tadas-dialog tadas-confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onKeyDown={onKey}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 id={titleId} className="tadas-card-title">
+          {title}
+        </h2>
+        {children ? <div className="tadas-confirm-body">{children}</div> : null}
+        <div className="tadas-confirm-actions">
+          <button ref={cancel} type="button" className="tadas-button" data-tone="plain" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="tadas-button" data-tone={tone} disabled={busy} onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Puts the keyboard back on what held it when the component mounted, once
+ * the component goes. */
+function useReturnFocus(): void {
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    return () => before?.focus?.();
+  }, []);
+}
+
+/** A bar at the foot of the window for what is selected: what is selected,
+ * the actions that apply to it, and a way to let it go. A toolbar, so a
+ * screen reader names it and Tab reaches it after the page. */
+export function ActionBar({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      {/* Room at the foot of the page, so the bar never covers its last row. */}
+      <div className="tadas-action-bar-room" aria-hidden="true" />
+      <div role="toolbar" aria-label={label} className="tadas-action-bar">
+        {children}
+      </div>
+    </>
+  );
+}
+
+/** A short word that a change was made, with at most one action (Undo) and
+ * a way to dismiss it. Neutral, not a warning: nothing went wrong. */
+export function Toast({
+  children,
+  action,
+  onAction,
+  onDismiss,
+}: {
+  children: ReactNode;
+  action?: string;
+  onAction?: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div role="status" className="tadas-toast">
+      <span className="tadas-toast-body">{children}</span>
+      {action && onAction ? (
+        <button type="button" className="tadas-toast-action" onClick={onAction}>
+          {action}
+        </button>
+      ) : null}
+      <button type="button" className="tadas-toast-close" aria-label="Dismiss" title="Dismiss" onClick={onDismiss}>
+        <CloseIcon />
+      </button>
+    </div>
   );
 }
