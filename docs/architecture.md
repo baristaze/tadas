@@ -622,7 +622,8 @@ context on keeps the stage the callee needs.
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
-  `target_id`, a `payload` of ids only (a task's is empty), the actor, the
+  `target_id`, a `payload` of ids only (a task's names the version its
+  change wrote, which the push carries: ADR 0061), the actor, the
   request, and that request's `traceparent`, read off the tracer, since
   the context carries the trace id and a span links to the header) as one tuple, and the storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which
@@ -1323,7 +1324,11 @@ alone, and neither key may touch what the other's work does not need
   the query that carries the entity (a membership, through `me`),
   except a live push about a task, which reads that one task and places
   it into the cached lists (more than twenty tasks in one window read
-  the lists once instead); the status says connecting from the moment a socket drops, degraded from
+  the lists once instead), unless the tab already placed it at the
+  version the push names, as the tab that made the write has
+  ([ADR 0061](adr/0061-a-task-push-names-the-version-it-wrote.md)); a
+  query a push reaches is fresh for five minutes and off the focus
+  refetch while the socket is open; the status says connecting from the moment a socket drops, degraded from
   the second failed cycle, and closed on a 4401. Every
   write sends the version of the task the query cache holds, and its
   answer is placed into the cached lists with no list read again
