@@ -13,7 +13,7 @@ from tadas.om.billing.storage.tables.billing_accounts import BillingAccounts
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import CredentialKind, Role
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import (
@@ -90,6 +90,38 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                     f"identities {identity.id}: "
                     f"{violated_constraint(error) or 'a unique key'} is taken"
                 ) from error
+
+    async def disable_operator(
+        self, identity: Identity, outbox_rows: tuple[OutboxRow, ...], at: datetime
+    ) -> int:
+        # The entry, its audit, and the end of the operator's live credentials
+        # in one commit under the system scope, where every one of them is.
+        ended = (
+            update(Sessions)
+            .where(
+                Sessions.org_id == EMPTY_UUID,
+                Sessions.identity_id == identity.id,
+                Sessions.revoked_at.is_(None),
+                Sessions.expires_at > at,
+                or_(
+                    Sessions.credential_kind == CredentialKind.OPERATOR_TOKEN.value,
+                    Sessions.second_factor_at.is_not(None),
+                ),
+            )
+            .values(revoked_at=at, updated_at=at, updated_by=EMPTY_UUID)
+            .returning(Sessions.id)
+        )
+        async with self._session_for(Identities, org_id=EMPTY_UUID) as session:
+            row = await session.get(Identities, identity.id)
+            if row is None:
+                raise NotFound(f"identity {identity.id} not found")
+            apply_row(row, identity)
+            for outbox_row in outbox_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=EMPTY_UUID))
+            await session.flush()
+            count = len((await session.execute(ended)).all())
+            await session.commit()
+            return count
 
     @staticmethod
     async def _matched(session: AsyncSession, stmt: Any) -> bool:
@@ -797,6 +829,27 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 to_model(row, Session),
                 None if identity is None else to_model(identity, Identity),
             )
+
+    async def read_operator_tokens(
+        self, identity_id: UUID, live_at: datetime, after: UUID | None, limit: int
+    ) -> list[Session]:
+        stmt = (
+            select(Sessions)
+            .where(
+                Sessions.org_id == EMPTY_UUID,
+                Sessions.expires_at > live_at,
+                Sessions.identity_id == identity_id,
+                Sessions.credential_kind == CredentialKind.OPERATOR_TOKEN.value,
+                Sessions.revoked_at.is_(None),
+            )
+            .order_by(Sessions.id.desc())
+            .limit(limit)
+        )
+        if after is not None:
+            stmt = stmt.where(Sessions.id < after)  # is_after_newest_first
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, Session) for row in result.scalars()]
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         stmt = select(Sessions).where(Sessions.id == session_id)

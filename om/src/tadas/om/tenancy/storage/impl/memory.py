@@ -7,7 +7,7 @@ from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage import AttemptFenceInterface
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import CredentialKind, Role
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
@@ -81,6 +81,36 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             self._require_email_free(identity)
             self._land(EMPTY_UUID, outbox_rows)
             self._identities[identity.id] = identity
+
+    async def disable_operator(
+        self, identity: Identity, outbox_rows: tuple[OutboxRow, ...], at: datetime
+    ) -> int:
+        # Every check, then every write: the twin of one commit.
+        async with self._lock:
+            if identity.id not in self._identities:
+                raise NotFound(f"identity {identity.id} not found")
+            ended = [
+                session
+                for session in self._rows(self._sessions, EMPTY_UUID)
+                if session.identity_id == identity.id
+                and session.revoked_at is None
+                and session.expires_at > at
+                and (
+                    session.credential_kind is CredentialKind.OPERATOR_TOKEN
+                    or session.second_factor_at is not None
+                )
+            ]
+            self._land(EMPTY_UUID, outbox_rows)
+            self._identities[identity.id] = identity
+            for session in ended:
+                self._put(
+                    self._sessions,
+                    EMPTY_UUID,
+                    session.model_copy(
+                        update={"revoked_at": at, "updated_at": at, "updated_by": EMPTY_UUID}
+                    ),
+                )
+            return len(ended)
 
     async def _update_identity(
         self, identity_id: UUID, when: Callable[[Identity], bool], **values: object
@@ -642,6 +672,22 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             ),
             None,
         )
+
+    async def read_operator_tokens(
+        self, identity_id: UUID, live_at: datetime, after: UUID | None, limit: int
+    ) -> list[Session]:
+        live = [
+            s
+            for s in self._rows(self._sessions, EMPTY_UUID)
+            if s.identity_id == identity_id
+            and s.credential_kind is CredentialKind.OPERATOR_TOKEN
+            and s.revoked_at is None
+            and s.expires_at > live_at
+        ]
+        newest_first = live[::-1]
+        if after is not None:
+            newest_first = [s for s in newest_first if is_after_newest_first(s.id, after)]
+        return newest_first[:limit]
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         return self._sessions.get(session_id)

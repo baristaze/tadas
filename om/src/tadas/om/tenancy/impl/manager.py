@@ -158,6 +158,11 @@ plane and nothing else. An api key is an agent's and proves none."""
 SIGN_IN_USED = "this sign-in was used already; sign in again"
 """The refusal of a sign-in presented after its exchange: a sign-in makes one
 session, so a retry, a second choice, or a replay starts a new sign-in."""
+REVOKED_MESSAGE: Mapping[CredentialKind, str] = {
+    CredentialKind.LOGIN: "this sign-in has ended (used or signed out); sign in again",
+    CredentialKind.OPERATOR_TOKEN: "operator token revoked",
+}
+"""The refusal of an ended credential, by kind; a session's is "session revoked"."""
 
 
 DELETED_PERSONAL_ORG_NAME = "Deleted account"
@@ -232,17 +237,18 @@ def mint_token(kind: CredentialKind) -> str:
     return PREFIX_FOR_KIND[kind] + secrets.token_urlsafe(32)
 
 
-async def issue_operator_token(
-    storage: TenancyStorageInterface,
+def new_operator_token(
     identity_id: UUID,
     operator_role: OperatorRole,
     expires_in: timedelta | None,
     most: timedelta,
-) -> IssuedOperatorToken:
-    """An operator token for one identity: one permission, an hour at most,
-    stored under the system scope as a session of kind `operator_token` and
-    as its digest. The two entry points, a signed-in operator's mint and the
-    grant job's, authorize before they call this."""
+) -> tuple[IssuedOperatorToken, Session]:
+    """An operator token for one identity and the row that keeps it: one
+    permission, an hour at most, a session of kind `operator_token` under the
+    system scope, kept as its digest. The two entry points, a signed-in
+    operator's mint and the grant job's, authorize before they call this, and
+    each lands the row its own way: the mint ends the sign-in in the same
+    write, the grant job has none to end."""
     ttl = most if expires_in is None else expires_in
     if not timedelta(0) < ttl <= most:
         raise ValidationFailed(
@@ -262,10 +268,34 @@ async def issue_operator_token(
         expires_at=now + ttl,
         operator_role=operator_role,
     )
-    await storage.write_session(EMPTY_UUID, session)
-    return IssuedOperatorToken(
-        token=token, expires_at=session.expires_at, operator_role=operator_role
+    issued = IssuedOperatorToken(
+        id=session.id, token=token, expires_at=session.expires_at, operator_role=operator_role
     )
+    return issued, session
+
+
+def ended_by(credential: Session, by: UUID, at: datetime) -> Session:
+    """A credential as it is once `by` ended it at `at`: the identity that
+    ended a sign-in or an operator token, the user that ended a session."""
+    return credential.model_copy(update={"revoked_at": at, "updated_at": at, "updated_by": by})
+
+
+async def exchange_sign_in(
+    storage: TenancyStorageInterface, org_id: UUID, session: Session, ended: Session
+) -> None:
+    """Lands `session` in `org_id` and the sign-in it came from, ended, in one
+    write, so a sign-in is exchanged once: for a tenant session, for the
+    sign-in its second factor verified, or for an operator token. A second
+    exchange of it, a retry after a lost answer among them, is refused, and
+    the person signs in again."""
+    try:
+        await storage.exchange_sign_in(org_id, session, ended)
+    except NotFound:
+        raise InvalidCredential("the sign-in behind the exchange is gone") from None
+    except UniqueKeyTaken:
+        raise  # a key of the new row, not the sign-in presented
+    except Conflict:
+        raise CredentialExpired(SIGN_IN_USED) from None
 
 
 class TenancyManagerImpl(TenancyManagerInterface):
@@ -482,13 +512,21 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if run is not None:
             await self._storage.clear_failed_sign_ins(digest)
         memberships = await self._memberships_of(identity.id)
-        # The new sign-in stands for the same visit to the provider as the one
-        # that presented the code, so it carries the same provider session.
         presented = await self._storage.read_session_by_id(ictx.credential_id)
-        provider_session_id = presented[1].provider_session_id if presented else None
-        return await self._issue_login(
-            identity, memberships, now, provider_session_id=provider_session_id
+        if presented is None:
+            raise InvalidCredential("the sign-in behind the code is gone")
+        _, sign_in = presented
+        # The new sign-in stands for the same visit to the provider as the one
+        # that presented the code, so it carries the same provider session,
+        # and it ends that one in the write that lands it: a person holds one
+        # sign-in at a time, as a tab holds one session (ADR 0068).
+        token, verified = self._new_login(
+            identity, second_factor_at=now, provider_session_id=sign_in.provider_session_id
         )
+        await exchange_sign_in(
+            self._storage, EMPTY_UUID, verified, ended_by(sign_in, identity.id, now)
+        )
+        return IssuedLogin(token=token, expires_at=verified.expires_at, memberships=memberships)
 
     async def _signed_in(self, rctx: RequestContext, signed_in: ProvidedSignIn) -> IssuedLogin:
         """The identity the provider vouched for, found, linked, or made, and
@@ -745,11 +783,22 @@ class TenancyManagerImpl(TenancyManagerInterface):
         self,
         identity: Identity,
         memberships: tuple[OrgMembership, ...],
-        second_factor_at: datetime | None = None,
         *,
         provider_session_id: str | None = None,
     ) -> IssuedLogin:
         """The credential that carries no tenant, stored under the system scope."""
+        token, session = self._new_login(identity, provider_session_id=provider_session_id)
+        await self._storage.write_session(EMPTY_UUID, session)
+        return IssuedLogin(token=token, expires_at=session.expires_at, memberships=memberships)
+
+    def _new_login(
+        self,
+        identity: Identity,
+        *,
+        second_factor_at: datetime | None = None,
+        provider_session_id: str | None = None,
+    ) -> tuple[str, Session]:
+        """A sign-in credential and the row that keeps it, as its digest."""
         now = utcnow()
         token = mint_token(CredentialKind.LOGIN)
         session = Session(
@@ -765,8 +814,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             second_factor_at=second_factor_at,
             provider_session_id=provider_session_id,
         )
-        await self._storage.write_session(EMPTY_UUID, session)
-        return IssuedLogin(token=token, expires_at=session.expires_at, memberships=memberships)
+        return token, session
 
     async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
         kind = credential_kind_of(credential)
@@ -848,17 +896,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         sign-in has no socket and no tenant, so nothing is announced."""
         _, presented = found
         self._check_session(presented, CredentialKind.LOGIN)
-        ended = presented.model_copy(
-            update={"revoked_at": now, "updated_at": now, "updated_by": ictx.identity_id}
+        await exchange_sign_in(
+            self._storage, org_id, session, ended_by(presented, ictx.identity_id, now)
         )
-        try:
-            await self._storage.exchange_sign_in(org_id, session, ended)
-        except NotFound:
-            raise InvalidCredential("the sign-in behind the exchange is gone") from None
-        except UniqueKeyTaken:
-            raise  # a key of the new session, not the sign-in presented
-        except Conflict:
-            raise CredentialExpired(SIGN_IN_USED) from None
 
     async def _switch(
         self,
@@ -873,21 +913,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
         tenant it belonged to, by its own user, so its socket closes."""
         ended_org_id, presented = found
         self._check_session(presented, CredentialKind.SESSION_TOKEN)
-        ended = presented.model_copy(
-            update={"revoked_at": now, "updated_at": now, "updated_by": presented.user_id}
-        )
-        row = OutboxRow(
-            id=new_id(),
-            created_at=now,
-            org_id=ended_org_id,
-            kind="tenancy.session.revoked",
-            target_id=ended.id,
-            payload=self._session_payload(ended),
-            actor_id=presented.user_id,
-            request_id=ictx.request_id,
-            traceparent=current_traceparent(),
-            app=ictx.app.type.value,
-        )
+        ended = ended_by(presented, presented.user_id, now)
+        row = self._revocation_row(ictx, ended_org_id, ended, now)
         try:
             await self._storage.replace_session(org_id, session, ended_org_id, ended, (row,))
         except NotFound:
@@ -976,7 +1003,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         elif not ictx.second_factor:
             raise SecondFactorRequired("sign in with the code from your authenticator")
         else:
-            granted = operator_permissions_of(entry)
+            # A sign-in with its code is exchanged once for a token, and every
+            # read and write on the plane is a token's, which is listed and
+            # revoked by itself (ADR 0068). The mint caps the token at the
+            # entry the stage carries.
+            granted = frozenset({OperatorPermission.MINT})
         return OperatorContext(
             request_id=ictx.request_id,
             app=ictx.app,
@@ -1044,7 +1075,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
             traceparent=current_traceparent(),
             app=rctx.app.type.value,
         )
-        await self._storage.write_identity(updated, (row,))
+        if operator_role is None:
+            # Off the plane: every token and every sign-in with a code it
+            # holds ends in the same commit, so a later grant revives none.
+            ended = await self._storage.disable_operator(updated, (row,), now)
+            log.info("operator %s disabled, %d live credentials ended", identity.id, ended)
+        else:
+            await self._storage.write_identity(updated, (row,))
         await self._relay.relay(EMPTY_UUID, row)
         return updated
 
@@ -1063,9 +1100,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotAuthorized(
                 f"the entry grants {identity.operator_role.value}, not {role.value}"
             )
-        return await issue_operator_token(
-            self._storage, identity.id, role, expires_in, self._options.operator_token_ttl
+        issued, session = new_operator_token(
+            identity.id, role, expires_in, self._options.operator_token_ttl
         )
+        await self._storage.write_session(EMPTY_UUID, session)
+        return issued
 
     async def resume(
         self,
@@ -1929,13 +1968,52 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._write_session(ctx, revoked, "revoked")
         return revoked
 
-    async def logout(self, ctx: OpContext, return_to: str | None = None) -> SignedOut:
-        if ctx.security.credential_kind is not CredentialKind.SESSION_TOKEN:
-            raise ValidationFailed("only a session can log out")
+    async def logout(self, ictx: IdentityContext, return_to: str | None = None) -> SignedOut:
         if return_to is not None and return_to not in self._options.sign_out_return_uris:
             raise ValidationFailed("that is not this environment's sign-out return")
-        ended = await self.revoke_session(ctx, ctx.security.credential_id)
+        found = await self._storage.read_session_by_id(ictx.credential_id)
+        if found is None:
+            raise InvalidCredential("the credential behind the sign-out is gone")
+        org_id, presented = found
+        now = utcnow()
+        if ictx.credential_kind is CredentialKind.SESSION_TOKEN:
+            # Announced like any revocation, under the tenant it belonged to,
+            # by its own user: the socket it opened, in whichever process
+            # holds it, closes on the row the relay publishes.
+            ended = ended_by(presented, presented.user_id, now)
+            row = self._revocation_row(ictx, org_id, ended, now)
+            await self._storage.write_session(org_id, ended, (row,))
+            await self._relay.relay(org_id, row)
+        else:
+            # A sign-in or an operator token: a row of the system scope, which
+            # opens no socket and belongs to no tenant, so nothing is announced.
+            ended = ended_by(presented, ictx.identity_id, now)
+            await self._storage.write_session(EMPTY_UUID, ended)
+            log.info(
+                "identity %s signed out its %s %s",
+                ictx.identity_id,
+                ictx.credential_kind.value,
+                ended.id,
+            )
         return SignedOut(session=ended, provider_logout_url=self._provider_logout(ended, return_to))
+
+    def _revocation_row(
+        self, rctx: RequestContext, org_id: UUID, ended: Session, now: datetime
+    ) -> OutboxRow:
+        """The row that announces a session's end under its tenant, by the
+        session's own user, when the stage that ends it is not a tenant's."""
+        return OutboxRow(
+            id=new_id(),
+            created_at=now,
+            org_id=org_id,
+            kind="tenancy.session.revoked",
+            target_id=ended.id,
+            payload=self._session_payload(ended),
+            actor_id=ended.user_id,
+            request_id=rctx.request_id,
+            traceparent=current_traceparent(),
+            app=rctx.app.type.value,
+        )
 
     def _provider_logout(self, ended: Session, return_to: str | None) -> str | None:
         """Where the browser goes to end the provider's session behind the one
@@ -2144,10 +2222,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if session.credential_kind is not kind:
             raise InvalidCredential("credential kind does not match its prefix")
         if session.revoked_at is not None:
-            # A sign-in ends only by its exchange, so an ended one was used.
-            raise CredentialExpired(
-                SIGN_IN_USED if kind is CredentialKind.LOGIN else "session revoked"
-            )
+            # A sign-in ends at its exchange or its sign-out, an operator
+            # token at its revoke or its sign-out.
+            raise CredentialExpired(REVOKED_MESSAGE.get(kind, "session revoked"))
         now = utcnow()
         if session.expires_at <= now:
             raise CredentialExpired("session expired")

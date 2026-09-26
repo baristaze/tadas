@@ -56,6 +56,19 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def disable_operator(
+        self, identity: Identity, outbox_rows: tuple[OutboxRow, ...], at: datetime
+    ) -> int:
+        """Global table: identities have no tenant. A named atomic write that
+        takes an operator off the allowlist, in one commit under the system
+        scope: the identity as given (its entry cleared), its audit rows, and
+        the end, at `at`, of every operator credential it still holds live,
+        its operator tokens and its sign-ins that verified a second factor.
+        So a grant made again later revives none of them. Answers how many
+        credentials it ended."""
+        ...
+
+    @abstractmethod
     async def write_totp_secret(self, identity_id: UUID, sealed: str, at: datetime) -> bool:
         """Global table: identities have no tenant. Puts a new sealed TOTP
         secret on the identity, replacing one that was never confirmed, in one
@@ -400,6 +413,19 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_operator_tokens(
+        self, identity_id: UUID, live_at: datetime, after: UUID | None, limit: int
+    ) -> list[Session]:
+        """Global: an operator token is a row of the system scope, which no
+        tenant holds. One identity's operator tokens live at `live_at` (not
+        revoked, not yet expired), newest first, clamped after the filter;
+        `after` is the id the previous page ended on, and the page starts
+        strictly after it (`is_after_newest_first`). The read walks the
+        system scope's live rows by expiry, which a token's hour and a
+        sign-in's ten minutes bound."""
+        ...
+
+    @abstractmethod
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         """Cross-tenant lookup: the identity stage holds the id of the session it
         was proven by, not its tenant; the tenant travels back."""
@@ -438,7 +464,10 @@ class TenancyStorageInterface(ABC):
         sign-in it was exchanged from, ended, in one commit or not at all, so
         a sign-in makes one session. A sign-in is a row of the system scope,
         which only the system scope writes, so this is one of the enumerated
-        transactions that open it; the insert runs under `org_id`. The
+        transactions that open it; the insert runs under `org_id`. With
+        `EMPTY_UUID` as `org_id` the new row is the system scope's too: the
+        sign-in a second factor verified, or the operator token a sign-in
+        with one mints, each ending the sign-in it came from. The
         sign-in must be in the system scope and still live as stored (not
         revoked); otherwise nothing lands: NotFound for a credential that is
         not in the system scope (a tenant's session among them), Conflict for

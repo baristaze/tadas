@@ -23,7 +23,8 @@ from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedOperatorToken, IssuedTotpSecret
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import OrgPage, UserPage
+from tadas.om.tenancy.types.page import OperatorTokenPage, OrgPage, UserPage
+from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 
@@ -59,12 +60,36 @@ class TenancyOperatorManagerInterface(ABC):
         operator_role: OperatorRole,
         expires_in: timedelta | None = None,
     ) -> IssuedOperatorToken:
-        """An operator token for the operator's own identity, for an agent:
-        one permission, never wider than the operator's entry (`write` implies
-        `read`), expiring within the hour (3600 seconds when `expires_in` is
-        None). Refused (NotAuthorized) unless the operator stage came from a
-        sign-in that verified a second factor, so a token never mints a
-        token. Shown once, stored as its digest."""
+        """An operator token for the operator's own identity: one permission,
+        never wider than the operator's entry (`write` implies `read`),
+        expiring within the hour (3600 seconds when `expires_in` is None).
+        Refused (NotAuthorized) unless the operator stage came from a sign-in
+        that verified a second factor, so a token never mints a token. The
+        sign-in is exchanged once: it ends in the write that lands the token,
+        and a second mint with it is CredentialExpired, so a person signs in
+        again for each token. Shown once, stored as its digest; its `id`
+        names it in the list and the revoke."""
+        ...
+
+    @abstractmethod
+    async def get_operator_tokens(
+        self, admin: OperatorContext, after: UUID | None, limit: int
+    ) -> OperatorTokenPage:
+        """The operator's own live tokens, newest first, a page at a time:
+        `after` is the id the previous page ended on. A token of kind
+        `operator_token` is a row, never the secret. Requires
+        `OperatorPermission.READ`, which every token carries."""
+        ...
+
+    @abstractmethod
+    async def revoke_operator_token(self, admin: OperatorContext, token_id: UUID) -> Session:
+        """Ends one of the operator's own tokens at once: its `revoked_at` is
+        stamped, `updated_by` names the operator, and its next request is
+        refused. Idempotent: a token ended already is answered as stored.
+        Another identity's token, or no token, is NotFound; ending another
+        operator's credentials is the grant job's disable. Requires
+        `OperatorPermission.READ`, so a token revokes its siblings and
+        itself."""
         ...
 
     # Across every tenant.

@@ -15,6 +15,7 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import (
     Conflict,
+    InvalidCredential,
     NotAuthorized,
     NotFound,
     PersonalOrgFixed,
@@ -40,7 +41,7 @@ from tadas.om.tenancy.impl.creates import (
     create_org_with_owner,
     user_payload,
 )
-from tadas.om.tenancy.impl.manager import issue_operator_token
+from tadas.om.tenancy.impl.manager import ended_by, exchange_sign_in, new_operator_token
 from tadas.om.tenancy.impl.totp import TotpSealer, new_totp_secret
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
 from tadas.om.tenancy.rules import (
@@ -53,7 +54,9 @@ from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedOperatorToken, IssuedTotpSecret
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import OrgPage, UserPage
+from tadas.om.tenancy.types.page import OperatorTokenPage, OrgPage, UserPage
+from tadas.om.tenancy.types.role import operator_permissions_of
+from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkKind, work_row_kind
@@ -146,21 +149,64 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         # the stage must come from a sign-in that verified a code.
         if admin.credential_kind is not CredentialKind.LOGIN or not admin.second_factor:
             raise NotAuthorized("an operator token is minted from a sign-in with a second factor")
-        wanted = (
-            OperatorPermission.WRITE
-            if operator_role is OperatorRole.WRITE
-            else OperatorPermission.READ
+        admin.require(OperatorPermission.MINT)
+        entry = admin.operator_entry
+        if entry is None or not operator_permissions_of(operator_role) <= operator_permissions_of(
+            entry
+        ):
+            raise NotAuthorized(f"operator lacks {operator_role.value}")
+        found = await self._storage.read_session_by_id(admin.credential_id)
+        if found is None:
+            raise InvalidCredential("the sign-in behind the mint is gone")
+        issued, token = new_operator_token(
+            admin.identity_id, operator_role, expires_in, self._options.operator_token_ttl
         )
-        admin.require(wanted)
-        issued = await issue_operator_token(
-            self._storage,
-            admin.identity_id,
-            operator_role,
-            expires_in,
-            self._options.operator_token_ttl,
+        # The sign-in is exchanged once: it ends in the write that lands the
+        # token, so a sign-in makes one token, as it makes one session.
+        await exchange_sign_in(
+            self._storage, EMPTY_UUID, token, ended_by(found[1], admin.identity_id, utcnow())
         )
-        log.info("operator %s minted a %s token", admin.identity_id, operator_role.value)
+        log.info(
+            "operator %s minted %s token %s", admin.identity_id, operator_role.value, issued.id
+        )
         return issued
+
+    async def get_operator_tokens(
+        self, admin: OperatorContext, after: UUID | None, limit: int
+    ) -> OperatorTokenPage:
+        admin.require(OperatorPermission.READ)
+        limit = self._clamp(limit)
+        rows = await self._storage.read_operator_tokens(
+            admin.identity_id, utcnow(), after, limit + 1
+        )
+        return OperatorTokenPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
+
+    async def revoke_operator_token(self, admin: OperatorContext, token_id: UUID) -> Session:
+        admin.require(OperatorPermission.READ)
+        found = await self._storage.read_session_by_id(token_id)
+        # An operator ends their own tokens, and no other operator's: the
+        # allowlist is the grant job's, and so is ending another identity's
+        # credentials (its disable). Another's reads as no token at all.
+        if (
+            found is None
+            or found[0] != EMPTY_UUID
+            or found[1].credential_kind is not CredentialKind.OPERATOR_TOKEN
+            or found[1].identity_id != admin.identity_id
+        ):
+            raise NotFound(f"operator token {token_id} not found")
+        token = found[1]
+        if token.revoked_at is not None:
+            return token  # ended already: the same answer again
+        revoked = ended_by(token, admin.identity_id, utcnow())
+        await self._storage.write_session(EMPTY_UUID, revoked)
+        log.info(
+            "operator %s revoked operator token %s by its %s %s",
+            admin.identity_id,
+            token_id,
+            admin.credential_kind.value,
+            admin.credential_id,
+        )
+        return revoked
 
     async def _identity(self, admin: OperatorContext) -> Identity:
         identity = await self._storage.read_identity(admin.identity_id)

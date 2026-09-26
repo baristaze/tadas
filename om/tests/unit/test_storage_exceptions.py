@@ -42,6 +42,9 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_identity_by_email_digest"),
         ("TenancyStorageInterface", "read_identity_by_issuer_subject"),
         ("TenancyStorageInterface", "write_identity"),
+        # Taking an operator off the plane: the entry and the end of every
+        # operator credential it holds, all rows of the system scope.
+        ("TenancyStorageInterface", "disable_operator"),
         ("TenancyStorageInterface", "write_totp_secret"),
         ("TenancyStorageInterface", "write_time_zone"),
         ("TenancyStorageInterface", "confirm_totp"),
@@ -60,6 +63,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_memberships_by_identity"),
         ("TenancyStorageInterface", "delete_person"),
         ("TenancyStorageInterface", "read_session_by_id"),
+        # An operator's own live tokens, rows of the system scope.
+        ("TenancyStorageInterface", "read_operator_tokens"),
         ("TenancyStorageInterface", "read_session_by_digest"),
         ("TenancyStorageInterface", "read_session_with_identity_by_digest"),
         ("TenancyStorageInterface", "read_api_key_by_digest"),
@@ -198,6 +203,9 @@ IDENTITY_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "get_identity_memberships"),
         ("TenancyManagerInterface", "admit_operator"),
         ("TenancyManagerInterface", "verify_second_factor"),
+        # Ending its own sign-in: the credential the stage came from, a
+        # session, a sign-in, or an operator token.
+        ("TenancyManagerInterface", "logout"),
     }
 )
 

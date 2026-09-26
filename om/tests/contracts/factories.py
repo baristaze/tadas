@@ -112,6 +112,28 @@ def make_sign_in(identity_id: UUID, token_hash: str) -> Session:
     )
 
 
+def make_operator_token(
+    identity_id: UUID,
+    token_hash: str,
+    ttl: timedelta = timedelta(hours=1),
+    role: OperatorRole = OperatorRole.READ,
+) -> Session:
+    """An operator token: a session of the system scope with one permission."""
+    now = utcnow()
+    return Session(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=identity_id,
+        updated_by=identity_id,
+        identity_id=identity_id,
+        token_hash=token_hash,
+        credential_kind=CredentialKind.OPERATOR_TOKEN,
+        expires_at=now + ttl,
+        operator_role=role,
+    )
+
+
 def make_api_key(user_id: UUID, key_hash: str) -> ApiKey:
     now = utcnow()
     return ApiKey(

@@ -9,6 +9,7 @@ from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
 
 
@@ -42,4 +43,12 @@ class OrgMembershipPage(Platform):
 
 class InvitationPage(Platform):
     items: tuple[Invitation, ...]
+    has_more: bool
+
+
+class OperatorTokenPage(Platform):
+    """One operator's live tokens, newest first: rows of `sessions` of kind
+    `operator_token`, never the token itself, which is kept as its digest."""
+
+    items: tuple[Session, ...]
     has_more: bool
