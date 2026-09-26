@@ -524,6 +524,16 @@ context on keeps the stage the callee needs.
   org a delivery names; `sync_seats` holds a Max subscription's
   quantity to the member count. The operator plane is
   `BillingOperatorManagerInterface`: read an org's plan, grant one.
+  The account is cached per org in the `billing_account` cache scope
+  ([ADR 0066](adr/0066-the-billing-account-is-cached-under-a-generation.md)).
+  `get_entitlements` and `get_billing` check the caller's permission,
+  then read it through `billing/impl/cache.py`. The key carries the org's
+  generation, and every write of the account, on either plane, bumps it
+  with one `increment` after its commit. So the next read is fresh, and
+  `TADAS_BILLING_ACCOUNT_CACHE_SECONDS` (60) bounds a read when a bump is
+  lost. The writes, the checkout, the portal, and the operator plane read
+  storage. The usage counts beside the plan are never cached, and the
+  api key's plan still rides its principal's statement.
   Both tables are `core` and `org`-scoped. The marks are purged after
   thirty days; a tenant past its retention loses its account too.
 - `slack`: the org's one Slack installation (`SlackInstallation`: the
@@ -891,11 +901,13 @@ backoff that grows with consecutive failures.
   cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
   On Valkey, `increment` is one server-side script (count, and set the
   window when the key has none), so a counter is never left without a
-  window by a failure between two commands. Each infra root builds one
+  window by a failure between two commands. Until the window ends, `get`
+  of a counted key answers the count in decimal ASCII, in memory as in
+  Valkey: that is how a generation is read. Each infra root builds one
   cache per `CacheScope` in its constructor, like every other member
   (ADR 0007), so the boot line names every scope.
 - One breaker stands in front of Valkey (`infra/breaker.py`), and there
-  is one of it: the four cache scopes and the topic publisher hold the
+  is one of it: the five cache scopes and the topic publisher hold the
   same instance, because a breaker stands for a dependency and not for
   an interface, so the first of them to pay the timeouts opens it for
   all of them. What it counts is the cost and not the error: a call that

@@ -99,6 +99,27 @@ an org whose account belongs to another customer changes nothing either.
 
 Marks are kept for thirty days, past any retry the processor makes.
 
+## Reading the plan
+
+Every lever asks what plan the org is on: a new task, a member, a key.
+The billing page asks it too, beside the org's usage. So the account is
+cached, per org, for a minute at most.
+
+- Every change to the account forgets the cached copy at once: a
+  delivery, a checkout that makes the customer, a cancellation and its
+  undo, a seat count, a grant, and an account closed at the processor.
+  The next read asks the database.
+- When the cache cannot be told of a change, the old copy answers until
+  its minute is up, never longer. `TADAS_BILLING_ACCOUNT_CACHE_SECONDS`
+  sets that minute.
+- When the cache is down, every read asks the database. Nothing is
+  refused for it.
+- Who may see the plan is decided on every call, before the cache.
+- The usage beside the plan (members, files, active tasks) is counted
+  fresh every time. A bound is enforced on an exact count.
+- A checkout, the processor's portal, and every write read the account
+  from the database, never from the cache.
+
 ## Grants
 
 An operator can put an org on a plan with no payment: support, a
