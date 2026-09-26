@@ -3091,8 +3091,22 @@
             "type": "string"
           },
           "position": {
+            "deprecated": true,
+            "description": "The rank as a float, for a client of the release before; order by `rank`. It leaves the wire in the release after this one.",
             "title": "Position",
             "type": "number"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text. Null only from a build that predates it, which orders by `position`.",
+            "title": "Rank"
           },
           "reminded_at": {
             "anyOf": [

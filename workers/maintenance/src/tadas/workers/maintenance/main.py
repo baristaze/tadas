@@ -108,7 +108,12 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         across_batches={"media": MEDIA_PURGE_BATCH},
         # A record kept per day opens here: the org's cleanup of old done
         # tasks. Its unique key makes every sweep after the day's first a no-op.
-        chores={"cleanup": container.managers.tasks.open_cleanup},
+        # The respace gives short ranks back to a run of open tasks whose
+        # ranks grew long; a tenant with none costs one empty read.
+        chores={
+            "cleanup": container.managers.tasks.open_cleanup,
+            "respace": container.managers.tasks.respace_ranks,
+        },
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
             WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(

@@ -4,6 +4,7 @@ asserts that nothing is found and nothing changes. The negative control that
 says what they catch is in `docs/runbooks/tenant-isolation.md`."""
 
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -19,7 +20,7 @@ from tadas.om.orchestrations.types.orchestration import (
     Step,
 )
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.tasks.rules import follows
+from tadas.om.tasks.rules import RANK_SCALE_BOUND, needs_respace
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -48,7 +49,9 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_archived_tasks",
         "read_done_tasks",
         "read_last_place",
+        "read_long_place",
         "read_open_places",
+        "read_open_places_before",
         "read_open_tasks",
         "read_recent_open_tasks",
         "read_task",
@@ -76,7 +79,7 @@ def after(task: Task) -> TaskCursor:
 
 
 def past(task: Task) -> OpenTaskCursor:
-    return OpenTaskCursor(position=task.position, id=task.id)
+    return OpenTaskCursor(rank=task.rank, id=task.id)
 
 
 def make_row(org_id: UUID, task: Task, action: str = "created") -> OutboxRow:
@@ -117,9 +120,12 @@ def make_task(
     created_by: UUID | None = None,
     assignee_id: UUID | None = None,
     status: TaskStatus = TaskStatus.OPEN,
-    position: float = 0.0,
+    rank: float | str = 0,
     updated_ago: timedelta = timedelta(0),
 ) -> Task:
+    """A task at `rank`, written as the manager writes one: the exact decimal,
+    and the float beside it."""
+    exact = Decimal(str(rank))
     now = utcnow()
     return Task(
         id=new_id(),
@@ -130,7 +136,8 @@ def make_task(
         title=title,
         status=status,
         assignee_id=assignee_id,
-        position=position,
+        rank=exact,
+        position=float(exact),
     )
 
 
@@ -193,7 +200,7 @@ class TaskStorageContract:
     ) -> None:
         org = new_id()
         record = await self._open(orchestrations, org)
-        first, second = make_task("one", position=1.0), make_task("two", position=2.0)
+        first, second = make_task("one", rank=1.0), make_task("two", rank=2.0)
         step = step_of(record, 2)
         written = await storage.create_tasks_in_step(
             org,
@@ -248,11 +255,11 @@ class TaskStorageContract:
     ) -> None:
         org, other = new_id(), new_id()
         assert await storage.read_last_place(org) is None
-        low, high = make_task(position=1.0), make_task(position=5.0)
-        done = make_task(position=9.0, status=TaskStatus.DONE)
+        low, high = make_task(rank=1.0), make_task(rank=5.0)
+        done = make_task(rank=9.0, status=TaskStatus.DONE)
         for task in (low, high, done):
             await seed(storage, org, task)
-        await seed(storage, other, make_task(position=50.0))
+        await seed(storage, other, make_task(rank=50.0))
         assert await storage.read_last_place(org) == (5.0, high.id)
         assert await storage.read_last_place(new_id()) is None
 
@@ -328,7 +335,7 @@ class TaskStorageContract:
 
     async def test_round_trip_and_update_by_copy(self, storage: TasksStorageInterface) -> None:
         org = new_id()
-        task = make_task(assignee_id=new_id(), position=-2.5)
+        task = make_task(assignee_id=new_id(), rank=-2.5)
         await seed(storage, org, task)
         assert await storage.read_task(org, task.id) == task
         done = await bump(storage, org, task, status=TaskStatus.DONE, updated_at=utcnow())
@@ -357,6 +364,11 @@ class TaskStorageContract:
         assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
         assert await storage.read_recent_open_tasks(org_b, team(), limit=10) == []
         assert await storage.read_open_places(org_b, exclude=None, after=None, limit=10) == []
+        past_everything = (Decimal(10**6), new_id())
+        assert await storage.read_open_places_before(org_b, past_everything, limit=10) == []
+        long = make_task("long", rank="0." + "0" * RANK_SCALE_BOUND + "1")
+        await seed(storage, org_a, long)
+        assert await storage.read_long_place(org_b) is None
 
     async def test_the_open_count_is_the_tenants_live_open_tasks(
         self, storage: TasksStorageInterface
@@ -453,11 +465,11 @@ class TaskStorageContract:
         tenant it pages that tenant's own rows and never reaches across, on
         the open list and on the done list alike."""
         org_a, org_b = new_id(), new_id()
-        theirs_open = make_task("theirs open", position=1.0)
+        theirs_open = make_task("theirs open", rank=1.0)
         theirs_done = make_task("theirs done", status=TaskStatus.DONE)
         await seed(storage, org_a, theirs_open)
         await seed(storage, org_a, theirs_done)
-        mine_open = make_task("mine open", position=2.0)
+        mine_open = make_task("mine open", rank=2.0)
         mine_done = make_task("mine done", status=TaskStatus.DONE, updated_ago=timedelta(hours=1))
         await seed(storage, org_b, mine_open)
         await seed(storage, org_b, mine_done)
@@ -492,20 +504,22 @@ class TaskStorageContract:
         tests the tenant, and puts the foreign row second so the row before it
         would have landed had the statement not been fenced."""
         org_a, org_b = new_id(), new_id()
-        mine = make_task("mine", position=0.5)
-        theirs = make_task("theirs", position=0.75)
+        mine = make_task("mine", rank=0.5)
+        theirs = make_task("theirs", rank=0.75)
         await seed(storage, org_b, mine)
         await seed(storage, org_a, theirs)
 
-        def placed(task: Task, position: float) -> Task:
-            return task.model_copy(update={"position": position, "version": task.version + 1})
+        def placed(task: Task, rank: int) -> Task:
+            return task.model_copy(
+                update={"rank": Decimal(rank), "position": float(rank), "version": task.version + 1}
+            )
 
         with pytest.raises(TenantMismatch):
             await storage.update_tasks(
                 org_b,
                 [
-                    (placed(mine, 0.0), mine.version, (make_row(org_b, mine, "updated"),)),
-                    (placed(theirs, 1.0), theirs.version, (make_row(org_b, theirs, "updated"),)),
+                    (placed(mine, 0), mine.version, (make_row(org_b, mine, "updated"),)),
+                    (placed(theirs, 1), theirs.version, (make_row(org_b, theirs, "updated"),)),
                 ],
             )
         assert await storage.read_task(org_b, mine.id) == mine
@@ -636,11 +650,11 @@ class TaskStorageContract:
             await bump(storage, org, task, title="conjured")
         assert await storage.read_task(org, task.id) is None
 
-    async def test_open_list_sorts_by_position_hides_deleted_and_clamps(
+    async def test_open_list_sorts_by_rank_hides_deleted_and_clamps(
         self, storage: TasksStorageInterface
     ) -> None:
         org = new_id()
-        tasks = [make_task(f"t{i}", position=float(p)) for i, p in enumerate([3, -1, 2])]
+        tasks = [make_task(f"t{i}", rank=p) for i, p in enumerate([3, -1, 2])]
         for task in tasks:
             await seed(storage, org, task)
         listed = await storage.read_open_tasks(org, team(), None, limit=10)
@@ -666,7 +680,7 @@ class TaskStorageContract:
         self, storage: TasksStorageInterface
     ) -> None:
         org = new_id()
-        tasks = [make_task(f"t{i}", position=float(-i)) for i in range(4)]
+        tasks = [make_task(f"t{i}", rank=-i) for i in range(4)]
         for task in tasks:
             await seed(storage, org, task)
         await bump(storage, org, tasks[3], status=TaskStatus.DONE, updated_at=utcnow())
@@ -677,43 +691,90 @@ class TaskStorageContract:
             "t1"
         ]
 
-    async def test_open_places_are_bounded_and_follow_the_rule(
+    async def test_open_places_are_bounded_and_follow_the_pair(
         self, storage: TasksStorageInterface
     ) -> None:
-        # The statement spells tasks.rules.follows and the open list's order;
-        # this case holds both impls to the function. Two tasks share a
-        # position, so the pair decides which follows the anchor.
+        # The statement compares the pair, as the open list orders it; this
+        # case holds both impls to it. Two tasks share a rank, so the id
+        # decides which follows the anchor, and which precedes it.
         org = new_id()
-        tasks = [make_task(f"p{i}", position=float(p)) for i, p in enumerate([1, 2, 2, 3, 4])]
+        tasks = [make_task(f"p{i}", rank=p) for i, p in enumerate([1, 2, 2, 3, 4])]
         for task in tasks:
             await seed(storage, org, task)
-        every = sorted((t.position, t.id) for t in tasks)
+        every = sorted((t.rank, t.id) for t in tasks)
         assert await storage.read_open_places(org, None, None, limit=10) == every
         assert await storage.read_open_places(org, None, None, limit=1) == every[:1]
         assert await storage.read_open_places(org, None, None, limit=3) == every[:3]
         for index, anchor in enumerate(every):
-            expected = [place for place in every if follows(place, anchor)]
-            assert expected == every[index + 1 :]
-            assert await storage.read_open_places(org, None, anchor, limit=10) == expected
-            assert await storage.read_open_places(org, None, anchor, limit=1) == expected[:1]
+            assert await storage.read_open_places(org, None, anchor, limit=10) == every[index + 1 :]
+            assert (
+                await storage.read_open_places(org, None, anchor, limit=1)
+                == every[index + 1 : index + 2]
+            )
+            nearest_first = list(reversed(every[:index]))
+            assert await storage.read_open_places_before(org, anchor, limit=10) == nearest_first
+            assert await storage.read_open_places_before(org, anchor, limit=1) == nearest_first[:1]
         # Excluding the place that follows the anchor reads the one after it.
         first, second, third = every[0], every[1], every[2]
         assert await storage.read_open_places(org, second[1], first, limit=1) == [third]
         # An anchor that is no task's place still cuts by the pair.
-        assert await storage.read_open_places(org, None, (2.5, new_id()), limit=1) == [every[3]]
+        assert await storage.read_open_places(org, None, (Decimal("2.5"), new_id()), limit=1) == [
+            every[3]
+        ]
+        assert await storage.read_open_places_before(org, (Decimal("2.5"), new_id()), 1) == [
+            every[2]
+        ]
 
-    async def test_open_list_pages_by_position_cursor(self, storage: TasksStorageInterface) -> None:
-        # Two tasks share a position (a seed, or a float that met its limit):
-        # the id breaks the tie, in the list and in the cursor alike.
+    async def test_places_read_ranks_exactly(self, storage: TasksStorageInterface) -> None:
+        # Two ranks a float cannot tell apart: the list, the places, and the
+        # cursor keep every digit, so the order is the ranks' and no tie.
         org = new_id()
-        tasks = [make_task(f"o{i}", position=float(p)) for i, p in enumerate([1, 2, 2, 3, 4])]
+        low = make_task("low", rank="0.1000000000000000000000001")
+        high = make_task("high", rank="0.1000000000000000000000002")
+        assert low.position == high.position, "the float mirror ties"
+        await seed(storage, org, high)
+        await seed(storage, org, low)
+        assert await storage.read_open_places(org, None, None, limit=10) == [
+            (low.rank, low.id),
+            (high.rank, high.id),
+        ]
+        page = await storage.read_open_tasks(org, team(), None, limit=1)
+        assert [t.title for t in page] == ["low"]
+        assert page[0].rank == low.rank
+        rest = await storage.read_open_tasks(org, team(), past(page[0]), limit=10)
+        assert [t.title for t in rest] == ["high"]
+
+    async def test_the_long_place_is_the_top_most_rank_past_the_bound(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        long_digits = "0." + "0" * RANK_SCALE_BOUND + "5"
+        at_bound = make_task("at the bound", rank="0." + "0" * (RANK_SCALE_BOUND - 1) + "5")
+        lower = make_task("long, lower", rank="1" + long_digits[1:])
+        upper = make_task("long, upper", rank=long_digits)
+        done = make_task("long, done", rank="-" + long_digits, status=TaskStatus.DONE)
+        assert not needs_respace(at_bound.rank) and needs_respace(upper.rank)
+        assert await storage.read_long_place(org) is None
+        for task in (at_bound, lower, upper, done):
+            await seed(storage, org, task)
+        await seed(storage, other, make_task("theirs", rank="-" + long_digits))
+        assert await storage.read_long_place(org) == (upper.rank, upper.id)
+        await bump(storage, org, upper, deleted_at=utcnow(), deleted_by=new_id())
+        assert await storage.read_long_place(org) == (lower.rank, lower.id)
+        assert await storage.read_long_place(new_id()) is None, "another tenant's is not read"
+
+    async def test_open_list_pages_by_rank_cursor(self, storage: TasksStorageInterface) -> None:
+        # Two tasks share a rank (two writers that placed at once): the id
+        # breaks the tie, in the list and in the cursor alike.
+        org = new_id()
+        tasks = [make_task(f"o{i}", rank=p) for i, p in enumerate([1, 2, 2, 3, 4])]
         for task in tasks:
             await seed(storage, org, task)
         first = await storage.read_open_tasks(org, team(), None, limit=2)
         second = await storage.read_open_tasks(org, team(), past(first[-1]), limit=2)
         third = await storage.read_open_tasks(org, team(), past(second[-1]), limit=2)
         assert [t.id for t in [*first, *second, *third]] == [
-            t.id for t in sorted(tasks, key=lambda t: (t.position, t.id))
+            t.id for t in sorted(tasks, key=lambda t: (t.rank, t.id))
         ]
         assert await storage.read_open_tasks(org, team(), past(third[-1]), limit=2) == []
 
@@ -738,10 +799,10 @@ class TaskStorageContract:
         self, storage: TasksStorageInterface
     ) -> None:
         org, me, other = new_id(), new_id(), new_id()
-        mine_created = make_task("created by me", created_by=me, position=1)
-        mine_assigned = make_task("assigned to me", created_by=other, assignee_id=me, position=2)
+        mine_created = make_task("created by me", created_by=me, rank=1)
+        mine_assigned = make_task("assigned to me", created_by=other, assignee_id=me, rank=2)
         given_away = make_task("created by me, assigned away", created_by=me, assignee_id=other)
-        theirs = make_task("theirs", created_by=other, position=3)
+        theirs = make_task("theirs", created_by=other, rank=3)
         mine_done = make_task("mine, done", created_by=me, status=TaskStatus.DONE)
         for task in (mine_created, mine_assigned, given_away, theirs, mine_done):
             await seed(storage, org, task)
@@ -834,29 +895,31 @@ class TaskStorageContract:
     async def test_many_updates_land_together_or_not_at_all(
         self, storage: TasksStorageInterface
     ) -> None:
-        # The renumbering of an open list: every row against its own version, in
-        # one commit. One stale version refuses the whole write, so a list is
-        # never renumbered halfway; from current versions every row lands.
+        # The respace of a run: every row against its own version, in one
+        # commit. One stale version refuses the whole write, so a run is never
+        # respaced halfway; from current versions every row lands.
         org = new_id()
-        first, second = make_task("first", position=0.5), make_task("second", position=0.75)
+        first, second = make_task("first", rank=0.5), make_task("second", rank=0.75)
         await seed(storage, org, first)
         await seed(storage, org, second)
         moved_second = await bump(storage, org, second, title="moved")  # now at version 2
 
-        def placed(task: Task, position: float) -> Task:
-            return task.model_copy(update={"position": position, "version": task.version + 1})
+        def placed(task: Task, rank: int) -> Task:
+            return task.model_copy(
+                update={"rank": Decimal(rank), "position": float(rank), "version": task.version + 1}
+            )
 
         with pytest.raises(PreconditionFailed):
             await storage.update_tasks(
                 org,
                 [
-                    (placed(first, 0.0), first.version, (make_row(org, first, "updated"),)),
-                    (placed(second, 1.0), second.version, (make_row(org, second, "updated"),)),
+                    (placed(first, 0), first.version, (make_row(org, first, "updated"),)),
+                    (placed(second, 1), second.version, (make_row(org, second, "updated"),)),
                 ],
             )
         assert await storage.read_task(org, first.id) == first
         assert await storage.read_task(org, second.id) == moved_second
-        renumbered = [placed(first, 0.0), placed(moved_second, 1.0)]
+        renumbered = [placed(first, 0), placed(moved_second, 1)]
         await storage.update_tasks(
             org,
             [

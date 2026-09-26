@@ -1,6 +1,7 @@
 """The migration files obey the role rules without a database."""
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from tadas.om.storage.migrate import (
     MIGRATIONS_DIR,
@@ -10,6 +11,8 @@ from tadas.om.storage.migrate import (
     split_statements,
 )
 from tadas.om.storage.roles import DatabaseRole
+from tadas.om.tasks.rules import RANK_SCALE_BOUND
+from tadas.om.tasks.storage.impl.postgres import _LONG_RANK  # pyright: ignore[reportPrivateUsage]
 
 
 def test_every_sql_file_names_only_its_own_role() -> None:
@@ -39,6 +42,25 @@ def test_split_statements_drops_comments_and_blanks() -> None:
         "CREATE TABLE core.orgs (id uuid)",
         "CREATE INDEX ix ON core.orgs (id)",
     ]
+
+
+def test_split_statements_keeps_a_function_body_whole() -> None:
+    sql = (
+        "-- a trigger\nCREATE FUNCTION core.f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
+        "BEGIN\n    NEW.a := 1;\n    RETURN NEW;\nEND\n$$;\n"
+        "CREATE TRIGGER t BEFORE INSERT ON core.tasks FOR EACH ROW EXECUTE FUNCTION core.f();\n"
+    )
+    assert split_statements(sql) == [
+        "CREATE FUNCTION core.f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
+        "BEGIN\n    NEW.a := 1;\n    RETURN NEW;\nEND\n$$",
+        "CREATE TRIGGER t BEFORE INSERT ON core.tasks FOR EACH ROW EXECUTE FUNCTION core.f()",
+    ]
+
+
+def test_a_function_is_checked_by_its_schema_alone() -> None:
+    check_role_of_sql(DatabaseRole.CORE, "DROP FUNCTION core.tasks_rank_from_position()")
+    with pytest.raises(RuntimeError):
+        check_role_of_sql(DatabaseRole.CORE, "CREATE FUNCTION queue.f() RETURNS trigger")
 
 
 @pytest.mark.parametrize("role", list(DatabaseRole))
@@ -159,3 +181,24 @@ def test_a_partial_index_names_no_bound_value(name: str, predicate: str) -> None
     )
     assert str(index.dialect_kwargs["postgresql_where"]) == predicate
     assert not any(op in predicate for op in ("=", "<", ">", " IN ")), predicate
+
+
+def test_the_long_rank_index_and_its_read_spell_one_literal_bound() -> None:
+    """The one partial index with a comparison: the respace's read names the
+    bound as a literal, the same one the predicate and the chain name, so a
+    generic plan still proves the predicate and reads the index."""
+    index = next(
+        i
+        for t in role_metadata(DatabaseRole.CORE).tables.values()
+        for i in t.indexes
+        if i.name == "ix_tasks_org_id_rank_long"
+    )
+    predicate = f"scale(rank) > {RANK_SCALE_BOUND} AND deleted_at IS NULL"
+    assert str(index.dialect_kwargs["postgresql_where"]) == predicate
+    assert [c.name for c in index.columns] == ["org_id", "rank"]
+    compiled = str(_LONG_RANK.compile(dialect=postgresql.dialect()))
+    assert compiled.endswith(f"> {RANK_SCALE_BOUND}") and "%(" not in compiled
+    chain = "\n".join(
+        path.read_text() for path in sorted((MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql"))
+    )
+    assert f"(org_id, rank) WHERE {predicate};" in chain

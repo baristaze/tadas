@@ -10,7 +10,12 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
 
-from tadas.om.storage.impl.postgres import StoragePostgresImpl, connect_args, engine_for
+from tadas.om.storage.impl.postgres import (
+    POOL_RECYCLE_SECONDS,
+    StoragePostgresImpl,
+    connect_args,
+    engine_for,
+)
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import RolePool, StorageSettings
 
@@ -67,6 +72,15 @@ def test_the_engine_is_built_with_the_bounds_the_settings_name() -> None:
     assert pool.size() == 6
     assert pool._max_overflow == 0
     assert pool.timeout() == 2.5
+
+
+def test_the_pool_recycles_before_the_path_drops_an_idle_connection_and_sends_no_ping() -> None:
+    """The shortest idle cutoff on the path is the security group's 350
+    seconds. A dead connection is caught on the scope, the transaction's first
+    statement, not by a ping before every checkout."""
+    pool = cast(QueuePool, engine_for(URL, RolePool(1, 1.0, 1.0)).pool)
+    assert pool._recycle == POOL_RECYCLE_SECONDS < 350
+    assert pool._pre_ping is False
 
 
 async def test_roles_share_a_pool_only_when_url_and_bounds_agree() -> None:

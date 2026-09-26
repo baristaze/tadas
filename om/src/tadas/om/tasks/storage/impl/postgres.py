@@ -1,15 +1,17 @@
 from collections.abc import Sequence
 from datetime import date, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
     ColumnElement,
     DateTime,
-    Double,
+    Numeric,
     Uuid,
     and_,
     func,
     literal,
+    literal_column,
     or_,
     select,
     true,
@@ -26,7 +28,7 @@ from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
-from tadas.om.tasks.rules import Place
+from tadas.om.tasks.rules import RANK_SCALE_BOUND, Place
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.tables.tasks import Tasks
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -61,19 +63,20 @@ def _before(cursor: TaskCursor) -> ColumnElement[bool]:
     )
 
 
+def _place(place: Place) -> ColumnElement[Any]:
+    return tuple_(literal(place[0], Numeric()), literal(place[1], Uuid()))
+
+
 def _after(cursor: OpenTaskCursor) -> ColumnElement[bool]:
     """Mirrors tasks.rules.is_after in SQL."""
-    return tuple_(Tasks.position, Tasks.id) > tuple_(
-        literal(cursor.position, Double()), literal(cursor.id, Uuid())
-    )
+    return tuple_(Tasks.rank, Tasks.id) > _place((cursor.rank, cursor.id))
 
 
-def _follows(anchor: Place) -> ColumnElement[bool]:
-    """Mirrors tasks.rules.follows in SQL: the pair compared, as the open list
-    orders it."""
-    return tuple_(Tasks.position, Tasks.id) > tuple_(
-        literal(anchor[0], Double()), literal(anchor[1], Uuid())
-    )
+_LONG_RANK = func.scale(Tasks.rank) > literal_column(str(RANK_SCALE_BOUND))
+"""Mirrors tasks.rules.needs_respace in SQL, spelled as the partial index's
+predicate spells it: a literal, never a bound value, which a generic plan
+could not match to the index. A rank is written without trailing zeros
+(tasks.rules.spread), so its scale is its length after the point."""
 
 
 class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
@@ -83,7 +86,7 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         stmt = select(Tasks).where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
         if after is not None:
             stmt = stmt.where(_after(after))
-        stmt = stmt.order_by(Tasks.position, Tasks.id).limit(limit)
+        stmt = stmt.order_by(Tasks.rank, Tasks.id).limit(limit)
         async with self._session_for(stmt, org_id=org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
@@ -157,14 +160,14 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
 
     async def read_last_place(self, org_id: UUID) -> Place | None:
         stmt = (
-            select(Tasks.position, Tasks.id)
+            select(Tasks.rank, Tasks.id)
             .where(_live(org_id, TaskStatus.OPEN))
-            .order_by(Tasks.position.desc(), Tasks.id.desc())
+            .order_by(Tasks.rank.desc(), Tasks.id.desc())
             .limit(1)
         )
         async with self._session_for(stmt, org_id=org_id) as session:
             found = (await session.execute(stmt)).one_or_none()
-            return None if found is None else (found.position, found.id)
+            return None if found is None else (found.rank, found.id)
 
     async def read_archivable(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
         stmt = (
@@ -249,16 +252,40 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def read_open_places(
         self, org_id: UUID, exclude: UUID | None, after: Place | None, limit: int
     ) -> list[Place]:
-        # Ordered by (position, id), the order the open list reads: positions
-        # tie, and the id decides between two that do (tasks.rules.Place).
-        stmt = select(Tasks.position, Tasks.id).where(_live(org_id, TaskStatus.OPEN))
+        # Ordered by (rank, id), the order the open list reads: ranks tie, and
+        # the id decides between two that do (tasks.rules.Place).
+        stmt = select(Tasks.rank, Tasks.id).where(_live(org_id, TaskStatus.OPEN))
         if exclude is not None:
             stmt = stmt.where(Tasks.id != exclude)
         if after is not None:
-            stmt = stmt.where(_follows(after))
-        stmt = stmt.order_by(Tasks.position, Tasks.id).limit(limit)
+            stmt = stmt.where(tuple_(Tasks.rank, Tasks.id) > _place(after))
+        stmt = stmt.order_by(Tasks.rank, Tasks.id).limit(limit)
         async with self._session_for(stmt, org_id=org_id) as session:
-            return [(position, task_id) for position, task_id in (await session.execute(stmt))]
+            return [(rank, task_id) for rank, task_id in (await session.execute(stmt))]
+
+    async def read_open_places_before(self, org_id: UUID, before: Place, limit: int) -> list[Place]:
+        stmt = (
+            select(Tasks.rank, Tasks.id)
+            .where(_live(org_id, TaskStatus.OPEN), tuple_(Tasks.rank, Tasks.id) < _place(before))
+            .order_by(Tasks.rank.desc(), Tasks.id.desc())
+            .limit(limit)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return [(rank, task_id) for rank, task_id in (await session.execute(stmt))]
+
+    async def read_long_place(self, org_id: UUID) -> Place | None:
+        # The partial index holds the long ranks of every status; the status
+        # is bound, so it is a filter over those few rows, never the index's.
+        stmt = (
+            select(Tasks.rank, Tasks.id)
+            .where(Tasks.org_id == org_id, _LONG_RANK, Tasks.deleted_at.is_(None))
+            .where(Tasks.status == TaskStatus.OPEN.value)
+            .order_by(Tasks.rank, Tasks.id)
+            .limit(1)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            found = (await session.execute(stmt)).one_or_none()
+            return None if found is None else (found.rank, found.id)
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         stmt = select(Tasks).where(Tasks.org_id == org_id, Tasks.id == task_id)

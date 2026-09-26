@@ -30,6 +30,7 @@ TASK = {
     "notes": "",
     "status": "open",
     "assignee_id": None,
+    "rank": "0",
     "position": 0.0,
     "created_at": "2026-09-18T12:00:00Z",
     "updated_at": "2026-09-18T12:00:00Z",

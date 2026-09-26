@@ -35,7 +35,8 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "migrations"
 VERSION_TABLE = "alembic_version"
 _SCHEMA_REF = re.compile(r"\b(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)")
 _INDEX_REF = re.compile(
-    r"\b(?:DROP|ALTER) INDEX\s+(?:IF EXISTS\s+)?(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)",
+    r"\b(?:DROP|ALTER) INDEX\s+(?:IF EXISTS\s+)?(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)"
+    r"|\bFUNCTION\s+(?:IF EXISTS\s+)?(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)",
     re.IGNORECASE,
 )
 
@@ -59,17 +60,34 @@ def head(role: DatabaseRole) -> str | None:
 
 
 def split_statements(sql: str) -> list[str]:
-    """Hand-written DDL without function bodies splits on the semicolon."""
+    """Hand-written DDL splits on the semicolon, except inside a body quoted
+    with `$$` (a function's), whose semicolons are the body's own."""
     lines = [line for line in sql.splitlines() if not line.strip().startswith("--")]
-    return [part.strip() for part in "\n".join(lines).split(";") if part.strip()]
+    statements: list[str] = []
+    current: list[str] = []
+    quoted = False
+    for part in re.split(r"(\$\$)", "\n".join(lines)):
+        if part == "$$" or quoted:
+            quoted = quoted != (part == "$$")
+            current.append(part)
+            continue
+        first, *rest = part.split(";")
+        current.append(first)
+        for piece in rest:
+            statements.append("".join(current))
+            current = [piece]
+    statements.append("".join(current))
+    return [statement.strip() for statement in statements if statement.strip()]
 
 
 def check_role_of_sql(role: DatabaseRole, sql: str) -> None:
     """Refuses a file that names a table of another role, by schema or by the role map.
-    A dropped or altered index is schema-qualified too; only its schema is checked."""
-    for schema, index in _INDEX_REF.findall(sql):
+    A dropped or altered index, and a function, are schema-qualified too; only
+    their schema is checked."""
+    for match in _INDEX_REF.finditer(sql):
+        schema, name = match.group(1, 2) if match.group(1) else match.group(3, 4)
         if schema != role.value:
-            raise RuntimeError(f"{role.value} migration drops index {schema}.{index}")
+            raise RuntimeError(f"{role.value} migration names {schema}.{name}")
     for schema, table in _SCHEMA_REF.findall(_INDEX_REF.sub("", sql)):
         if schema != role.value:
             raise RuntimeError(f"{role.value} migration references {schema}.{table}")

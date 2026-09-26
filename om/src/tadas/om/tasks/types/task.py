@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
@@ -20,22 +21,30 @@ class TaskScope(StrEnum):
 
 class Task(Identifiable, Trackable, SoftDeletable):
     MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = (
+        "rank",
         "position",
         "version",
         "reminded_at",
         "archived_at",
     )
-    """A place in the open list is set by the create, the move, and the
-    reopen; the version by every write; when the reminder went out by the
-    reminder itself; the archive by the cleanup, the restore, and the reopen.
-    An update the caller shaped keeps all four as stored."""
+    """A place in the open list (the rank, and the position beside it) is set
+    by the create, the move, the reopen, the import, and the sweep's respace;
+    the version by every write; when the reminder went out by the reminder
+    itself; the archive by the cleanup, the restore, and the reopen. An
+    update the caller shaped keeps all of them as stored."""
 
     title: str
     notes: str = ""
     status: TaskStatus = TaskStatus.OPEN
     assignee_id: UUID | None = None
-    # Manual order of the open list, ascending; the top is the smallest. Done
-    # tasks keep theirs but sort by updated_at instead.
+    # Manual order of the open list, ascending; the top is the smallest. An
+    # exact decimal, so there is always a rank between two others and a move
+    # writes one row (tasks.rules.rank_between). Done tasks keep theirs but
+    # sort by updated_at instead.
+    rank: Decimal = Decimal(0)
+    # The rank as a float, written beside it for the release before, which
+    # orders by it. Nothing of this release reads it; it goes with that
+    # release (ADR 0050).
     position: float = 0.0
     # Optimistic concurrency: the manager's copy increments it on every write,
     # and the write lands only when the stored row still has the version the

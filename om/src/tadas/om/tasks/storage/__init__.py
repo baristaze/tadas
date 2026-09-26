@@ -20,7 +20,7 @@ class TasksStorageInterface(ABC):
     async def read_open_tasks(
         self, org_id: UUID, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
     ) -> list[Task]:
-        """Open tasks the filter shows (tasks.rules.is_visible), by position, then
+        """Open tasks the filter shows (tasks.rules.is_visible), by rank, then
         id, strictly after the cursor (tasks.rules.is_after). `limit` is the
         caller's: the manager asks for one row more than its page."""
         ...
@@ -89,12 +89,26 @@ class TasksStorageInterface(ABC):
     async def read_open_places(
         self, org_id: UUID, exclude: UUID | None, after: Place | None, limit: int
     ) -> list[Place]:
-        """Open tasks' places in the org — their (position, id) — ascending in
-        the order the open list reads, strictly after `after` when one is given
-        (tasks.rules.follows), at most `limit` of them; the neighbours a
-        placement needs, whatever list the caller was looking at. The id rides
-        along because a position is not unique (tasks.rules.Place). The caller
-        picks the bound: a placement asks for the one place it reads."""
+        """Open tasks' places in the org, their (rank, id), ascending in the
+        order the open list reads, strictly after `after` when one is given,
+        at most `limit` of them: the neighbours a placement needs, whatever
+        list the caller was looking at. The id rides along because a rank is
+        not unique (tasks.rules.Place). The caller picks the bound: a
+        placement asks for the one place it reads."""
+        ...
+
+    @abstractmethod
+    async def read_open_places_before(self, org_id: UUID, before: Place, limit: int) -> list[Place]:
+        """The open places strictly before `before`, nearest first, at most
+        `limit`: the side of a respaced run above its long rank."""
+        ...
+
+    @abstractmethod
+    async def read_long_place(self, org_id: UUID) -> Place | None:
+        """The open place nearest the top whose rank grew past
+        `tasks.rules.RANK_SCALE_BOUND` (tasks.rules.needs_respace), or None:
+        what the sweep's respace starts from. It reads an index that holds
+        only such ranks, so a tenant with none costs one empty read."""
         ...
 
     @abstractmethod
@@ -161,8 +175,8 @@ class TasksStorageInterface(ABC):
     ) -> None:
         """The same compare-and-set over many tasks: every task lands with its
         outbox rows, each against its own expected version, in one commit, or
-        none does and `PreconditionFailed` is raised. The renumbering of an open
-        list is this write: a list renumbered halfway is out of order."""
+        none does and `PreconditionFailed` is raised. The sweep's respace of a
+        run is this write: a run respaced halfway is out of order."""
         ...
 
     @abstractmethod
@@ -173,7 +187,7 @@ class TasksStorageInterface(ABC):
         outbox rows when the stored row is still at its expected version and is
         the tenant's, and is left alone otherwise, without refusing the rest.
         Answers, per update and in order, whether it landed. `update_tasks` is
-        the all-or-nothing twin a renumber needs; a bulk change is many edits,
+        the all-or-nothing twin a respace needs; a bulk change is many edits,
         each fenced on its own."""
         ...
 

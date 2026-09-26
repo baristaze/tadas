@@ -3,13 +3,14 @@ routing, the funnel that names the scope of every transaction, and the write
 primitives: an upsert that checks the tenant and lands the core row's outbox
 rows in the same commit, and an insert that refuses an existing id."""
 
+import logging
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, CursorResult, Delete, Result, Table, delete, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.util import find_tables
 
@@ -27,6 +28,8 @@ from tadas.om.storage.scopes import IDENTITY_SETTING, ORG_SETTING, USER_SETTING
 from tadas.om.storage.utils.translation import apply_row, to_row, undeletes
 
 SessionFactory = async_sessionmaker[AsyncSession]
+
+log = logging.getLogger(__name__)
 
 
 class LoginSessions(Mapping[DatabaseRole, SessionFactory]):
@@ -118,6 +121,36 @@ async def set_scope(
     await session.execute(text(f"SELECT {calls}"), values)
 
 
+async def scoped_session(
+    factory: SessionFactory,
+    org_id: UUID,
+    user_id: UUID | None,
+    identity_id: UUID | None,
+) -> AsyncSession:
+    """A session whose transaction has begun under its scope, on a live
+    connection. The scope is the transaction's first statement, and it writes
+    nothing. So when it finds the connection dead (the server closed it while
+    it sat in the pool), nothing of the caller's has run, and the transaction
+    begins once more on a fresh connection. Past this point nothing is retried:
+    a connection that dies after the caller's first statement fails the call,
+    because that statement may have written."""
+    for attempt in (1, 2):
+        session = factory()
+        try:
+            await set_scope(session, org_id, user_id, identity_id)
+        except DBAPIError as error:
+            await session.close()
+            if attempt == 2 or not error.connection_invalidated:
+                raise
+            log.warning("the scope found its connection closed; beginning again on a fresh one")
+        except BaseException:
+            await session.close()
+            raise
+        else:
+            return session
+    raise AssertionError("unreachable: the second attempt returns or raises")
+
+
 def delete_batch(table: type[Any], *where: ColumnElement[bool], limit: int) -> Delete:
     """One batch of a purge: at most `limit` rows that match `where`, chosen
     and locked in one pass, then deleted. A row another transaction holds is
@@ -179,14 +212,14 @@ class PgStorageBase:
         `EMPTY_UUID` reads nothing.
 
         The settings go in before anything else, so they are the first
-        statement of the transaction the session opens. A commit or a rollback
+        statement of the transaction the session opens, and the one statement
+        that may be sent twice (`scoped_session`). A commit or a rollback
         ends that transaction and takes them with it, which is why a method
         that runs a second transaction opens a second session."""
         role = role_of(target)
         logins = self._sessions.system if org_id == EMPTY_UUID else self._sessions
         factory = logins[role]
-        async with factory() as session:
-            await set_scope(session, org_id, user_id, identity_id)
+        async with await scoped_session(factory, org_id, user_id, identity_id) as session:
             yield session
 
     async def _upsert(

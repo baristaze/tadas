@@ -102,7 +102,7 @@ describe("createTaskHints", () => {
   });
 
   it(`reads the lists once, and no task, past ${HINT_BURST} tasks in a window`, async () => {
-    // An import step, or a move that renumbers the open list.
+    // An import step, or the sweep's respace of a run of ranks.
     const fx = effects();
     const hints = createTaskHints(fx);
     const reads = Array.from({ length: 50 }, (_, i) => hints.hint(`t${i}`));
