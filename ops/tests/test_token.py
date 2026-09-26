@@ -1,8 +1,9 @@
 """`tadas-ops token`: a token goes into the env file and nowhere else. The
 operator's is minted only in a person's own terminal, after a sign-in through
 the identity provider and the second factor; the provisioner's is copied from
-the secret the grant job wrote, in a cloud environment. A requeue mints a
-`write` token for its one call and keeps it nowhere."""
+the secret the grant job wrote, in a cloud environment. The operator lists
+their own live tokens and ends one by its id. A requeue mints a `write` token
+for its one call, keeps it nowhere, and signs it out after."""
 
 import argparse
 import io
@@ -32,6 +33,7 @@ class Terminal(io.StringIO):
 
 
 LOGIN = {"expires_at": "2026-09-20T12:00:00Z", "memberships": []}
+MINTED_ID = UUID(int=7)
 DEVICE = {
     "device_code": "dev_secret",
     "user_code": "ABCD-EFGH",
@@ -46,9 +48,11 @@ class SignInRoutes:
     """The device sign-in, answered pending `pending` times (the first of them
     a slow-down), then the second factor and the mint."""
 
-    def __init__(self, pending: int = 2) -> None:
+    def __init__(self, pending: int = 2, mint_status: int = 200) -> None:
         self.pending = pending
+        self.mint_status = mint_status
         self.paths: list[str] = []
+        self.signed_out: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -72,8 +76,17 @@ class SignInRoutes:
             return httpx.Response(200, json={"token": "lgn_verified", **LOGIN})
         if path == "/v1/admin/me/tokens":
             assert request.headers["authorization"] == "Bearer lgn_verified"
-            assert request.headers["idempotency-key"]
-            return httpx.Response(201, json={"token": "opt_minted", "expires_at": "x"})
+            # The sign-in is the mint's key: it ends in the write that lands
+            # the token, so no Idempotency-Key is sent.
+            assert "idempotency-key" not in request.headers
+            if self.mint_status != 200:
+                refusal = {"code": "not_authorized", "message": "operator lacks write"}
+                return httpx.Response(self.mint_status, json={"error": refusal})
+            minted = {"id": str(MINTED_ID), "token": "opt_minted", "expires_at": "x"}
+            return httpx.Response(200, json=minted)
+        if path == "/v1/auth/logout":
+            self.signed_out.append(request.headers["authorization"].removeprefix("Bearer "))
+            return httpx.Response(200, json={})
         return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
 
 
@@ -133,6 +146,8 @@ async def test_the_operator_token_is_minted_in_a_terminal_and_written_unprinted(
     captured = capsys.readouterr()
     assert "opt_minted" not in captured.out + captured.err
     assert "lgn_" not in captured.out + captured.err
+    assert f"--revoke {MINTED_ID}" in captured.out, "the id is no secret, and ends it sooner"
+    assert routes.signed_out == [], "the mint ended the sign-in itself"
 
 
 async def test_the_local_stack_signs_the_operator_in_by_address(
@@ -254,7 +269,8 @@ async def test_a_requeue_mints_a_write_token_for_itself_and_keeps_it_nowhere(
     code = await work_requeue_command(requeue_args(), transport=httpx.MockTransport(routes))
     assert code == 0
     assert routes.minted == ["write"]
-    assert routes.paths[-1] == f"/v1/admin/orgs/{ORG}/work/{ITEM}/requeue"
+    assert f"/v1/admin/orgs/{ORG}/work/{ITEM}/requeue" in routes.paths
+    assert routes.paths[-1] == "/v1/auth/logout" and routes.signed_out == ["opt_minted"]
     assert file.read_text() == before, "the write token goes into no file"
     captured = capsys.readouterr()
     assert f"requeued {ITEM} (DELETE_ACCOUNT)" in captured.out
@@ -275,6 +291,130 @@ async def test_a_requeue_the_plane_refuses_says_why_and_exits_one(
     code = await work_requeue_command(requeue_args(), transport=httpx.MockTransport(routes))
     assert code == 1
     assert "work_not_failed" in capsys.readouterr().err
+    assert routes.signed_out == ["opt_minted"], "refused or not, the write token ends"
+
+
+async def test_a_mint_the_plane_refuses_signs_the_sign_in_out(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused mint ends nothing, so the sign-in with its code would live
+    its ten minutes: the command signs it out before it says why."""
+    env_file(tmp_path, "local")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("sys.stdin", Terminal())
+    monkeypatch.setattr(ops_main.getpass, "getpass", lambda prompt: "123456")
+    routes = RequeueRoutes(200, {})
+    routes.mint_status = 403
+    code = await work_requeue_command(requeue_args(), transport=httpx.MockTransport(routes))
+    assert code == 1
+    assert "does not carry write" in capsys.readouterr().err
+    assert routes.signed_out == ["lgn_verified"]
+    assert not any(path.endswith("/requeue") for path in routes.paths)
+
+
+def token_row(token_id: UUID, permission: str = "read") -> dict[str, object]:
+    return {
+        "id": str(token_id),
+        "permission": permission,
+        "created_at": "2026-09-26T10:00:00Z",
+        "expires_at": "2026-09-26T11:00:00Z",
+        "revoked_at": None,
+    }
+
+
+class OwnTokenRoutes:
+    """The plane's list of the caller's tokens in two pages, and the revoke of
+    one: `live` is found, any other id is not."""
+
+    def __init__(self, live: UUID, status: int = 200) -> None:
+        self.live = live
+        self.status = status
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        refusal = {"error": {"code": "credential_expired", "message": "operator token revoked"}}
+        if self.status == 401:
+            return httpx.Response(401, json=refusal)
+        path = request.url.path
+        if path == "/v1/admin/me/tokens":
+            if request.url.params.get("cursor") == "c-2":
+                return httpx.Response(
+                    200, json={"items": [token_row(UUID(int=9))], "next_cursor": None}
+                )
+            page = {"items": [token_row(self.live, "write")], "next_cursor": "c-2"}
+            return httpx.Response(200, json=page)
+        if path == f"/v1/admin/me/tokens/{self.live}" and request.method == "DELETE":
+            return httpx.Response(
+                200, json={**token_row(self.live), "revoked_at": "2026-09-26T10:30:00Z"}
+            )
+        return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
+
+
+def own_file(home: Path) -> Path:
+    file = home / ".config" / "tadas" / "ops" / "staging.env"
+    file.parent.mkdir(parents=True)
+    file.write_text("TADAS_API_URL=http://test\nTADAS_OPERATOR_TOKEN=opr_file\n")
+    file.chmod(0o600)
+    return file
+
+
+def own_args(**given: object) -> argparse.Namespace:
+    return argparse.Namespace(
+        **({"env": "staging", "identity": None, "list": False, "revoke": None} | given)
+    )
+
+
+async def test_the_operator_lists_their_own_live_tokens_under_the_files_token(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own_file(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    routes = OwnTokenRoutes(UUID(int=8))
+    code = await token_command(own_args(list=True), transport=httpx.MockTransport(routes))
+    assert code == 0
+    out = capsys.readouterr().out
+    assert str(UUID(int=8)) in out and str(UUID(int=9)) in out, "every page"
+    assert all(r.headers["authorization"] == "Bearer opr_file" for r in routes.requests)
+    assert "opr_file" not in out
+
+
+async def test_the_operator_revokes_one_token_by_its_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own_file(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    live = UUID(int=8)
+    routes = OwnTokenRoutes(live)
+    code = await token_command(own_args(revoke=live), transport=httpx.MockTransport(routes))
+    assert code == 0
+    assert (routes.requests[0].method, routes.requests[0].url.path) == (
+        "DELETE",
+        f"/v1/admin/me/tokens/{live}",
+    )
+    assert f"revoked {live}" in capsys.readouterr().out
+    # Another operator's token, or no token, is none of the caller's.
+    code = await token_command(own_args(revoke=UUID(int=10)), transport=httpx.MockTransport(routes))
+    assert code == 1
+    assert "no live token of yours" in capsys.readouterr().err
+    # The file's own token refused says how to write a fresh one.
+    refused = OwnTokenRoutes(live, status=401)
+    with pytest.raises(ValueError, match="write a fresh one"):
+        await token_command(own_args(revoke=live), transport=httpx.MockTransport(refused))
+
+
+def test_the_token_command_takes_one_action() -> None:
+    parse = ops_main.build_parser().parse_args
+    assert parse(["token", "--env", "local", "--list"]).list is True
+    assert parse(["token", "--env", "local", "--revoke", str(UUID(int=8))]).revoke == UUID(int=8)
+    assert parse(["token", "--env", "local", "--identity", "operator"]).identity == "operator"
+    for argv in (
+        ["token", "--env", "local"],
+        ["token", "--env", "local", "--identity", "operator", "--list"],
+        ["token", "--env", "local", "--revoke", "not-an-id"],
+    ):
+        with pytest.raises(SystemExit):
+            parse(argv)
 
 
 async def test_a_requeue_never_runs_without_a_terminal(

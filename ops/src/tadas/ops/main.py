@@ -1,6 +1,7 @@
-"""`tadas-ops`: traffic, stress, signals check, size, token, work requeue,
-and stripe-bootstrap, each against one named environment, and
-workos-bootstrap against one WorkOS environment. Exit 0 when the run did
+"""`tadas-ops`: traffic, stress, signals check, size, token (and the list
+and the revoke of one's own), work requeue, and stripe-bootstrap, each
+against one named environment, and workos-bootstrap against one WorkOS
+environment. Exit 0 when the run did
 what was asked, 1 when a stress target was missed, a reader found nothing, a
 redirect needs the WorkOS dashboard, or the operator plane refused a
 requeue, 2 for a bad invocation, a credential the operator plane refused, or
@@ -14,10 +15,11 @@ import os
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import aioboto3
 import httpx
@@ -375,6 +377,27 @@ async def device_sign_in(
     raise ValueError("the sign-in was not confirmed before its code expired; run the command again")
 
 
+@dataclass(frozen=True)
+class MintedToken:
+    """An operator token in the clear, and the id that names it in the list
+    and the revoke, which is no secret."""
+
+    token: str
+    id: UUID
+
+
+async def sign_out(client: ApiClient, token: str) -> None:
+    """Ends the credential given, best effort: a sign-in or a token nobody
+    needs any more. One the plane cannot reach now ends at its own expiry."""
+    try:
+        await client.request("POST", "/v1/auth/logout", token=token)
+    except ApiError, httpx.HTTPError:
+        print(
+            "tadas-ops: the sign-out did not reach the API; it ends at its expiry",
+            file=sys.stderr,
+        )
+
+
 async def mint_operator_token(
     env: Environment,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -382,12 +405,14 @@ async def mint_operator_token(
     dev_email: str | None = None,
     sleep: Callable[[float], Awaitable[object]] | None = None,
     permission: str = "read",
-) -> str:
+) -> MintedToken:
     """A person's operator token, `read` unless asked otherwise. The person
     signs in through the identity provider (or, on the local stack with
     `--dev-email`, by the local sign-in), then the TOTP code is asked for
     here, in the person's own terminal, and goes only to the second-factor
-    route; what is kept is the token the mint route answers."""
+    route, which ends the sign-in it verified. The mint ends the verified
+    one in turn, so what is left is the token. A mint the plane refuses ends
+    nothing, so that sign-in is signed out here before the refusal goes on."""
     async with ApiClient(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
@@ -397,14 +422,14 @@ async def mint_operator_token(
             login_token = await device_sign_in(client, sleep=sleep or asyncio.sleep)
         code = (await asyncio.to_thread(getpass.getpass, "TOTP code: ")).strip()
         verified = await client.verify_second_factor(login_token, code)
-        minted = await client.request(
-            "POST",
-            "/v1/admin/me/tokens",
-            json={"permission": permission},
-            token=verified.token,
-            idempotency_key=str(uuid4()),
-        )
-    return str(minted["token"])
+        try:
+            minted = await client.request(
+                "POST", "/v1/admin/me/tokens", json={"permission": permission}, token=verified.token
+            )
+        except ApiError:
+            await sign_out(client, verified.token)
+            raise
+    return MintedToken(token=str(minted["token"]), id=UUID(str(minted["id"])))
 
 
 def in_a_persons_terminal(args: argparse.Namespace, env: Environment) -> bool:
@@ -431,29 +456,84 @@ async def token_command(
 ) -> int:
     """Writes an operator token into the environment's file without printing
     it: the operator's, minted after a sign-in with the second factor, or the
-    provisioner's, copied from the secret the grant job wrote."""
+    provisioner's, copied from the secret the grant job wrote. With `--list`
+    or `--revoke`, reads or ends the operator's own tokens instead."""
+    if getattr(args, "list", False) or getattr(args, "revoke", None) is not None:
+        return await own_tokens_command(args, transport)
     env = load_environment(args.env)
     file = ops_file(env.name)
     if args.identity == "operator":
         if not in_a_persons_terminal(args, env):
             return USAGE
-        token = await mint_operator_token(
+        minted = await mint_operator_token(
             env, transport, dev_email=getattr(args, "dev_email", None)
         )
-        key = "TADAS_OPERATOR_TOKEN"
-    else:
-        if env.name not in CLOUD_ENVIRONMENTS:
-            print(
-                "the local provisioner token is set in the local env file or the process "
-                "environment as TADAS_PROVISIONER_TOKEN",
-                file=sys.stderr,
-            )
-            return USAGE
-        token = await read_provisioner_token(env, args.profile)
-        key = "TADAS_PROVISIONER_TOKEN"
-    write_value(file, key, token)
-    print(f"wrote {key} into {file}; it expires within the hour")
+        write_value(file, "TADAS_OPERATOR_TOKEN", minted.token)
+        print(
+            f"wrote TADAS_OPERATOR_TOKEN into {file}; it expires within the hour. "
+            f"Its id is {minted.id}: `--revoke {minted.id}` ends it sooner"
+        )
+        return OK
+    if env.name not in CLOUD_ENVIRONMENTS:
+        print(
+            "the local provisioner token is set in the local env file or the process "
+            "environment as TADAS_PROVISIONER_TOKEN",
+            file=sys.stderr,
+        )
+        return USAGE
+    write_value(file, "TADAS_PROVISIONER_TOKEN", await read_provisioner_token(env, args.profile))
+    print(f"wrote TADAS_PROVISIONER_TOKEN into {file}; it expires within the hour")
     return OK
+
+
+async def own_tokens_command(
+    args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None = None
+) -> int:
+    """The operator's own live tokens, or the end of one by its id, under the
+    env file's operator token. A token ends at once; its next request is
+    refused. Another operator's token is not the operator's to end: the grant
+    job's disable is (docs/runbooks/operator.md)."""
+    env = load_environment(args.env)
+    if not env.operator_token:
+        print(
+            f"environment {env.name!r} holds no operator token; write one with "
+            f"`uv run tadas-ops token --env {env.name} --identity operator`",
+            file=sys.stderr,
+        )
+        return USAGE
+    async with ApiClient(
+        env.api_url,
+        app=OPERATOR_APP,
+        app_version=app_version(),
+        token=env.operator_token,
+        transport=transport,
+    ) as client:
+        try:
+            if args.revoke is not None:
+                ended = await client.admin_revoke_token(args.revoke)
+                print(f"revoked {ended.id} ({ended.permission.value}) at {ended.revoked_at}")
+                return OK
+            cursor: str | None = None
+            while True:
+                page = await client.admin_tokens(cursor=cursor)
+                for token in page.items:
+                    print(
+                        f"{token.id}  {token.permission.value:<5}  created {token.created_at}  "
+                        f"expires {token.expires_at}"
+                    )
+                cursor = page.next_cursor
+                if not cursor:
+                    return OK
+        except ApiError as error:
+            if error.status == 401:
+                raise TokenRefused(env, "operator") from None
+            if error.status == 404:
+                print(
+                    f"tadas-ops: no live token of yours has the id {args.revoke}",
+                    file=sys.stderr,
+                )
+                return FAILED
+            raise
 
 
 async def work_requeue_command(
@@ -463,12 +543,13 @@ async def work_requeue_command(
     person's one named step: the person signs in with the second factor, and
     a `write` token is minted for this call, used once, and kept nowhere.
     The env file keeps the `read` token it had, and an agent that holds it
-    cannot run this."""
+    cannot run this. The `write` token is signed out once the call is made,
+    so it ends then and not an hour later."""
     env = load_environment(args.env)
     if not in_a_persons_terminal(args, env):
         return USAGE
     try:
-        token = await mint_operator_token(
+        minted = await mint_operator_token(
             env, transport, dev_email=getattr(args, "dev_email", None), permission="write"
         )
     except ApiError as error:
@@ -484,7 +565,7 @@ async def work_requeue_command(
         env.api_url,
         app=OPERATOR_APP,
         app_version=app_version(),
-        token=token,
+        token=minted.token,
         transport=transport,
     ) as client:
         try:
@@ -492,6 +573,8 @@ async def work_requeue_command(
         except ApiError as error:
             print(f"tadas-ops: not requeued: {error}", file=sys.stderr)
             return FAILED
+        finally:
+            await sign_out(client, minted.token)
     print(
         f"requeued {item.id} ({item.kind.value}) in org {args.org}: {item.status.value}, "
         f"{item.attempts} of {item.max_attempts} attempts spent, available now"
@@ -595,9 +678,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_size = sub.add_parser("size", help="the platform's size as the operator plane reports it")
     p_size.add_argument("--env", required=True)
 
-    p_token = sub.add_parser("token", help="write an operator token into the env file")
+    p_token = sub.add_parser(
+        "token", help="write an operator token into the env file, or list or revoke your own"
+    )
     p_token.add_argument("--env", required=True)
-    p_token.add_argument("--identity", required=True, choices=["operator", "provisioner"])
+    p_token_action = p_token.add_mutually_exclusive_group(required=True)
+    p_token_action.add_argument("--identity", choices=["operator", "provisioner"])
+    p_token_action.add_argument(
+        "--list",
+        action="store_true",
+        help="your own live operator tokens, under the env file's operator token",
+    )
+    p_token_action.add_argument(
+        "--revoke",
+        type=UUID,
+        metavar="TOKEN_ID",
+        help="end one of your own operator tokens now, by the id the mint or --list printed",
+    )
     p_token.add_argument(
         "--profile",
         help="provisioner only: the person's own AWS profile that reads the secret; "
