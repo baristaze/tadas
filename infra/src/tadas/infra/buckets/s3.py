@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -13,6 +13,7 @@ from tadas.infra.buckets import (
     PresignedPost,
     object_key,
 )
+from tadas.infra.deadline import bounded, unreachable
 
 NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 MAX_KEYS_PER_CALL = 1000
@@ -68,41 +69,55 @@ class BucketsS3Impl(BucketsInterface):
         return f"{self._bucket_prefix}-{bucket.value}"
 
     async def put(
-        self, org_id: UUID, bucket: Buckets, key: str, data: bytes, content_type: str
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        data: bytes,
+        content_type: str,
+        *,
+        deadline: datetime | None = None,
     ) -> None:
-        with translated("s3", "put"):
-            s3 = self._client()
-            await s3.put_object(
-                Bucket=self._bucket(bucket),
-                Key=object_key(org_id, key),
-                Body=data,
-                ContentType=content_type,
-            )
-
-    async def get(self, org_id: UUID, bucket: Buckets, key: str) -> bytes:
-        with translated("s3", "get"):
-            s3 = self._client()
-            try:
-                response = await s3.get_object(
-                    Bucket=self._bucket(bucket), Key=object_key(org_id, key)
+        async with bounded(deadline, unreachable("s3", "put")):
+            with translated("s3", "put"):
+                s3 = self._client()
+                await s3.put_object(
+                    Bucket=self._bucket(bucket),
+                    Key=object_key(org_id, key),
+                    Body=data,
+                    ContentType=content_type,
                 )
-            except ClientError as error:
-                if error_code(error) in NOT_FOUND_CODES:
-                    raise BlobNotFound(f"{bucket.value}/{key}") from None
-                raise
-            async with response["Body"] as body:
-                return await body.read()
 
-    async def exists(self, org_id: UUID, bucket: Buckets, key: str) -> bool:
-        with translated("s3", "exists"):
-            s3 = self._client()
-            try:
-                await s3.head_object(Bucket=self._bucket(bucket), Key=object_key(org_id, key))
-            except ClientError as error:
-                if error_code(error) in NOT_FOUND_CODES:
-                    return False
-                raise
-            return True
+    async def get(
+        self, org_id: UUID, bucket: Buckets, key: str, *, deadline: datetime | None = None
+    ) -> bytes:
+        async with bounded(deadline, unreachable("s3", "get")):
+            with translated("s3", "get"):
+                s3 = self._client()
+                try:
+                    response = await s3.get_object(
+                        Bucket=self._bucket(bucket), Key=object_key(org_id, key)
+                    )
+                except ClientError as error:
+                    if error_code(error) in NOT_FOUND_CODES:
+                        raise BlobNotFound(f"{bucket.value}/{key}") from None
+                    raise
+                async with response["Body"] as body:
+                    return await body.read()
+
+    async def exists(
+        self, org_id: UUID, bucket: Buckets, key: str, *, deadline: datetime | None = None
+    ) -> bool:
+        async with bounded(deadline, unreachable("s3", "exists")):
+            with translated("s3", "exists"):
+                s3 = self._client()
+                try:
+                    await s3.head_object(Bucket=self._bucket(bucket), Key=object_key(org_id, key))
+                except ClientError as error:
+                    if error_code(error) in NOT_FOUND_CODES:
+                        return False
+                    raise
+                return True
 
     async def list(
         self, org_id: UUID, bucket: Buckets, prefix: str, limit: int, after: str | None = None

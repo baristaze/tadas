@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -6,6 +6,7 @@ import aioboto3
 
 from tadas.infra.aws_clients import AwsClientHolder, client_config
 from tadas.infra.aws_errors import ClientError, error_code, translated
+from tadas.infra.deadline import bounded, unreachable
 from tadas.infra.secrets import SecretNotFound, SecretsInterface, scoped_name
 
 
@@ -32,14 +33,17 @@ class SecretsAwsImpl(SecretsInterface):
     def _name(self, org_id: UUID, name: str) -> str:
         return f"{self._name_prefix}{scoped_name(org_id, name)}"
 
-    async def get(self, org_id: UUID, name: str) -> str:
-        with translated("secretsmanager", "get"):
-            try:
-                response = await self._client().get_secret_value(SecretId=self._name(org_id, name))
-            except ClientError as error:
-                if error_code(error) == "ResourceNotFoundException":
-                    raise SecretNotFound(name, "aws secrets manager") from None
-                raise
+    async def get(self, org_id: UUID, name: str, *, deadline: datetime | None = None) -> str:
+        async with bounded(deadline, unreachable("secretsmanager", "get")):
+            with translated("secretsmanager", "get"):
+                try:
+                    response = await self._client().get_secret_value(
+                        SecretId=self._name(org_id, name)
+                    )
+                except ClientError as error:
+                    if error_code(error) == "ResourceNotFoundException":
+                        raise SecretNotFound(name, "aws secrets manager") from None
+                    raise
         return response["SecretString"]
 
     async def has(self, org_id: UUID, name: str) -> bool:
@@ -54,30 +58,36 @@ class SecretsAwsImpl(SecretsInterface):
                 raise
         return True
 
-    async def put(self, org_id: UUID, name: str, value: str) -> None:
+    async def put(
+        self, org_id: UUID, name: str, value: str, *, deadline: datetime | None = None
+    ) -> None:
         """Create, and on the store saying it exists, write a new version:
         one call in the common case and no window between a read and a
-        write for another writer to slip into."""
-        with translated("secretsmanager", "put"):
-            client = self._client()
-            try:
-                await client.create_secret(Name=self._name(org_id, name), SecretString=value)
-            except ClientError as error:
-                if error_code(error) != "ResourceExistsException":
-                    raise
-                await client.put_secret_value(SecretId=self._name(org_id, name), SecretString=value)
+        write for another writer to slip into. The deadline bounds both."""
+        async with bounded(deadline, unreachable("secretsmanager", "put")):
+            with translated("secretsmanager", "put"):
+                client = self._client()
+                try:
+                    await client.create_secret(Name=self._name(org_id, name), SecretString=value)
+                except ClientError as error:
+                    if error_code(error) != "ResourceExistsException":
+                        raise
+                    await client.put_secret_value(
+                        SecretId=self._name(org_id, name), SecretString=value
+                    )
 
-    async def delete(self, org_id: UUID, name: str) -> None:
+    async def delete(self, org_id: UUID, name: str, *, deadline: datetime | None = None) -> None:
         """Idempotent, as the local twin is: a secret that is not there is
         already deleted."""
-        with translated("secretsmanager", "delete"):
-            try:
-                await self._client().delete_secret(
-                    SecretId=self._name(org_id, name), ForceDeleteWithoutRecovery=True
-                )
-            except ClientError as error:
-                if error_code(error) != "ResourceNotFoundException":
-                    raise
+        async with bounded(deadline, unreachable("secretsmanager", "delete")):
+            with translated("secretsmanager", "delete"):
+                try:
+                    await self._client().delete_secret(
+                        SecretId=self._name(org_id, name), ForceDeleteWithoutRecovery=True
+                    )
+                except ClientError as error:
+                    if error_code(error) != "ResourceNotFoundException":
+                        raise
 
     def describe(self) -> str:
         return f"secrets=aws({self._region})"

@@ -1,6 +1,7 @@
 import asyncio
 import stat
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -23,7 +24,7 @@ class SecretsLocalImpl(SecretsInterface):
         self._file = file
         self._overrides = dict(overrides or {})
 
-    async def get(self, org_id: UUID, name: str) -> str:
+    async def get(self, org_id: UUID, name: str, *, deadline: datetime | None = None) -> str:
         key = scoped_name(org_id, name)
         value = self._overrides.get(_override_key(org_id, name))
         if value is not None:
@@ -39,7 +40,9 @@ class SecretsLocalImpl(SecretsInterface):
             return True
         return key in await asyncio.to_thread(self._read_file)
 
-    async def put(self, org_id: UUID, name: str, value: str) -> None:
+    async def put(
+        self, org_id: UUID, name: str, value: str, *, deadline: datetime | None = None
+    ) -> None:
         key = scoped_name(org_id, name)
 
         def write() -> None:
@@ -49,7 +52,7 @@ class SecretsLocalImpl(SecretsInterface):
 
         await asyncio.to_thread(write)
 
-    async def delete(self, org_id: UUID, name: str) -> None:
+    async def delete(self, org_id: UUID, name: str, *, deadline: datetime | None = None) -> None:
         key = scoped_name(org_id, name)
 
         def write() -> None:

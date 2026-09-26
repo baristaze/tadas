@@ -1,11 +1,12 @@
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import aioboto3
 
 from tadas.infra.aws_clients import AwsClientHolder, client_config
 from tadas.infra.aws_errors import translated
+from tadas.infra.deadline import bounded, unreachable
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.queues import QueueDepth, QueueMessage, Queues, QueuesInterface
 
@@ -59,13 +60,14 @@ class QueueSqsImpl(QueuesInterface):
     def _name(self, queue: Queues) -> str:
         return f"{self._queue_prefix}{queue.value}"
 
-    async def send(self, queue: Queues, body: bytes) -> None:
-        with translated("sqs", "send"):
-            sqs = self._client()
-            await sqs.send_message(
-                QueueUrl=await self._url(sqs, self._name(queue)),
-                MessageBody=body.decode(),
-            )
+    async def send(self, queue: Queues, body: bytes, *, deadline: datetime | None = None) -> None:
+        async with bounded(deadline, unreachable("sqs", "send")):
+            with translated("sqs", "send"):
+                sqs = self._client()
+                await sqs.send_message(
+                    QueueUrl=await self._url(sqs, self._name(queue)),
+                    MessageBody=body.decode(),
+                )
         OUTCOMES.labels(subsystem="queue", outcome="sent").inc()
 
     async def receive(

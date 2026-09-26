@@ -2,7 +2,7 @@
 with it, so one tenant's blobs cannot be read or listed by another."""
 
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from uuid import UUID
 
@@ -45,16 +45,31 @@ class PresignedPost(InfraModel):
 
 
 class BucketsInterface(ABC):
+    """A put, get, or exists a request makes carries the request's deadline,
+    and ends by then, unreachable (`tadas.infra.deadline`); a worker's
+    carries none. Presigning makes no call."""
+
     @abstractmethod
     async def put(
-        self, org_id: UUID, bucket: Buckets, key: str, data: bytes, content_type: str
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        data: bytes,
+        content_type: str,
+        *,
+        deadline: datetime | None = None,
     ) -> None: ...
 
     @abstractmethod
-    async def get(self, org_id: UUID, bucket: Buckets, key: str) -> bytes: ...
+    async def get(
+        self, org_id: UUID, bucket: Buckets, key: str, *, deadline: datetime | None = None
+    ) -> bytes: ...
 
     @abstractmethod
-    async def exists(self, org_id: UUID, bucket: Buckets, key: str) -> bool: ...
+    async def exists(
+        self, org_id: UUID, bucket: Buckets, key: str, *, deadline: datetime | None = None
+    ) -> bool: ...
 
     @abstractmethod
     async def list(
