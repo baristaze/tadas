@@ -36,6 +36,7 @@ from tadas.client.types import (
     MeView,
     OperatorEventView,
     OperatorView,
+    OperatorWorkItemView,
     OrgView,
     PlatformSizeView,
     Role,
@@ -931,3 +932,9 @@ class ApiClient:
             params={"after_seq": after_seq, "limit": limit},
         )
         return [OperatorEventView.model_validate(e) for e in cast(list[Any], body)]
+
+    async def admin_requeue_work(self, org_id: UUID, item_id: UUID) -> OperatorWorkItemView:
+        """One failed work item back to the queue, with its attempts reset; a
+        write, refused with `work_not_failed` for an item that is not failed."""
+        body = await self.request("POST", f"/v1/admin/orgs/{org_id}/work/{item_id}/requeue")
+        return OperatorWorkItemView.model_validate(body)

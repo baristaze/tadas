@@ -22,6 +22,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_item",
         "read_item_by_key",
         "requeue_stale",
+        "write_item_if_failed",
         "write_item_if_held",
     }
 )
@@ -207,6 +208,34 @@ class WorkStorageContract:
         assert await storage.write_item_if_held(org, held.claim_token, done) == done
         assert await storage.read_item(org, held.id) == done
         assert await storage.write_item_if_held(org, held.claim_token, done) is None
+
+    async def test_write_if_failed_is_conditional_on_the_item_being_failed(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        org, other_org = new_id(), new_id()
+        item = make_item(lane=lane)
+        await storage.create_item(org, item)
+        requeued = item.model_copy(update={"attempts": 0, "updated_by": new_id()})
+        assert await storage.write_item_if_failed(org, requeued) is None, "queued, not failed"
+        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
+        assert claimed is not None and claimed[1].claim_token is not None
+        failed = claimed[1].model_copy(
+            update={
+                "status": WorkStatus.FAILED,
+                "claimed_by": None,
+                "claim_token": None,
+                "lease_expires_at": None,
+                "last_error": "refused",
+            }
+        )
+        assert await storage.write_item_if_held(org, claimed[1].claim_token, failed) == failed
+        back = failed.model_copy(update={"status": WorkStatus.QUEUED, "attempts": 0})
+        assert await storage.write_item_if_failed(other_org, back) is None
+        assert await storage.read_item(org, item.id) == failed
+        assert await storage.write_item_if_failed(org, back) == back
+        assert await storage.read_item(org, item.id) == back
+        assert await storage.write_item_if_failed(org, back) is None, "moved once"
+        assert await storage.write_item_if_failed(org, make_item(lane=lane)) is None, "unknown"
 
     async def test_a_re_claim_after_a_requeue_mints_a_new_token(
         self, storage: WorkStorageInterface, lane: str

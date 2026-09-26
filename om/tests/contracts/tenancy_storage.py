@@ -42,6 +42,7 @@ from tadas.om.tenancy.types.user import User
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
+        "write_closed_org",
         "count_members",
         "create_member",
         "exchange_sign_in",
@@ -1027,6 +1028,91 @@ class TenancyStorageContract:
             (org.id, "tenancy.session.revoked", live.id),
             (org.id, "tenancy.api_key.deleted", key.id),
         }
+
+    async def test_write_closed_org_ends_every_way_in_and_nothing_elsewhere(
+        self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """Every member, their memberships, sessions, and keys, and every
+        pending invitation of the tenant end together with the org's own
+        change, each ended user and credential with the row that announces
+        it. The same person in another tenant keeps everything, and so does
+        that tenant. Presented under another tenant, nothing lands."""
+        org, other = make_org(), make_org("Other")
+        await storage.write_org(org.id, org)
+        await storage.write_org(other.id, other)
+        identity = make_identity()
+        ann = make_user(identity.id)
+        bob = make_user(make_identity().id)
+        ann_elsewhere = make_user(identity.id)
+        await storage.create_member(org.id, ann, make_membership(ann.id, Role.OWNER), ())
+        await storage.create_member(org.id, bob, make_membership(bob.id), ())
+        await storage.create_member(other.id, ann_elsewhere, make_membership(ann_elsewhere.id), ())
+        anns = make_session(identity.id, ann.id, uuid4().hex)
+        bobs = make_session(bob.id, bob.id, uuid4().hex)
+        elsewhere = make_session(identity.id, ann_elsewhere.id, uuid4().hex)
+        await storage.write_session(org.id, anns)
+        await storage.write_session(org.id, bobs)
+        await storage.write_session(other.id, elsewhere)
+        key = make_api_key(bob.id, uuid4().hex)
+        await storage.write_api_key(org.id, key)
+        pending = make_invitation("dee@example.test")
+        theirs = make_invitation("eve@example.test")
+        await storage.write_invitation(org.id, pending)
+        await storage.write_invitation(other.id, theirs)
+
+        gone = utcnow()
+        closed = org.model_copy(update={"updated_at": gone, "updated_by": ann.id})
+
+        def member_row(user: User) -> OutboxRow:
+            return make_user_row(org.id, user).model_copy(update={"kind": "tenancy.user.deleted"})
+
+        def revocation(kind: str, credential_id: UUID, user_id: UUID) -> OutboxRow:
+            return revocations_by(ann.id, org.id)(kind, credential_id)
+
+        with pytest.raises(NotFound):
+            await storage.write_closed_org(other.id, closed, (), member_row, revocation)
+        assert await storage.count_members(org.id) == 2
+        assert await storage.read_session(org.id, anns.id) == anns
+
+        rows = await storage.write_closed_org(org.id, closed, (), member_row, revocation)
+        assert sorted((r.kind, r.target_id) for r in rows) == sorted(
+            [
+                ("tenancy.user.deleted", ann.id),
+                ("tenancy.user.deleted", bob.id),
+                ("tenancy.session.revoked", anns.id),
+                ("tenancy.session.revoked", bobs.id),
+                ("tenancy.api_key.deleted", key.id),
+            ]
+        )
+        assert rows[0].kind == rows[1].kind == "tenancy.user.deleted", "the users' rows first"
+        assert await storage.read_org(org.id) == closed
+        assert await storage.count_members(org.id) == 0
+        assert await storage.read_users(org.id, None, limit=10) == []
+        for user in (ann, bob):
+            ended = await storage.read_user(org.id, user.id)
+            assert ended is not None and (ended.deleted_at, ended.deleted_by) == (gone, ann.id)
+            assert await storage.read_membership_for_user(org.id, user.id) is None
+        for session in (anns, bobs):
+            revoked = await storage.read_session(org.id, session.id)
+            assert revoked is not None and revoked.revoked_at == gone
+        deleted = await storage.read_api_key(org.id, key.id)
+        assert deleted is not None and deleted.deleted_at == gone
+        revoked_invitation = await storage.read_invitation(org.id, pending.id)
+        assert revoked_invitation is not None
+        assert revoked_invitation.state is InvitationState.REVOKED
+        # The other tenant, and the same person there, keep everything.
+        assert await storage.read_session(other.id, elsewhere.id) == elsewhere
+        assert await storage.read_user(other.id, ann_elsewhere.id) == ann_elsewhere
+        assert await storage.read_invitation(other.id, theirs.id) == theirs
+        assert await storage.count_members(other.id) == 1
+        ours = {r.id for r in rows}
+        landed = {(r.org_id, r.target_id) for r in await claim_all(outbox) if r.id in ours}
+        assert landed == {(org.id, r.target_id) for r in rows}
+        # Closed once, it is not closed again.
+        again = closed.model_copy(update={"deleted_at": gone, "deleted_by": ann.id})
+        await storage.write_org(org.id, again)
+        with pytest.raises(NotFound):
+            await storage.write_closed_org(org.id, again, (), member_row, revocation)
 
     async def test_a_person_is_deleted_in_every_tenant_in_one_commit(
         self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface

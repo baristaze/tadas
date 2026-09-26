@@ -378,6 +378,20 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
         except (WorkOSError, httpx.HTTPError) as error:
             _translate(error, "deleting the user")
 
+    async def delete_organization(self, organization_id: str) -> None:
+        try:
+            await self._workos.organizations.delete_organization(id=organization_id)
+        except NotFoundError:
+            return  # deleted already: a rerun is one deletion
+        except (AuthenticationError, AuthorizationError) as error:
+            # The process's credential, not the call, as on a user's deletion.
+            raise ProviderUnavailable(
+                "deleting the organization: WorkOS refused TADAS_WORKOS_API_KEY "
+                f"({error.status_code})"
+            ) from None
+        except (WorkOSError, httpx.HTTPError) as error:
+            _translate(error, "deleting the organization")
+
     def describe(self) -> str:
         return f"identity provider: WorkOS ({self._base_url}, client {self._client_id})"
 

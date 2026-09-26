@@ -28,14 +28,51 @@ variable "certificate_arn" {
   type        = string
 }
 
-variable "api_url" {
-  description = "The API's base URL the page calls, e.g. https://api.tadas.fyi; the Content-Security-Policy lets the page reach it over HTTPS and the websocket. Empty for a page that calls no API."
+variable "api_domain_name" {
+  description = "The API's own domain name, e.g. api.tadas.fyi. Given, the API's paths (api_path_patterns) are served from this distribution by its load balancer, so the page calls it same-origin. Empty for a page that calls no API."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.api_domain_name == "" || can(regex("^[a-z0-9.-]+$", var.api_domain_name))
+    error_message = "api_domain_name is a bare host name, with no scheme and no path."
+  }
+
+  # A custom error page answers every behavior's errors, the API's too: its
+  # 404 would reach the page as HTML.
+  validation {
+    condition     = var.api_domain_name == "" || var.not_found_page == ""
+    error_message = "a site that serves the API has no not_found_page, which would replace the API's own errors."
+  }
+
+  # Without the edge secret the API cannot tell this distribution from any
+  # other, and counts every request by the edge's address.
+  validation {
+    condition     = var.api_domain_name == "" || length(var.api_edge_secret) >= 32
+    error_message = "a site that serves the API sends an api_edge_secret of 32 characters or more."
+  }
+}
+
+variable "api_path_patterns" {
+  description = "The paths that go to the API, the realtime socket's included; every one the page calls. None may be a path the site serves itself."
+  type        = list(string)
+  default     = ["/v1/*"]
+
+  validation {
+    condition     = alltrue([for pattern in var.api_path_patterns : startswith(pattern, "/") && !contains(["/", "/*", "/assets/*", "/config.json", "/index.html"], pattern)])
+    error_message = "an API path is a path from the root, and never one of the site's own files."
+  }
+}
+
+variable "api_edge_secret" {
+  description = "Sent to the API as the X-Tadas-Edge header on every request this distribution forwards; the API trusts the viewer address CloudFront appended to X-Forwarded-For only beside it."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "store_origins" {
-  description = "The object store's origins the page posts a file to and fetches one from, by a URL the API signed. They join connect-src beside the API, and img-src, media-src, and frame-src for a preview. Empty for a page that holds no files."
+  description = "The object store's origins the page posts a file to and fetches one from, by a URL the API signed. They join connect-src, and img-src, media-src, and frame-src for a preview. Empty for a page that holds no files."
   type        = list(string)
   default     = []
 
@@ -46,7 +83,7 @@ variable "store_origins" {
 }
 
 variable "sentry_dsn" {
-  description = "The page's error-reporting DSN; browser DSNs are public by design. Empty turns reporting off. Its origin is the one address beside the API the Content-Security-Policy lets the page reach."
+  description = "The page's error-reporting DSN; browser DSNs are public by design. Empty turns reporting off. Its origin joins the Content-Security-Policy's connect-src."
   type        = string
   default     = ""
 

@@ -17,8 +17,8 @@ class SlackInstallations(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, 
     __tablename__ = "slack_installations"
     # One living installation per org, and one org per living workspace:
     # unique among the living, so an uninstalled org or workspace installs
-    # again. The sweep's read of the dead ones has no index: an org has a
-    # handful of installations over its life, not a list.
+    # again. Both hold only the living, so the sweep's reads of a tenant's
+    # uninstalled ones, and of all of them, have an index of their own.
     __org_id_index__ = False
     __table_args__ = (
         Index(
@@ -33,6 +33,7 @@ class SlackInstallations(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, 
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index("ix_slack_installations_org_id_deleted_at", "org_id", "deleted_at"),
     )
     team_id: Mapped[str]
     team_name: Mapped[str]

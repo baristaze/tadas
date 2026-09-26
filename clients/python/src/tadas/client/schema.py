@@ -136,6 +136,17 @@ class DeleteAccountRequest(BaseModel):
     return_to: Annotated[ReturnTo | None, Field(title='Return To')] = None
 
 
+class DeleteOrgRequest(BaseModel):
+    """
+    The org's name as its owner typed it, which is how they say they mean
+    it.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
+
+
 class DeliveryReceivedView(BaseModel):
     """
     The delivery checked out and is queued; the processor stops retrying.
@@ -898,6 +909,25 @@ class ValidationError(BaseModel):
     type: Annotated[str, Field(title='Error Type')]
 
 
+class WorkKind(StrEnum):
+    NOOP = 'NOOP'
+    SYNC_SEATS = 'SYNC_SEATS'
+    TASK_REMINDER = 'TASK_REMINDER'
+    SLACK_POST = 'SLACK_POST'
+    ORCHESTRATION = 'ORCHESTRATION'
+    WAKE_PARKED = 'WAKE_PARKED'
+    DELETE_ACCOUNT = 'DELETE_ACCOUNT'
+    UNASSIGN_TASKS = 'UNASSIGN_TASKS'
+    DELETE_ORG = 'DELETE_ORG'
+
+
+class WorkStatus(StrEnum):
+    queued = 'queued'
+    claimed = 'claimed'
+    done = 'done'
+    failed = 'failed'
+
+
 class AddApiKeyRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1195,6 +1225,34 @@ class OperatorBillingView(BaseModel):
     paid_plan: Plan | None
     plan: Plan
     status: SubscriptionStatus | None
+
+
+class OperatorWorkItemView(BaseModel):
+    """
+    One background job as an operator reads it: what it does and for
+    which record, where it stands, and how many of its attempts are spent.
+    The payload and the claim stay the worker's.
+    """
+    attempts: Annotated[int, Field(title='Attempts')]
+    available_at: Annotated[AwareDatetime, Field(title='Available At')]
+    id: Annotated[UUID, Field(title='Id')]
+    kind: WorkKind
+    last_error: Annotated[str | None, Field(title='Last Error')]
+    max_attempts: Annotated[int, Field(title='Max Attempts')]
+    status: WorkStatus
+    target_id: Annotated[UUID, Field(title='Target Id')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class OrgDeletedView(BaseModel):
+    """
+    The org is gone for everyone in it: `deleted_at` is when. `session` is
+    the owner's new session in their personal org, which replaces the one
+    that asked, as a switch's does; null when none could be made, and the
+    owner signs in again.
+    """
+    deleted_at: Annotated[AwareDatetime, Field(title='Deleted At')]
+    session: IssuedSessionView | None = None
 
 
 class OrgPageView(BaseModel):

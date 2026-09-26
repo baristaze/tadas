@@ -19,6 +19,7 @@ from tadas.services.api.types.tenancy import (
     ApiKeyView,
     CreateTeamOrgRequest,
     DeleteAccountRequest,
+    DeleteOrgRequest,
     DeviceSignInView,
     DeviceTokenRequest,
     DevSignInRequest,
@@ -36,6 +37,7 @@ from tadas.services.api.types.tenancy import (
     MembershipPageView,
     MembershipView,
     MeView,
+    OrgDeletedView,
     OrgView,
     SecondFactorRequest,
     SessionView,
@@ -183,6 +185,22 @@ async def update_my_identity(
 @router.get("/orgs/current", response_model=OrgView)
 async def current_org(ctx: Ctx, tenancy: TenancyService) -> OrgView:
     return await tenancy.get_org(ctx)
+
+
+# The caller's team org, gone for everyone in it, and the owner's session
+# with it. No idempotency key, as on an account's deletion: the principal
+# that would hold the marker is what this ends, so a retry meets a session
+# that no longer exists.
+@router.post(
+    "/orgs/current/deletion",
+    response_model=OrgDeletedView,
+    responses={
+        403: {"model": ErrorResponse, "description": "not_authorized: an owner's session only"},
+        409: {"model": ErrorResponse, "description": "personal_org_fixed"},
+    },
+)
+async def delete_org(ctx: Ctx, tenancy: TenancyService, body: DeleteOrgRequest) -> OrgDeletedView:
+    return await tenancy.delete_org(ctx, body)
 
 
 # A team org the caller makes and owns, answered with the caller's place in

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from tadas.infra.observability import metrics_exposition
 from tadas.services.api.container import AppContainer, boot
 from tadas.services.api.gateway.admission import AdmissionMiddleware
+from tadas.services.api.gateway.edge import EdgeClientMiddleware
 from tadas.services.api.gateway.errors import register_error_handlers
 from tadas.services.api.gateway.observability import RequestIdMiddleware
 from tadas.services.api.routers import all_routers, webhooks
@@ -80,6 +81,15 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         allow_headers=["*"],
         expose_headers=["x-request-id", "Retry-After", "Idempotent-Replayed"],
     )
+    # Outermost of all: which address a request came from is settled before
+    # anything reads it, and the edge secret is gone before anything could
+    # log it (`gateway/edge.py`).
+    if settings.edge_secret is not None:
+        app.add_middleware(
+            EdgeClientMiddleware,
+            secret=settings.edge_secret.get_secret_value(),
+            trusted_proxies=settings.trusted_proxies,
+        )
     register_error_handlers(app)
 
     api = APIRouter(prefix=API_PREFIX)

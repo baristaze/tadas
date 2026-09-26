@@ -208,8 +208,15 @@ class WorkManagerImpl(WorkManagerInterface):
         )
 
     async def fail(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
+        return await self._fail(ctx, item, error, is_exhausted(item))
+
+    async def fail_for_good(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
+        return await self._fail(ctx, item, error, True)
+
+    async def _fail(self, ctx: OpContext, item: WorkItem, error: str, exhausted: bool) -> WorkItem:
+        """The failed run: a dead letter when `exhausted`, and otherwise back
+        to the queue after the retry curve's delay."""
         now = utcnow()
-        exhausted = is_exhausted(item)
         if exhausted:
             update: dict[str, Any] = {"status": WorkStatus.FAILED}
         else:
@@ -360,7 +367,13 @@ class WorkManagerImpl(WorkManagerInterface):
         if await self._storage.write_item_if_held(org_id, item.claim_token, failed) is None:
             return  # taken from under this claim meanwhile; whoever holds it settles it
         OUTCOMES.labels(subsystem="work", outcome="dead_letter").inc()
-        log.error("work item %s (%s) failed for good: %s", item.id, item.kind.value, reason)
+        log.error(
+            "work item %s (%s) in org %s failed for good: %s",
+            item.id,
+            item.kind.value,
+            org_id,
+            reason,
+        )
 
     async def _dead_letter(self, ctx: OpContext, item: WorkItem) -> None:
         """A failed item is a dead letter: an audit event names it in the tenant's
@@ -369,7 +382,11 @@ class WorkManagerImpl(WorkManagerInterface):
         between the two loses the audit entry, never the dead letter itself."""
         OUTCOMES.labels(subsystem="work", outcome="dead_letter").inc()
         log.error(
-            "work item %s (%s) failed for good: %s", item.id, item.kind.value, item.last_error
+            "work item %s (%s) in org %s failed for good: %s",
+            item.id,
+            item.kind.value,
+            ctx.org_id,
+            item.last_error,
         )
         event = await self._events.append_event(
             ctx,

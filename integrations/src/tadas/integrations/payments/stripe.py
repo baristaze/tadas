@@ -289,10 +289,17 @@ class PaymentsStripeImpl(PaymentsInterface):
         return subscription_of(subscription.to_dict())
 
     async def cancel_subscription(self, subscription_id: str) -> None:
-        current = await self.read_subscription(subscription_id)
-        if current is None or current.status in ENDED_STATUSES:
-            return
         v1 = self._v1()
+        found: dict[str, Any] = {}
+
+        async def read() -> None:
+            found.update((await v1.subscriptions.retrieve_async(subscription_id)).to_dict())
+
+        # The read on the way is the end's too: one the processor no longer
+        # holds has nothing to cancel, and a key it refuses is the process's.
+        await ended("read subscription", read)
+        if not found or subscription_of(found).status in ENDED_STATUSES:
+            return
         await ended("cancel subscription", lambda: v1.subscriptions.cancel_async(subscription_id))
 
     async def delete_customer(self, customer_id: str) -> None:
@@ -335,10 +342,10 @@ def subscription_of(raw: dict[str, Any]) -> ProviderSubscription:
 
 
 async def ended(operation: str, call: Callable[[], Awaitable[object]]) -> None:
-    """One call that ends something of a deleted account. What the processor
-    no longer holds is ended already. A refusal of the runtime key itself (a
-    key revoked, or without the permission) is the process's, not the
-    call's, and is unavailable until a person fixes the key, so the work
+    """One call on the way to ending something of a deleted account. What the
+    processor no longer holds is ended already. A refusal of the runtime key
+    itself (a key revoked, or without the permission) is the process's, not
+    the call's, and is unavailable until a person fixes the key, so the work
     that asked waits for it rather than failing."""
     try:
         async with translated(operation):

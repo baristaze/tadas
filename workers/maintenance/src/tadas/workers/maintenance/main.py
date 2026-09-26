@@ -21,7 +21,11 @@ from tadas.infra.trust import install_trust_store
 from tadas.om.opcontext import AppContext, AppType
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.work.types.work_item import WorkKind
-from tadas.workers.maintenance.accounts import DeleteAccountHandlerImpl, UnassignTasksHandlerImpl
+from tadas.workers.maintenance.accounts import (
+    DeleteAccountHandlerImpl,
+    DeleteOrgHandlerImpl,
+    UnassignTasksHandlerImpl,
+)
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import NoopHandlerImpl, SyncSeatsHandlerImpl
@@ -100,6 +104,12 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
                 container.identity_provider,
             ),
             WorkKind.UNASSIGN_TASKS: UnassignTasksHandlerImpl(container.managers.tasks),
+            WorkKind.DELETE_ORG: DeleteOrgHandlerImpl(
+                container.managers.tenancy,
+                container.managers.billing,
+                container.managers.slack,
+                container.identity_provider,
+            ),
         },
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),

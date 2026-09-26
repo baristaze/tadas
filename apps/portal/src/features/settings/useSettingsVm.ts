@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
 import { useSlackStatus, useStartSlackInstall, useUninstallSlack } from "../../queries/slack";
-import { useApiKeys, useCreateApiKey, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
+import type { Role } from "../../api";
+import {
+  useApiKeys,
+  useCreateApiKey,
+  useMe,
+  useMemberships,
+  useRevokeApiKey,
+  useUpdateMemberRole,
+  useUsers,
+} from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { isPlanLimit } from "../../store/upgrade";
 import { apiKeyRows, canManageKeys, memberRows } from "./settingsModel";
@@ -21,6 +30,8 @@ function takeInstallOutcome(): string | null {
 export function useSettingsVm() {
   const me = useMe();
   const users = useUsers();
+  const memberships = useMemberships();
+  const changeRole = useUpdateMemberRole();
   const mayManageKeys = canManageKeys(me.data);
   const apiKeys = useApiKeys(mayManageKeys);
   const createKey = useCreateApiKey();
@@ -38,7 +49,10 @@ export function useSettingsVm() {
     if (said) notify(said);
   }, [notify]);
 
-  const members = useMemo(() => memberRows(users.data ?? []), [users.data]);
+  const members = useMemo(
+    () => memberRows(users.data ?? [], memberships.data ?? [], me.data),
+    [users.data, memberships.data, me.data],
+  );
   const keys = useMemo(() => apiKeyRows(apiKeys.data ?? [], new Date()), [apiKeys.data]);
 
   // A write that fails is said, not swallowed: the notice names the refusal
@@ -74,6 +88,15 @@ export function useSettingsVm() {
     }
   };
 
+  // A refusal is said in the server's words: the rules are the server's.
+  const setRole = async (userId: string, role: Role) => {
+    try {
+      await changeRole.mutateAsync({ userId, body: { role } });
+    } catch (caught) {
+      notify(errorMessage(caught, "The role was not changed."));
+    }
+  };
+
   // Off to Slack's page; Slack sends the browser back here, and the outcome
   // is said then. A refusal (not configured, not allowed) is said now.
   const installSlack = async () => {
@@ -98,6 +121,8 @@ export function useSettingsVm() {
     loading: me.isPending || users.isPending || (mayManageKeys && apiKeys.isPending),
     error: me.error ?? users.error ?? (mayManageKeys ? apiKeys.error : null),
     members,
+    setRole,
+    changingRole: changeRole.isPending,
     keys,
     canManageKeys: mayManageKeys,
     // The key list is paged: the screen shows a page and asks for the next,

@@ -51,6 +51,14 @@ class WorkStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def write_item_if_failed(self, org_id: UUID, item: WorkItem) -> WorkItem | None:
+        """One conditional statement: writes `item` over its row only while the
+        row is failed; returns None when it is not, or is gone. An operator's
+        requeue is the one write that moves an item out of failed, and two
+        that race move it once."""
+        ...
+
+    @abstractmethod
     async def claim_next(
         self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:

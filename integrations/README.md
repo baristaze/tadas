@@ -20,8 +20,9 @@ subscriptions; Tadas owns what a plan entitles an org to.
 - the two changes Tadas makes to a subscription itself: cancel at the
   period's end (or take that back), and the seat count, with no
   proration;
-- the end of an org whose person deleted their account: its
-  subscription canceled at once and its customer deleted. A
+- the end of an org whose person deleted their account, or whose owner
+  deleted it: its subscription canceled at once and its customer
+  deleted. A
   subscription or a customer the processor no longer holds is done
   already. Stripe keeps the invoices;
 - a read of a subscription as the processor holds it now. Deliveries
@@ -128,13 +129,14 @@ The app's settings, its credentials, and each environment's app are in
 
 | What | Interface | Real client | Twin |
 |------|-----------|-------------|------|
-| Proves who a person is: the hosted sign-in, the code exchange, the device sign-in for the command line, and the logout address that ends the hosted sign-in's session in the browser; holds an org's side of it: its organization, its single sign-on, its invitations; and deletes a person who deleted their account | `identity.IdentityProviderInterface` | `identity/workos.py`: WorkOS AuthKit through the `workos` SDK, pinned | `identity/twin.py`: in memory, for tests and CI |
+| Proves who a person is: the hosted sign-in, the code exchange, the device sign-in for the command line, and the logout address that ends the hosted sign-in's session in the browser; holds an org's side of it: its organization, its single sign-on, its invitations; deletes a person who deleted their account, and the organization of a team org its owner deleted | `identity.IdentityProviderInterface` | `identity/workos.py`: WorkOS AuthKit through the `workos` SDK, pinned | `identity/twin.py`: in memory, for tests and CI |
 
 `identity/absent.py` is the provider of a process that signs nobody in:
 every call answers `ProviderUnavailable`, which the API presents as
 `503`. An API or a worker whose WorkOS application key is not set holds
 it. The worker holds the real client beside the API's: it signs nobody
-in, and deletes the WorkOS user of a person who deleted their account.
+in, and deletes the WorkOS user of a person who deleted their account
+and the WorkOS organization of a team org its owner deleted.
 
 The provider hands Tadas an issuer, a subject, and a verified email,
 and for a sign-in through the hosted page, the id of the provider's own

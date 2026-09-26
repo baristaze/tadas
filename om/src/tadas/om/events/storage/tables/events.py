@@ -15,7 +15,8 @@ class Events(IdentifiableMixin, Base):
     # unique (org_id, seq) is a guard on the cursor row's invariant; the append
     # takes its number from the cursor, never from this index. The trim reads
     # the bottom of a tenant's stream through it too. `produced_at` serves the
-    # count across every tenant that the operator's size reads.
+    # count across every tenant that the operator's size reads; its entries
+    # land at the right edge, so an append pays little for it.
     __org_id_index__ = False
     __table_args__ = (
         Index("uq_events_org_id_seq", "org_id", "seq", unique=True),

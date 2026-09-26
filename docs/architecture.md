@@ -81,7 +81,7 @@ context on keeps the stage the callee needs.
   it by name before the ladder is asked. An api key never mints another:
   revoking a leaked key has to end the access it gave, and a successor
   would outlive it, so `create_api_key` refuses an api key credential the
-  way `logout` refuses anything but a session. The operator plane (every org, delete an org) is a second
+  way `logout` refuses anything but a session. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. Deleting an org soft-deletes the row and lands
   `tenancy.org.deleted` beside it, so every socket of the tenant closes;
@@ -250,13 +250,28 @@ context on keeps the stage the callee needs.
   deleted personal org as past its retention at once, so the next
   sweep purges it through every namespace's tenant purge
   ([ADR 0041](adr/0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md)).
+  `delete_org` deletes the caller's team org from an owner's session,
+  once the typed name is the org's (`rules.confirms_org_deletion`); an
+  admin, a member, and an api key are refused (`NotAuthorized`, 403),
+  and a personal org (`PersonalOrgFixed`, 409). One named atomic write,
+  `write_closed_org`, under the tenant's own scope, lands the org row
+  with its `provider_org_id` cleared, soft-deletes every live user with
+  their membership, revokes every live session, api key, and pending
+  invitation, and lands in the same commit `tenancy.user.deleted` per
+  user, a revocation row per credential, and one `work.DELETE_ORG` row
+  carrying the WorkOS organization's id. The same request writes a
+  session in the owner's personal org, as a switch does, and answers
+  with it. `delete_closed_org`, that item's last step, on the service
+  role only, writes what the operator's deletion writes, and the sweep
+  purges the tenant after the retention
+  ([ADR 0042](adr/0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`, and the permission each kind is asked for with by
   `WORK_ENQUEUE_PERMISSIONS`, which the worker's tests hold to every
   handler's `REQUIRES`. The kinds are `NOOP`, `SYNC_SEATS`,
   `TASK_REMINDER`, `SLACK_POST`, `ORCHESTRATION`, `WAKE_PARKED`,
-  `DELETE_ACCOUNT`, and `UNASSIGN_TASKS`. Enqueue is a create: it validates the payload, and
+  `DELETE_ACCOUNT`, `UNASSIGN_TASKS`, and `DELETE_ORG`. Enqueue is a create: it validates the payload, and
   the manager's copy stamps the actor from the context, the timestamps,
   status `QUEUED`, zero attempts, and clears every claim field whatever
   the caller sent; the insert reports an existing id and changes nothing,
@@ -284,10 +299,20 @@ context on keeps the stage the callee needs.
   the hand-back, the requeue, the failure, and the completion all sign
   `updated_by` with `EMPTY_UUID`, and the copy starts from the stored
   row: `created_by` is the person who asked for the work, `updated_by`
-  is the machinery that ran it, and a worker's copy rewrites neither. A failed item is a
+  is the machinery that ran it, and a worker's copy rewrites neither. A
+  handler's run ends one of four ways: it returns (complete), it raises
+  `WorkParked` (defer, no attempt spent), it raises `WorkRefused` for a
+  failure no retry changes (`fail_for_good`, failed at once), or it raises
+  anything else (fail, requeued with a growing delay until the attempts
+  are spent). A failed item is a
   dead letter, named by a `work.item.failed` event in the tenant's
-  stream and counted on the outcome counter. Done or failed items are
-  purged by the sweep after the work retention (30 days).
+  stream and counted on the outcome counter. The operator plane is
+  `WorkOperatorManagerInterface`: `requeue` sends one failed item back to
+  the queue, available now with its attempts reset, in one statement
+  conditional on the row still being failed (`write_item_if_failed`); it
+  signs `updated_by` with the operator's identity and names the requeue by
+  a `work.item.requeued` event whose actor is that identity. Done or
+  failed items are purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status, position,
   version, and the due date `due_on` with `reminded_at` beside it), listed by a `TaskFilter` (team or mine) and paged by a
   cursor, `OpenTaskCursor` over (position, id) for the open list and
@@ -918,7 +943,16 @@ alone, and neither key may touch what the other's work does not need
   an address or a CIDR block, never `*`, which the settings refuse at
   boot because a wildcard trusts every peer and so lets any caller pick
   its own address), so behind the load balancer the login limit still
-  counts per client and a peer outside it cannot pick its own address. The envelope carries the
+  counts per client and a peer outside it cannot pick its own address.
+  A request through the portal's CloudFront distribution is one hop
+  further in: CloudFront appends the viewer's address, the load balancer
+  appends CloudFront's, and the walk stops at CloudFront. The
+  distribution sends `TADAS_EDGE_SECRET` in `X-Tadas-Edge` on every
+  request, and beside it, and only beside it, `gateway/edge.py` takes
+  the address CloudFront appended as the client. CloudFront's address
+  ranges are never trusted: any customer's distribution appends from
+  them, and its owner can write the header before it. The header is
+  stripped from the scope whether it matches or not. The envelope carries the
   exception's code and status; for a status of 500 or more its message
   is `internal error` and the real one goes to the log under the
   request id. An unhandled exception is answered inside the
@@ -1015,7 +1049,9 @@ alone, and neither key may touch what the other's work does not need
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
   Two pings keep a socket alive, one per direction, both pinned with the
-  load balancer's idle timeout in `deployment/realtime-timeouts.json`
+  load balancer's idle timeout (and CloudFront's, ten minutes, a fixed
+  quota the load balancer's sixty seconds sit well inside) in
+  `deployment/realtime-timeouts.json`
   (`realtime/timeouts.py`, held to the file by
   `test_realtime_timeouts.py`): the client's application ping every 25
   seconds from a timer of its own, whatever the inbound traffic, whose
@@ -1052,7 +1088,7 @@ alone, and neither key may touch what the other's work does not need
   any other failure to its visibility and the queue's dead letter; the
   claim loop for the kinds `TASK_REMINDER`, `SLACK_POST`, `SYNC_SEATS`,
   `ORCHESTRATION`, `WAKE_PARKED`, `DELETE_ACCOUNT`, `UNASSIGN_TASKS`,
-  and `NOOP` on one lane
+  `DELETE_ORG`, and `NOOP` on one lane
   (`TADAS_WORKER_LANE`, or `serve --lane`); a handler that raises
   `WorkParked` has its item deferred for the time it names, no attempt
   spent, and a Slack rate limit is that case; lease
@@ -1454,17 +1490,31 @@ alone, and neither key may touch what the other's work does not need
   names are written in `deployment/cloud/environments.json`, and the
   workflows pass them from the environment's variables. The
   portal reads `/config.json`, written per environment by Terraform, before
-  it renders, and calls the API cross-origin; locally it falls back to the
-  `VITE_` build variables. The distribution's response headers policy,
+  it renders; locally it falls back to the `VITE_` build variables.
+  The portal calls the API on its own origin. Its distribution serves
+  `/v1/*`, the realtime socket included, from the load balancer at
+  `api_domain_name`: the managed CachingDisabled policy, the managed
+  AllViewerExceptHostHeader origin request policy (so the bearer, the
+  socket's upgrade headers, and its ticket pass, and Host and TLS name the
+  API, which its certificate matches), every method, HTTPS only, no
+  compression. No request the page makes is cross-origin, so no browser
+  sends a preflight; the API keeps its CORS for other origins, and
+  `api_domain_name` keeps serving everything it served (the Stripe and
+  Slack deliveries, the command line, the operators). The origin's read
+  timeout is the load balancer's idle timeout and its keep-alive five
+  seconds less, both from `deployment/realtime-timeouts.json`. The
+  distribution's response headers policy,
   declared beside it in the `static_site` module, sends the security headers:
-  a `Content-Security-Policy` that names the page's own origin, the API
-  over HTTPS and over the websocket (both from `api_url`), the error
-  reporter's origin when a DSN is set, and nothing else, with no unsafe
-  directive because the build has no inline script or style; plus
-  `nosniff`, `DENY` framing, the referrer policy, and HSTS. An offline
-  `terraform test` in the module pins the header. The local nginx sends
-  no such header: the API and GlitchTip origins it would name are build
-  arguments the static config cannot read. The company site is the same
+  a `Content-Security-Policy` that names the page's own origin (the API
+  with it) and its socket as `wss://` on the same host, the object store,
+  the error reporter's origin when a DSN is set, and nothing else, with
+  no unsafe directive because the build has no inline script or style;
+  plus `nosniff`, `DENY` framing, the referrer policy, and HSTS. An
+  offline `terraform test` in the module pins the header and the API's
+  behavior. Locally the Vite dev server and the portal container's nginx
+  forward `/v1` to the API the same way. The local nginx sends no
+  security header: the GlitchTip origin it would name is a build argument
+  the static config cannot read. The company site is the same
   module called a second time, with no API and no config: its policy
   names its own origin alone, and a missing path gets its `404.html`.
 

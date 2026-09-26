@@ -26,6 +26,7 @@ from tadas.services.api.types.admin import (
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
     OperatorView,
+    OperatorWorkItemView,
     PlatformSizeView,
     TotpConfirmedView,
 )
@@ -167,3 +168,14 @@ async def comp_plan(
     """Grants the org a plan with no payment, or takes the grant back. A put:
     the same body twice leaves the same grant."""
     return await service.comp_plan(admin, org_id, body)
+
+
+@router.post("/orgs/{org_id}/work/{item_id}/requeue", response_model=OperatorWorkItemView)
+async def requeue_work(
+    admin: OperatorCtx, service: AdminService, org_id: UUID, item_id: UUID
+) -> OperatorWorkItemView:
+    """Sends one failed work item back to the queue, available now, with its
+    attempts reset; the org's diary names the operator who did. Refused
+    with `409 work_not_failed` for an item that is not failed, so a second
+    call finds the first one's work done and says so."""
+    return await service.requeue_work(admin, org_id, item_id)

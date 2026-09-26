@@ -1,6 +1,7 @@
 import asyncio
 from datetime import timedelta
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from contracts.work_storage import make_item
@@ -8,12 +9,19 @@ from contracts.work_storage import make_item
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
-from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
+from tadas.om.exceptions import (
+    LeaseLost,
+    NotAuthorized,
+    NotFound,
+    ValidationFailed,
+    WorkNotFailed,
+)
 from tadas.om.opcontext import (
     AppContext,
     AppType,
     CredentialKind,
     OpContext,
+    OperatorContext,
     OperatorRole,
     RequestContext,
     Role,
@@ -21,8 +29,10 @@ from tadas.om.opcontext import (
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyOptions
+from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
-from tadas.om.work.types.work_item import WorkKind, WorkStatus
+from tadas.om.work.impl.operator import REQUEUED_KIND
+from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 LEASE = timedelta(seconds=30)
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -397,6 +407,116 @@ async def test_a_failed_item_is_a_dead_letter_with_an_audit_event(
     assert [(p.kind, p.seq) for p in seen if isinstance(p, EntityChangedPayload)] == [
         (DEAD_LETTER_KIND, 1)
     ]
+
+
+async def test_a_failure_for_good_is_a_dead_letter_with_attempts_left(
+    managers: Managers, ctx: OpContext
+) -> None:
+    """A refusal is failed at once: the attempt the claim spent stays spent,
+    the rest go unused, and the dead letter is the one an exhausted item
+    leaves."""
+    item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 3})
+    await managers.work.enqueue(ctx, item)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    failed = await managers.work.fail_for_good(claimed[0], claimed[1], "refused: no")
+    assert failed.status is WorkStatus.FAILED and failed.claim_token is None
+    assert (failed.attempts, failed.last_error) == (1, "refused: no")
+    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [(e.kind, e.target_id, e.payload["attempts"]) for e in events] == [
+        (DEAD_LETTER_KIND, item.id, 1)
+    ]
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
+
+
+def operator(role: OperatorRole = OperatorRole.WRITE) -> OperatorContext:
+    """A test double of the operator stage; admission is the tenancy
+    manager's, and this suite is about the queue."""
+    return OperatorContext(
+        request_id=new_id(),
+        app=AppContext(type=AppType.CLI, version="ops@test"),
+        identity_id=new_id(),
+        email="root@example.test",
+        credential_kind=CredentialKind.LOGIN,
+        credential_id=new_id(),
+        permissions=operator_permissions_of(role),
+    )
+
+
+async def failed_item(managers: Managers, ctx: OpContext) -> tuple[UUID, WorkItem]:
+    item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 3})
+    await managers.work.enqueue(ctx, item)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    failed = await managers.work.fail_for_good(claimed[0], claimed[1], "refused: no")
+    return item.id, failed
+
+
+async def test_an_operator_requeues_a_failed_item_as_a_fresh_one(
+    managers: Managers, infra: InfraLocalImpl, ctx: OpContext
+) -> None:
+    woken: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        woken.append(payload)
+
+    item_id, failed = await failed_item(managers, ctx)
+    infra.get_topics().subscribe(Topics.WORK_AVAILABLE, "test", record)
+    admin = operator()
+    requeued = await managers.work_operator.requeue(admin, ctx.org_id, item_id)
+    assert requeued.status is WorkStatus.QUEUED
+    assert (requeued.attempts, requeued.last_error, requeued.claim_token) == (0, None, None)
+    assert requeued.available_at <= utcnow()
+    assert requeued.updated_by == admin.identity_id, "the operator is the actor"
+    assert [p.kind for p in woken if isinstance(p, WorkAvailablePayload)] == ["NOOP"]
+
+    # The diary names the requeue, who made it, and what the item was.
+    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [e.kind for e in events] == [DEAD_LETTER_KIND, REQUEUED_KIND]
+    audit = events[-1]
+    assert (audit.target_id, audit.actor_id, audit.request_id) == (
+        item_id,
+        admin.identity_id,
+        admin.request_id,
+    )
+    assert audit.payload["last_error"] == failed.last_error
+    assert audit.payload["attempts"] == failed.attempts
+
+    # It runs again, with every attempt it had.
+    again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert again is not None and again[1].id == item_id and again[1].attempts == 1
+
+
+async def test_a_requeue_of_an_item_that_is_not_failed_is_refused(
+    managers: Managers, ctx: OpContext
+) -> None:
+    item_id, _ = await failed_item(managers, ctx)
+    await managers.work_operator.requeue(operator(), ctx.org_id, item_id)
+    with pytest.raises(WorkNotFailed):  # queued now
+        await managers.work_operator.requeue(operator(), ctx.org_id, item_id)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    with pytest.raises(WorkNotFailed):  # running
+        await managers.work_operator.requeue(operator(), ctx.org_id, item_id)
+    await managers.work.complete(claimed[0], claimed[1])
+    with pytest.raises(WorkNotFailed):  # done
+        await managers.work_operator.requeue(operator(), ctx.org_id, item_id)
+    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [e.kind for e in events].count(REQUEUED_KIND) == 1
+
+
+async def test_a_requeue_takes_the_write_permission_and_a_real_item(
+    managers: Managers, ctx: OpContext
+) -> None:
+    item_id, _ = await failed_item(managers, ctx)
+    with pytest.raises(NotAuthorized):
+        await managers.work_operator.requeue(operator(OperatorRole.READ), ctx.org_id, item_id)
+    with pytest.raises(NotFound):
+        await managers.work_operator.requeue(operator(), ctx.org_id, new_id())
+    with pytest.raises(NotFound):  # another org's id finds nothing
+        await managers.work_operator.requeue(operator(), new_id(), item_id)
+    stored = await managers.work_operator.requeue(operator(), ctx.org_id, item_id)
+    assert stored.status is WorkStatus.QUEUED
 
 
 async def test_a_retry_that_still_has_attempts_is_not_a_dead_letter(

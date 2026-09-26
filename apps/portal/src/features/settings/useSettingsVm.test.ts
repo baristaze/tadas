@@ -9,6 +9,7 @@ import {
   ApiError,
   type ApiKeyPageView,
   type ApiKeyView,
+  type MembershipPageView,
   type MeView,
   type SlackInstallationView,
   type SlackStatusView,
@@ -48,6 +49,8 @@ const me: MeView = {
   user: { id: "u1", email: "owner@example.test", display_name: "Owner", created_at: "2026-09-01T00:00:00Z" },
   org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z", deleted_at: null },
 };
+
+const bob = { id: "u2", email: "bob@example.test", display_name: "Bob", created_at: "2026-09-02T00:00:00Z" };
 
 const keyOf = (id: string, name: string): ApiKeyView => ({
   id,
@@ -90,8 +93,16 @@ beforeEach(() => {
   held.vm = undefined;
   net.reads.clear();
   net.writes.length = 0;
+  // Before "/v1/me", which is a prefix of it: the first prefix that matches answers.
+  net.reads.set("/v1/memberships", {
+    items: [
+      { id: "m1", user_id: "u1", role: "owner", teams: [] },
+      { id: "m2", user_id: "u2", role: "member", teams: [] },
+    ],
+    next_cursor: null,
+  } satisfies MembershipPageView);
   net.reads.set("/v1/me", me);
-  net.reads.set("/v1/users", { items: [me.user], next_cursor: null } satisfies UserPageView);
+  net.reads.set("/v1/users", { items: [me.user, bob], next_cursor: null } satisfies UserPageView);
   net.reads.set("/v1/api-keys", {
     items: [keyOf("k1", "first"), keyOf("k2", "second")],
     next_cursor: null,
@@ -191,4 +202,24 @@ it("removes Tadas from Slack and says it is gone", async () => {
   await tick();
   expect(vm().slack.installed).toBe(false);
   expect(vm().slack.summary.line).toBe("Not installed.");
+});
+
+it("shows each member's role, lets an owner give Bob another, and says a refusal", async () => {
+  net.reads.set("/v1/me", { ...me, permissions: [...me.permissions, "manage_members"] });
+  await mount();
+  for (let turn = 0; turn < 20 && vm().members.some((m) => m.role === null); turn += 1) await tick();
+  expect(vm().members.map((m) => [m.name, m.role, m.roles.length > 0])).toEqual([
+    ["Owner", "owner", false],
+    ["Bob", "member", true],
+  ]);
+  await act(async () => void vm().setRole("u2", "owner"));
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/memberships/u2"]);
+  await act(async () => net.writes[0]!.resolve({ id: "m2", user_id: "u2", role: "owner", teams: [] }));
+  await act(async () => void vm().setRole("u2", "viewer"));
+  await act(async () =>
+    net.writes[1]!.reject(new ApiError(403, "not_authorized", "cannot change the role of a member above your own", "req-3")),
+  );
+  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual([
+    "Cannot change the role of a member above your own.",
+  ]);
 });

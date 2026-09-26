@@ -978,3 +978,10 @@ li:hover .tadas-handle,
     transition: none;
   }
 }
+
+/* A value in a table that opens a menu to change it: the border says so. */
+.tadas-role-trigger {
+  height: 28px;
+  color: var(--tadas-text);
+  border-color: var(--tadas-border);
+}

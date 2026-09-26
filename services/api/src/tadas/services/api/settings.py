@@ -36,6 +36,17 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # client and the header is ignored; the cloud passes the VPC block the
     # load balancer lives in.
     trusted_proxies: list[str] = []
+    # What the portal's CDN distribution sends in the X-Tadas-Edge header on
+    # every request it forwards. The distribution appends the viewer's address
+    # to X-Forwarded-For and the load balancer appends the distribution's, so
+    # the trusted proxies above name the edge as the client; beside this
+    # value, and only beside it, the address the edge appended names the
+    # client instead. Any CDN customer's distribution appends an address, and
+    # its owner can write the header before it, so the edge's own address
+    # range is never trusted. Unset, a request through the edge is counted by
+    # the edge's address. It needs trusted proxies: the edge is one hop
+    # further in than they are.
+    edge_secret: SecretStr | None = None
 
     # Every number in this file is illustrative, and deliberately generous:
     # this system is here to show the shape, and a limit that trips during a
@@ -167,6 +178,16 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
                             f"{setting} names {uri!r}; a deployed environment's "
                             f"{what} comes back to its own https address"
                         )
+        return self
+
+    @model_validator(mode="after")
+    def the_edge_stands_behind_a_trusted_proxy(self) -> ApiSettings:
+        """The edge's hop is counted from the trusted proxies' hops, so an
+        edge secret with no trusted proxy has nothing to count from."""
+        if self.edge_secret is not None and not self.trusted_proxies:
+            raise ValueError("edge_secret is set and trusted_proxies is empty; the edge needs both")
+        if self.edge_secret is not None and len(self.edge_secret.get_secret_value()) < 32:
+            raise ValueError("edge_secret is shorter than 32 characters")
         return self
 
     @field_validator("trusted_proxies")
