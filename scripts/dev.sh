@@ -10,7 +10,9 @@ cd "$(dirname "$0")/.."
 # (TADAS_CORS_ORIGINS=["http://..."]). Sourcing it runs the second word as a
 # command and strips the quotes out of the first. Read it the way
 # pydantic-settings and compose do instead: one KEY=VALUE per line, comments
-# and blanks skipped, one layer of matching quotes removed, no expansion.
+# and blanks skipped, one layer of matching quotes removed, no expansion. The
+# file is defaults: a variable the shell exports wins over it, as it does for
+# the settings, for compose, and for the Makefile.
 if [ -f .env ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
@@ -19,6 +21,7 @@ if [ -f .env ]; then
     key="${line%%=*}"
     value="${line#*=}"
     case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    [ -n "${!key+set}" ] && continue
     case "$value" in
       \"*\") value="${value:1:${#value}-2}" ;;
       \'*\') value="${value:1:${#value}-2}" ;;
