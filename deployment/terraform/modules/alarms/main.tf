@@ -310,7 +310,7 @@ resource "aws_cloudwatch_metric_alarm" "sweep_duration" {
 }
 
 # The work queue and the outbox. Both are Postgres tables, so nothing
-# publishes a metric about them but the worker: each sweep pass reads three
+# publishes a metric about them but the worker: each sweep pass reads four
 # numbers across every tenant and writes them as fields of its one line, and
 # a metric filter per field on the worker's log group turns them into
 # metrics of raw values. Several workers each write their own line, and every
@@ -329,6 +329,7 @@ locals {
     work_oldest_ready_seconds     = "Seconds"
     work_failed_recently          = "Count"
     outbox_oldest_pending_seconds = "Seconds"
+    outbox_failed_recently        = "Count"
   }
 }
 
@@ -410,6 +411,32 @@ resource "aws_cloudwatch_metric_alarm" "outbox_lag" {
   evaluation_periods  = var.evaluation_periods
   comparison_operator = "GreaterThanThreshold"
   threshold           = var.outbox_oldest_pending_seconds
+  treat_missing_data  = "ignore"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+
+  depends_on = [aws_cloudwatch_log_metric_filter.sweep_gauge]
+}
+
+# The outbox's dead letter: a row whose relay attempts ran out. It is no
+# longer pending, so the lag above no longer sees it, and the change it
+# announced never reached the stream or the queue: a push nobody received,
+# or work that never started. One is enough to look, as on the work queue.
+# The worker counts the rows failed for good in the last fifteen minutes, so
+# the alarm fires within a pass of the failure and turns OK a quarter of an
+# hour after the last one; the worker's `failed for good` line and the org's
+# diary keep the record.
+resource "aws_cloudwatch_metric_alarm" "outbox_dead_letter" {
+  alarm_name          = "${local.prefix}-outbox-dead-letter"
+  alarm_description   = "An outbox row failed for good in the last fifteen minutes: its relay attempts ran out, and the change it announced never reached the event stream or the work queue."
+  namespace           = "Tadas"
+  metric_name         = "tadas_outbox_failed_recently"
+  statistic           = "Maximum"
+  period              = var.period_seconds
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
   treat_missing_data  = "ignore"
   alarm_actions       = [aws_sns_topic.alarms.arn]
   ok_actions          = [aws_sns_topic.alarms.arn]

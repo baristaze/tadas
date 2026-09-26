@@ -93,6 +93,7 @@ async def test_a_poison_row_does_not_block_the_rows_behind_it_and_dies_after_max
     assert failed.done_at is None and failed.failed_at is None and failed.attempts == 1
     assert failed.last_error == "RuntimeError: cannot append this one"
     assert dead_letters() == counted
+    assert await relay.failed_within(timedelta(minutes=15)) == 0, "a retry is no dead letter"
     assert [e.kind for e in await events.read_after(org, 0, 10)] == ["tasks.task.created"]
 
     # Second sweep: the last attempt is spent; the row is a dead letter with
@@ -101,6 +102,9 @@ async def test_a_poison_row_does_not_block_the_rows_behind_it_and_dies_after_max
     failed = {r.id: r for _, r in outbox._rows.values()}[poison_row.id]
     assert failed.failed_at is not None and failed.attempts == 2
     assert dead_letters() == counted + 1
+    # The dead-letter gauge counts it for its window, where the lag no longer can.
+    assert await relay.failed_within(timedelta(minutes=15)) == 1
+    assert await relay.oldest_pending_age() == timedelta(0)
     audit = [e for e in await events.read_after(org, 0, 10) if e.kind == DEAD_LETTER_KIND]
     assert len(audit) == 1
     assert audit[0].target_id == poison_row.id and audit[0].actor_id == poison_row.actor_id

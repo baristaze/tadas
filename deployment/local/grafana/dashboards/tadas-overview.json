@@ -255,7 +255,7 @@
       "gridPos": {
         "x": 0,
         "y": 20,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
@@ -295,9 +295,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 20,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
@@ -337,9 +337,9 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "x": 16,
+        "x": 12,
         "y": 20,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
       "fieldConfig": {
@@ -367,6 +367,48 @@
           },
           "expr": "max(tadas_outbox_oldest_pending_seconds)",
           "legendFormat": "oldest pending"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Outbox rows failed in the last fifteen minutes",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 20,
+        "w": 6,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(tadas_outbox_failed_recently)",
+          "legendFormat": "failed"
         }
       ]
     }

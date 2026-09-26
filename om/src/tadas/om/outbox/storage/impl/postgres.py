@@ -109,6 +109,13 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
+    async def count_failed_since(self, since: datetime) -> int:
+        # A range of the partial `ix_outbox_rows_failed_at`, which holds the
+        # dead letters alone: the comparison implies `failed_at IS NOT NULL`.
+        stmt = select(func.count()).where(OutboxRows.failed_at > since)
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
+
     async def purge_done(self, before: datetime, limit: int) -> int:
         # Two statements, not one with an OR: each branch has an index of its
         # own, `ix_outbox_rows_done_at_id` and the partial

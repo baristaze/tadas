@@ -106,6 +106,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
         ("OutboxStorageInterface", "oldest_pending_at"),
+        # The outbox's dead-letter gauge, read across tenants like the lag's.
+        ("OutboxStorageInterface", "count_failed_since"),
         ("SlackStorageInterface", "read_installation_by_team"),
         ("SlackStorageInterface", "redeem_install_state"),
     }
@@ -136,6 +138,7 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxRelayInterface", "relay_pending"),
         ("OutboxRelayInterface", "purge_done"),
         ("OutboxRelayInterface", "oldest_pending_age"),
+        ("OutboxRelayInterface", "failed_within"),
         # And the release of the hold the API's edge keeps around a request,
         # by the request id the rows name, before any stage is established.
         ("OutboxRelayInterface", "release"),

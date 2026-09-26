@@ -196,6 +196,9 @@ class OutboxRelayImpl(OutboxRelayInterface):
         oldest = await self._storage.oldest_pending_at()
         return timedelta(0) if oldest is None else max(utcnow() - oldest, timedelta(0))
 
+    async def failed_within(self, window: timedelta) -> int:
+        return await self._storage.count_failed_since(utcnow() - window)
+
     async def purge_done(self, retention: timedelta, limit: int) -> int:
         purged = await self._storage.purge_done(utcnow() - retention, limit)
         if purged:
