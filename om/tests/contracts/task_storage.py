@@ -10,6 +10,14 @@ import pytest
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import PreconditionFailed, TenantMismatch
+from tadas.om.orchestrations.rules import advanced
+from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
+from tadas.om.orchestrations.types.orchestration import (
+    Orchestration,
+    OrchestrationKind,
+    OrchestrationStatus,
+    Step,
+)
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.rules import follows
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -18,12 +26,17 @@ from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
+        "update_archived_in_step",
         "count_open_tasks",
         "create_task",
+        "create_tasks_in_step",
         "mark_reminded",
         "purge_deleted",
         "purge_tenant",
+        "read_archivable",
+        "read_archived_tasks",
         "read_done_tasks",
+        "read_last_place",
         "read_open_places",
         "read_open_tasks",
         "read_recent_open_tasks",
@@ -108,10 +121,197 @@ def make_task(
     )
 
 
+def make_record(kind: OrchestrationKind = OrchestrationKind.TASK_IMPORT) -> Orchestration:
+    now = utcnow()
+    actor = new_id()
+    return Orchestration(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=actor,
+        updated_by=actor,
+        kind=kind,
+        input={"file_id": str(new_id())},
+    )
+
+
+def step_of(record: Orchestration, cursor: int, *, finished: bool = False) -> Step:
+    """The step a worker writes after `record`: the next cursor, conditioned
+    on the version it read."""
+    after = advanced(
+        record, utcnow(), record.created_by, cursor=cursor, total=None, finished=finished
+    )
+    return Step(record=after, expected_version=record.version)
+
+
+def record_row(org_id: UUID, record: Orchestration) -> OutboxRow:
+    return OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        org_id=org_id,
+        kind="orchestrations.orchestration.updated",
+        target_id=record.id,
+        actor_id=record.created_by,
+        request_id=new_id(),
+        app="worker",
+    )
+
+
 class TaskStorageContract:
     @pytest.fixture
     def storage(self) -> TasksStorageInterface:
         raise NotImplementedError("the concrete test class provides the storage")
+
+    @pytest.fixture
+    def orchestrations(self) -> OrchestrationsStorageInterface:
+        """The records a step lands beside the tasks, over the same database
+        (or the same memory) the storage writes."""
+        raise NotImplementedError("the concrete test class provides the records")
+
+    async def _open(
+        self, orchestrations: OrchestrationsStorageInterface, org_id: UUID
+    ) -> Orchestration:
+        record = make_record()
+        assert await orchestrations.create_orchestration(org_id, record, ())
+        return record
+
+    async def test_a_step_creates_its_tasks_and_moves_the_record_in_one_commit(
+        self, storage: TasksStorageInterface, orchestrations: OrchestrationsStorageInterface
+    ) -> None:
+        org = new_id()
+        record = await self._open(orchestrations, org)
+        first, second = make_task("one", position=1.0), make_task("two", position=2.0)
+        step = step_of(record, 2)
+        written = await storage.create_tasks_in_step(
+            org,
+            [(first, (make_row(org, first),)), (second, (make_row(org, second),))],
+            step,
+            (record_row(org, step.record),),
+        )
+        assert written == (True, True)
+        stored = await orchestrations.read_orchestration(org, record.id)
+        assert stored is not None and stored.cursor == 2 and stored.applied == 2
+        assert stored.version == record.version + 1
+        # The same rows stepped again (a worker that died after the commit,
+        # its item handed to another): the tasks are there, nothing is made
+        # twice, and nothing is counted twice.
+        again = step_of(stored, 2, finished=True)
+        assert await storage.create_tasks_in_step(
+            org, [(first, (make_row(org, first),))], again, ()
+        ) == (False,)
+        final = await orchestrations.read_orchestration(org, record.id)
+        assert final is not None and final.applied == 2
+        assert final.status is OrchestrationStatus.SUCCEEDED
+        assert await storage.count_open_tasks(org, team()) == 2
+
+    async def test_a_step_on_a_record_that_moved_lands_nothing(
+        self, storage: TasksStorageInterface, orchestrations: OrchestrationsStorageInterface
+    ) -> None:
+        org = new_id()
+        record = await self._open(orchestrations, org)
+        task = make_task()
+        stale = Step(record=step_of(record, 1).record, expected_version=record.version + 5)
+        with pytest.raises(PreconditionFailed):
+            await storage.create_tasks_in_step(org, [(task, (make_row(org, task),))], stale, ())
+        assert await storage.read_task(org, task.id) is None
+        assert await orchestrations.read_orchestration(org, record.id) == record
+
+    async def test_create_tasks_in_step_under_another_tenant_lands_nothing(
+        self, storage: TasksStorageInterface, orchestrations: OrchestrationsStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        record = await self._open(orchestrations, org)
+        task = make_task()
+        with pytest.raises(PreconditionFailed):
+            await storage.create_tasks_in_step(
+                other, [(task, (make_row(other, task),))], step_of(record, 1), ()
+            )
+        assert await storage.read_task(other, task.id) is None
+        assert await storage.read_task(org, task.id) is None
+        assert await orchestrations.read_orchestration(org, record.id) == record
+
+    async def test_the_last_place_is_the_bottom_of_the_tenants_open_list(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        assert await storage.read_last_place(org) is None
+        low, high = make_task(position=1.0), make_task(position=5.0)
+        done = make_task(position=9.0, status=TaskStatus.DONE)
+        for task in (low, high, done):
+            await seed(storage, org, task)
+        await seed(storage, other, make_task(position=50.0))
+        assert await storage.read_last_place(org) == (5.0, high.id)
+        assert await storage.read_last_place(new_id()) is None
+
+    async def test_the_cleanup_archives_old_done_tasks_and_leaves_the_rest(
+        self, storage: TasksStorageInterface, orchestrations: OrchestrationsStorageInterface
+    ) -> None:
+        org = new_id()
+        record = await self._open(orchestrations, org)
+        old = make_task("old", status=TaskStatus.DONE, updated_ago=timedelta(days=100))
+        reopened = make_task("reopened", status=TaskStatus.DONE, updated_ago=timedelta(days=95))
+        recent = make_task("recent", status=TaskStatus.DONE, updated_ago=timedelta(days=89))
+        still_open = make_task("open", updated_ago=timedelta(days=200))
+        for task in (old, reopened, recent, still_open):
+            await seed(storage, org, task)
+        before = utcnow() - timedelta(days=90)
+        candidates = await storage.read_archivable(org, before, 10)
+        assert candidates == [old.id, reopened.id]
+        # A person reopens one between the read and the write: the
+        # conditional write leaves it alone.
+        await bump(storage, org, reopened, status=TaskStatus.OPEN, updated_at=utcnow())
+        now = utcnow()
+        step = step_of(record, len(candidates), finished=True)
+        archived = await storage.update_archived_in_step(
+            org,
+            [(task_id, ()) for task_id in candidates],
+            before,
+            now,
+            record.created_by,
+            step,
+            (record_row(org, step.record),),
+        )
+        assert archived == (True, False)
+        stored = await storage.read_task(org, old.id)
+        assert stored is not None and stored.archived_at == now
+        assert stored.version == old.version + 1
+        assert [t.title for t in await storage.read_done_tasks(org, team(), None, 10)] == ["recent"]
+        assert [t.id for t in await storage.read_archived_tasks(org, team(), None, 10)] == [old.id]
+        after = await orchestrations.read_orchestration(org, record.id)
+        assert after is not None and after.applied == 1
+        # A second run archives nothing more: every candidate is archived,
+        # reopened, or too young.
+        assert await storage.read_archivable(org, before, 10) == []
+
+    async def test_update_archived_in_step_under_another_tenant_lands_nothing(
+        self, storage: TasksStorageInterface, orchestrations: OrchestrationsStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        record = await self._open(orchestrations, org)
+        old = make_task(status=TaskStatus.DONE, updated_ago=timedelta(days=100))
+        await seed(storage, org, old)
+        before = utcnow() - timedelta(days=90)
+        with pytest.raises(PreconditionFailed):
+            await storage.update_archived_in_step(
+                other, [(old.id, ())], before, utcnow(), new_id(), step_of(record, 1), ()
+            )
+        stored = await storage.read_task(org, old.id)
+        assert stored is not None and stored.archived_at is None
+
+    async def test_read_archivable_and_the_archived_list_are_tenant_scoped(
+        self, storage: TasksStorageInterface, orchestrations: OrchestrationsStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        record = await self._open(orchestrations, org)
+        old = make_task(status=TaskStatus.DONE, updated_ago=timedelta(days=100))
+        await seed(storage, org, old)
+        before = utcnow() - timedelta(days=90)
+        assert await storage.read_archivable(other, before, 10) == []
+        await storage.update_archived_in_step(
+            org, [(old.id, ())], before, utcnow(), new_id(), step_of(record, 1), ()
+        )
+        assert await storage.read_archived_tasks(other, team(), None, 10) == []
+        assert len(await storage.read_archived_tasks(org, team(), None, 10)) == 1
 
     async def test_round_trip_and_update_by_copy(self, storage: TasksStorageInterface) -> None:
         org = new_id()

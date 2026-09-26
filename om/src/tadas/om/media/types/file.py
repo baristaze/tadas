@@ -11,6 +11,7 @@ class FilePurpose(StrEnum):
 
     TASK_ATTACHMENT = "task_attachment"  # subject_id is the task
     VOICE_DICTATION = "voice_dictation"  # no subject
+    TASK_IMPORT = "task_import"  # a CSV of tasks to import; no subject
 
 
 class FileStatus(StrEnum):

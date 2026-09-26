@@ -1,29 +1,56 @@
 import logging
-from datetime import date, timedelta
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
+from tadas.om.base import PROVENANCE_FIELDS, Platform, derived_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import refuse_past
 from tadas.om.billing.types.plan import Lever
 from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, ValidationFailed
 from tadas.om.media import MediaManagerInterface
-from tadas.om.media.types.file import File, FilePurpose
+from tadas.om.media.rules import BOUNDS
+from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.media.types.page import FilePage
 from tadas.om.opcontext import OpContext, Permission
+from tadas.om.orchestrations import OrchestrationsManagerInterface
+from tadas.om.orchestrations.rules import advanced
+from tadas.om.orchestrations.steps import step_rows
+from tadas.om.orchestrations.types.orchestration import (
+    FailReason,
+    Orchestration,
+    OrchestrationKind,
+    OrchestrationPage,
+    ParkReason,
+    RowError,
+    Step,
+    TaskCleanupInput,
+    TaskImportInput,
+)
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import (
+    CLEANUP_BATCH,
+    IMPORT_BATCH,
+    ImportedTask,
+    ImportFileRefused,
+    cleanup_part,
+    cleanup_period,
     earliest_reminder_time,
+    import_refusal,
+    import_row_part,
+    imported,
     is_between,
+    parse_import,
     position_after,
     reminder_person,
     reminder_time,
     renumbered,
+    room_for,
     top_position,
 )
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -51,6 +78,9 @@ stays one row however long the open list grows."""
 class TasksOptions(Platform):
     max_limit: int = 200
     retention: timedelta = timedelta(days=30)  # a deleted task is purged after this
+    # A done task unchanged this long is archived by the daily cleanup. The
+    # worker's setting; 90 days is illustrative, like the plans' numbers.
+    archive_after: timedelta = timedelta(days=90)
 
 
 class TasksManagerImpl(TasksManagerInterface):
@@ -64,7 +94,9 @@ class TasksManagerImpl(TasksManagerInterface):
         options: TasksOptions,
         *,
         entitlements: EntitlementsInterface,
+        orchestrations: OrchestrationsManagerInterface,
     ) -> None:
+        self._orchestrations = orchestrations
         self._storage = storage
         self._tenancy = tenancy
         self._media = media
@@ -103,6 +135,15 @@ class TasksManagerImpl(TasksManagerInterface):
         self._own(ctx, criterion)
         limit = self._clamp(limit)
         rows = await self._storage.read_done_tasks(ctx.org_id, criterion, before, limit + 1)
+        return self._page(rows, limit)
+
+    async def get_archived_tasks(
+        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
+    ) -> TaskPage:
+        ctx.require(Permission.READ)
+        self._own(ctx, criterion)
+        limit = self._clamp(limit)
+        rows = await self._storage.read_archived_tasks(ctx.org_id, criterion, before, limit + 1)
         return self._page(rows, limit)
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> Task:
@@ -172,6 +213,7 @@ class TasksManagerImpl(TasksManagerInterface):
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             await self._room_for_one_more(ctx)
             changes["position"] = await self._top_position(ctx, exclude=task.id)
+            changes["archived_at"] = None  # an open task is never archived
         rescheduled = task.due_on != current.due_on
         if rescheduled:
             # A new due date has not been reminded of; the reminder the old
@@ -240,6 +282,244 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._write(ctx, deleted, expected_version, "deleted")
         await self._detach_all(ctx, task_id)
         return deleted
+
+    async def restore_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
+        ctx.require(Permission.WRITE)
+        task = await self.get_task(ctx, task_id)
+        if task.archived_at is None:
+            raise ValidationFailed(f"task {task_id} is not archived")
+        restored = task.model_copy(
+            update={
+                "archived_at": None,
+                "updated_at": utcnow(),
+                "updated_by": ctx.user_id,
+                "version": expected_version + 1,
+            }
+        )
+        await self._write(ctx, restored, expected_version, "restored")
+        return restored
+
+    # The import.
+
+    async def create_import_file(self, ctx: OpContext, file: File) -> File:
+        ctx.require(Permission.WRITE)
+        upload = file.model_copy(update={"purpose": FilePurpose.TASK_IMPORT, "subject_id": None})
+        return await self._media.create_file(ctx, upload)
+
+    async def start_import(self, ctx: OpContext, import_id: UUID, file_id: UUID) -> Orchestration:
+        ctx.require(Permission.WRITE)
+        file = await self._media.get_file(ctx, file_id)
+        if file.purpose is not FilePurpose.TASK_IMPORT:
+            raise ValidationFailed(f"file {file_id} was not uploaded to be imported")
+        if file.status is not FileStatus.STORED:
+            raise ValidationFailed(f"file {file_id} has not been uploaded")
+        now = utcnow()
+        record = Orchestration(
+            id=import_id,
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            kind=OrchestrationKind.TASK_IMPORT,
+            input=TaskImportInput(file_id=file_id).model_dump(mode="json"),
+        )
+        return await self._orchestrations.start(ctx, record)
+
+    async def get_import(self, ctx: OpContext, import_id: UUID) -> Orchestration:
+        record = await self._orchestrations.get(ctx, import_id)
+        if record.kind is not OrchestrationKind.TASK_IMPORT:
+            raise NotFound(f"import {import_id} not found")
+        return record
+
+    async def get_imports(self, ctx: OpContext, limit: int) -> OrchestrationPage:
+        return await self._orchestrations.get_recent(ctx, OrchestrationKind.TASK_IMPORT, limit)
+
+    async def resume_import(self, ctx: OpContext, import_id: UUID) -> Orchestration:
+        await self.get_import(ctx, import_id)
+        return await self._orchestrations.resume(ctx, import_id)
+
+    async def step_import(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+        ctx.require(Permission.WRITE)
+        file_id = TaskImportInput.model_validate(dict(record.input)).file_id
+        try:
+            file = await self._media.get_file(ctx, file_id)
+        except NotFound:
+            return await self._orchestrations.fail(ctx, record, FailReason.FILE_GONE)
+        if file.status is not FileStatus.STORED:
+            return await self._orchestrations.fail(ctx, record, FailReason.FILE_GONE)
+        data = await self._media.get_content(ctx, file_id)
+        try:
+            rows = parse_import(data, BOUNDS[FilePurpose.TASK_IMPORT].max_bytes)
+        except ImportFileRefused as refused:
+            return await self._orchestrations.fail(ctx, record, FailReason(refused.reason))
+        batch = rows[record.cursor : record.cursor + IMPORT_BATCH]
+        members = await self._members(ctx) if any(r.assignee_email for r in batch) else {}
+        room = await self._room(ctx)
+        made: list[ImportedTask] = []
+        skipped: list[RowError] = []
+        cursor = record.cursor
+        park: ParkReason | None = None
+        for row in batch:
+            refusal = import_refusal(row, members)
+            if refusal is not None:
+                skipped.append(RowError(row=row.number, reason=refusal))
+            elif room is not None and len(made) >= room:
+                # The guard: this row would take the org past its plan. The
+                # record parks with the cursor on it, keeping every task the
+                # rows before it made.
+                park = ParkReason.PLAN_LIMIT
+                break
+            else:
+                made.append(imported(row, members))
+            cursor += 1
+        now = utcnow()
+        after = advanced(
+            record,
+            now,
+            ctx.user_id,
+            cursor=cursor,
+            total=len(rows),
+            skipped=skipped,
+            finished=cursor >= len(rows),
+            park=park,
+        )
+        tasks = await self._imported_tasks(ctx, record, made, now)
+        rows_after = step_rows(ctx, after)
+        written = await self._storage.create_tasks_in_step(
+            ctx.org_id, tasks, Step(record=after, expected_version=record.version), rows_after
+        )
+        for (_, task_rows), landed in zip(tasks, written, strict=True):
+            if landed:
+                await self._relay_all(ctx, task_rows)
+        await self._relay_all(ctx, rows_after)
+        return after.model_copy(update={"applied": record.applied + sum(written)})
+
+    async def _imported_tasks(
+        self, ctx: OpContext, record: Orchestration, made: Sequence[ImportedTask], now: datetime
+    ) -> list[tuple[Task, tuple[OutboxRow, ...]]]:
+        """The tasks a step makes, with the rows that announce them and
+        schedule their reminders. They go to the bottom of the open list, in
+        the file's order: an import adds to the list and does not reorder
+        what the team placed. A task's id is derived from the import and its
+        row, so a step run twice presents the same ids. An imported task
+        posts nothing to Slack: a file of a thousand rows is not a thousand
+        messages."""
+        if not made:
+            return []
+        last = await self._storage.read_last_place(ctx.org_id)
+        bottom = last[0] if last is not None else -1.0
+        tasks: list[tuple[Task, tuple[OutboxRow, ...]]] = []
+        for offset, row in enumerate(made, start=1):
+            task = Task(
+                id=derived_id(record.id, record.created_at, import_row_part(row.number)),
+                created_at=now,
+                updated_at=now,
+                created_by=ctx.user_id,
+                updated_by=ctx.user_id,
+                title=row.title,
+                notes=row.notes,
+                assignee_id=row.assignee_id,
+                due_on=row.due_on,
+                position=bottom + offset,
+            )
+            rows = (
+                outbox_row(ctx, "tasks.task.created", task.id, {}),
+                *self._reminder_rows(ctx, task),
+            )
+            tasks.append((task, rows))
+        return tasks
+
+    async def _members(self, ctx: OpContext) -> dict[str, UUID]:
+        """The org's members by address, lower-cased: whom a row may assign."""
+        members: dict[str, UUID] = {}
+        after: UUID | None = None
+        while True:
+            page = await self._tenancy.get_users(ctx, after, self._options.max_limit)
+            for user in page.items:
+                if user.deleted_at is None:
+                    members[user.email.lower()] = user.id
+            if not page.has_more or not page.items:
+                return members
+            after = page.items[-1].id
+
+    async def _room(self, ctx: OpContext) -> int | None:
+        """How many more tasks the plan lets the org open now; None when it
+        has no bound. Read at each step, so a plan raised between two steps
+        lets the next one go further."""
+        entitlements = await self._entitlements.get_entitlements(ctx)
+        bound = entitlements.limits.active_tasks
+        if bound is None:
+            return None
+        return room_for(
+            bound, await self._storage.count_open_tasks(ctx.org_id, self._everyone(ctx))
+        )
+
+    # The cleanup.
+
+    async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
+        ctx.require(Permission.WRITE)
+        now = utcnow()
+        before = now - self._options.archive_after
+        if not await self._storage.read_archivable(ctx.org_id, before, 1):
+            return None
+        period = cleanup_period(now)
+        day = datetime.combine(date.fromisoformat(period), time(), tzinfo=UTC)
+        record_id = derived_id(ctx.org_id, day, cleanup_part(period))
+        try:
+            return await self._orchestrations.get(ctx, record_id)
+        except NotFound:
+            pass
+        record = Orchestration(
+            id=record_id,
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            kind=OrchestrationKind.TASK_CLEANUP,
+            input=TaskCleanupInput(
+                older_than_days=self._options.archive_after.days, before=before
+            ).model_dump(mode="json"),
+            period=period,
+        )
+        return await self._orchestrations.start(ctx, record)
+
+    async def step_cleanup(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+        ctx.require(Permission.WRITE)
+        before = TaskCleanupInput.model_validate(dict(record.input)).before
+        ids = await self._storage.read_archivable(ctx.org_id, before, CLEANUP_BATCH)
+        now = utcnow()
+        after = advanced(
+            record,
+            now,
+            ctx.user_id,
+            cursor=record.cursor + len(ids),
+            total=None,
+            finished=len(ids) < CLEANUP_BATCH,
+        )
+        candidates = [
+            (task_id, (outbox_row(ctx, "tasks.task.archived", task_id, {}),)) for task_id in ids
+        ]
+        rows_after = step_rows(ctx, after)
+        archived = await self._storage.update_archived_in_step(
+            ctx.org_id,
+            candidates,
+            before,
+            now,
+            ctx.user_id,
+            Step(record=after, expected_version=record.version),
+            rows_after,
+        )
+        for (_, task_rows), landed in zip(candidates, archived, strict=True):
+            if landed:
+                await self._relay_all(ctx, task_rows)
+        await self._relay_all(ctx, rows_after)
+        if any(archived):
+            log.info("archived %d done tasks in org %s", sum(archived), ctx.org_id)
+        return after.model_copy(update={"applied": record.applied + sum(archived)})
+
+    async def _relay_all(self, ctx: OpContext, rows: Sequence[OutboxRow]) -> None:
+        for row in rows:
+            await self._relay.relay(ctx.org_id, row)
 
     async def count_active_tasks(self, ctx: OpContext) -> int:
         ctx.require(Permission.READ)

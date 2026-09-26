@@ -19,10 +19,16 @@ class TaskScope(StrEnum):
 
 
 class Task(Identifiable, Trackable, SoftDeletable):
-    MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = ("position", "version", "reminded_at")
+    MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = (
+        "position",
+        "version",
+        "reminded_at",
+        "archived_at",
+    )
     """A place in the open list is set by the create, the move, and the
     reopen; the version by every write; when the reminder went out by the
-    reminder itself. An update the caller shaped keeps all three as stored."""
+    reminder itself; the archive by the cleanup, the restore, and the reopen.
+    An update the caller shaped keeps all four as stored."""
 
     title: str
     notes: str = ""
@@ -43,6 +49,11 @@ class Task(Identifiable, Trackable, SoftDeletable):
     # When the reminder for the current `due_on` went out; None while it has
     # not. A new `due_on` clears it.
     reminded_at: datetime | None = None
+    # When the daily cleanup archived the task: a done task left unchanged
+    # for the archive age (90 days by default). It leaves the done list and
+    # every list and count shown by default, and it can still be read and
+    # restored. None for a task that is not archived.
+    archived_at: datetime | None = None
 
 
 class DueReminder(Platform):

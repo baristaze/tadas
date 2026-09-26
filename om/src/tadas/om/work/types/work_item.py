@@ -11,6 +11,7 @@ from pydantic import Field
 
 from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
 from tadas.om.opcontext import Permission
+from tadas.om.orchestrations.types.orchestration import ParkReason
 
 
 class WorkKind(StrEnum):
@@ -18,6 +19,8 @@ class WorkKind(StrEnum):
     SYNC_SEATS = "SYNC_SEATS"  # a per-seat plan's quantity follows the member count
     TASK_REMINDER = "TASK_REMINDER"  # a task's due date came: remind the team
     SLACK_POST = "SLACK_POST"  # a message to the Slack channel the org bound
+    ORCHESTRATION = "ORCHESTRATION"  # one step of a long-running record
+    WAKE_PARKED = "WAKE_PARKED"  # the reason an org's records parked for is gone
 
 
 WORK_ROW_PREFIX = "work."
@@ -120,11 +123,29 @@ class SlackPostPayload(Platform):
     event: SlackPostEvent
 
 
+class OrchestrationPayload(ScheduledPayload):
+    """One step of the long-running record the item targets. The step reads
+    the record when it runs: its status, its cursor, and its version, which
+    the step's write is conditioned on. `not_before` staggers the steps a
+    sweep resumes, so a dependency that came back is not met by every parked
+    record at once."""
+
+
+class WakeParkedPayload(Platform):
+    """The reason the org's parked records waited for is gone (a plan that
+    rose clears `plan_limit`); the item's target is the org. Every record
+    parked for it is resumed when the item runs."""
+
+    reason: ParkReason
+
+
 WORK_PAYLOADS: dict[WorkKind, type[Platform]] = {
     WorkKind.NOOP: NoopPayload,
     WorkKind.SYNC_SEATS: SyncSeatsPayload,
     WorkKind.TASK_REMINDER: TaskReminderPayload,
     WorkKind.SLACK_POST: SlackPostPayload,
+    WorkKind.ORCHESTRATION: OrchestrationPayload,
+    WorkKind.WAKE_PARKED: WakeParkedPayload,
 }
 """The payload shape of every kind; enqueue validates the item's payload against it."""
 
@@ -133,6 +154,8 @@ WORK_ENQUEUE_PERMISSIONS: dict[WorkKind, Permission] = {
     WorkKind.SYNC_SEATS: Permission.MANAGE_MEMBERS,
     WorkKind.TASK_REMINDER: Permission.WRITE,
     WorkKind.SLACK_POST: Permission.WRITE,
+    WorkKind.ORCHESTRATION: Permission.WRITE,
+    WorkKind.WAKE_PARKED: Permission.WRITE,
 }
 """The permission that asks for each kind. The person who asks authorizes
 the whole run once, so the permission has to be as wide as the run: every
