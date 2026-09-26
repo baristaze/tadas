@@ -86,12 +86,24 @@ second lane is a second replica told its lane.
   item now. A renewal that fails for any other reason is retried, and
   the task is cancelled at half the lease if none succeeds, so no
   worker keeps working an item it may no longer settle.
-- **The sweep**, every thirty seconds by default, under one service
+- **The sweep**, every thirty seconds by default. The requeue and the
+  relay reach every org at once; the rest runs under one service
   context per org, the system scope first and deleted orgs included:
   - **Requeue** items whose lease has expired, or fail them when their
-    attempts are spent. One sweep takes a batch per org (a hundred by
-    default, `requeue_batch`), bounded in the statement; the rest wait
-    for the next sweep.
+    attempts are spent. This runs first, once for every org together,
+    in the system scope: a batch of a hundred at a time (`requeue_batch`),
+    chosen with `FOR UPDATE SKIP LOCKED` and again while a batch comes
+    back full, so a crashed worker's item waits one sweep at most. An
+    org's items come back staggered, five seconds apart. An item whose
+    attempts are spent is a dead letter, named by an event in its org's
+    diary; an org that is gone has no diary, so it is logged and counted.
+  - **Relay** the outbox rows the request path left behind, one
+    attempt each with a growing delay, and fail the ones whose
+    attempts are spent. This runs next, for every org together, a
+    hundred rows at a time (`outbox_batch`) and again while a batch
+    comes back whole, so a backlog after an outage of the bus drains at
+    the pace of the budget. A batch with a row that failed ends it, so
+    a bus that is still down is not asked again until the next sweep.
   - **Purge** each namespace's rows past its retention: deleted tasks
     (their attachments first, so a detach that failed when the task was
     deleted is tried again, and the task waits for the next sweep while
@@ -115,9 +127,6 @@ second lane is a second replica told its lane.
     key, so the first sweep of the day opens it and every later one
     opens nothing. No scheduler is involved. It runs whenever its org is
     swept, before any second round of purges, so no budget skips it.
-  - **Relay** the outbox rows the request path left behind, one
-    attempt each with a growing delay, and fail the ones whose
-    attempts are spent.
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
 
@@ -125,9 +134,10 @@ second lane is a second replica told its lane.
   default, chosen with `FOR UPDATE SKIP LOCKED`, so no statement grows
   with a backlog past the database's statement deadline and two workers
   split a backlog between them. A purge whose batch comes back full runs
-  again while the sweep's budget lasts, twenty seconds by default. Past
-  the budget the sweep takes no new org, and the next sweep starts at the
-  org it stopped at, so every org is reached in turn. An org deleted
+  again while the sweep's budget lasts, twenty seconds by default, and so
+  do the requeue and the relay. Past the budget the sweep takes no new
+  org, but always one, and the next sweep starts at the org it stopped
+  at, so every org is reached in turn. An org deleted
   past its retention that a sweep finds nothing left of is marked
   purged, and the sweep leaves it out from then on. Each sweep logs one
   line with its duration, which the sweep alarm reads.

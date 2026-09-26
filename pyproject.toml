@@ -97,7 +97,7 @@ reason = "the unique index is (org_id, idempotency_key), led by the tenant as th
 [[tool.arch-check.exception]]
 rule = "STO-14"
 path = "om/src/tadas/om/slack/storage/tables/slack.py"
-adr = "docs/adr/0042-a-unique-rule-on-org-id-alone-sits-beside-the-purge-index.md"
+adr = "docs/adr/0043-a-unique-rule-on-org-id-alone-sits-beside-the-purge-index.md"
 reason = "the org_id index is the partial unique rule of one living installation per org, not a lookup the compound index makes useless"
 
 # The company site is a page, not an app: HTML and CSS on Vite, no script,
@@ -143,6 +143,7 @@ tenantless = [
     "TenancyStorageInterface.write_totp_secret",
     "WorkStorageInterface.claim_next",
     "WorkStorageInterface.purge_items",
+    "WorkStorageInterface.requeue_stale",
 ]
 
 # The sites that build a stage above the request stage, the same list

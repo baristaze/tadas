@@ -1,4 +1,4 @@
-# ADR 0042: A unique rule on org_id alone sits beside the purge's index
+# ADR 0043: A unique rule on org_id alone sits beside the purge's index
 
 **Status**: accepted (2026-10-03).
 
@@ -39,3 +39,7 @@ The exception in `pyproject.toml` names this record, for STO-14 on
 index added to that table later is the violation the rule means, and
 the exception would hide it; the table's comment says why each index
 is there, so a reader sees what belongs.
+
+The guideline's next release stops reading a unique `org_id` index as
+the one STO-14 forbids. The exception, and this record, go when Tadas
+pins that release.

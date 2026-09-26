@@ -1,5 +1,6 @@
-"""The purges, held by a live Postgres: each one's statements are served by an
-index, and a row another transaction holds is skipped, not waited on.
+"""The purges and the sweep's requeue of expired leases, held by a live
+Postgres: each one's statements are served by an index, and a row another
+transaction holds is skipped, not waited on.
 
 The plans are read off the statements the storage impls send, captured as
 they go to the driver, so what is explained is the purge itself and not a
@@ -35,7 +36,7 @@ from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 from tadas.om.work.storage.impl.postgres import WorkStoragePostgresImpl
-from tadas.om.work.types.work_item import WorkStatus
+from tadas.om.work.types.work_item import WorkKind, WorkStatus
 
 pytestmark = pytest.mark.integration
 
@@ -213,6 +214,49 @@ async def test_a_cross_tenant_purge_skips_a_row_another_transaction_holds(
         assert await storage.purge_items(cut, 10) == 2
         await holder.rollback()
     assert await storage.purge_items(cut, 10) == 1
+
+
+async def test_the_requeue_of_expired_leases_reads_its_index_across_tenants(
+    watched: tuple[LoginSessions, list[AsyncEngine]],
+) -> None:
+    (requeue,) = await plans(
+        watched,
+        DatabaseRole.QUEUE,
+        EMPTY_UUID,
+        lambda: WorkStoragePostgresImpl(watched[0]).requeue_stale(utcnow(), timedelta(0), 100),
+    )
+    assert served(requeue, "ix_work_items_status_lease_expires_at"), requeue
+
+
+async def test_the_requeue_skips_an_item_another_transaction_holds(
+    pg_sessions: LoginSessions,
+) -> None:
+    """An item a worker is renewing or settling is locked by that write; the
+    requeue takes the others and leaves it for the next call, never waits."""
+    storage = WorkStoragePostgresImpl(pg_sessions)
+    while await storage.requeue_stale(utcnow(), timedelta(0), 1000):
+        pass  # the expired leases the cases before this one left
+    lane = f"requeue-{new_id().hex[-12:]}"
+    org_a, org_b = new_id(), new_id()
+    for org in (org_a, org_b, org_b):
+        await storage.create_item(org, make_item(lane=lane))
+    claimed = []
+    for _ in range(3):
+        found = await storage.claim_next(lane, [WorkKind.NOOP], "w1", timedelta(seconds=-1))
+        assert found is not None
+        claimed.append(found)
+    held_org, held = claimed[0]
+    async with pg_sessions.system[DatabaseRole.QUEUE]() as holder:
+        await set_scope(holder, EMPTY_UUID, None, None)
+        await holder.execute(
+            text("SELECT id FROM queue.work_items WHERE id = :id FOR UPDATE"), {"id": held.id}
+        )
+        moved = await storage.requeue_stale(utcnow(), timedelta(0), 10)
+        assert sorted(item.id for _, item in moved) == sorted(i.id for _, i in claimed[1:])
+        await holder.rollback()
+    assert [
+        (org, item.id) for org, item in await storage.requeue_stale(utcnow(), timedelta(0), 10)
+    ] == [(held_org, held.id)]
 
 
 async def test_a_session_purge_skips_a_row_another_transaction_holds(

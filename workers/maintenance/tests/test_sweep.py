@@ -1,7 +1,9 @@
-"""The sweep's pass: its budget and where the next pass resumes, a purge
-called again while its batch comes back full, a deleted tenant marked purged
-once nothing of it is left and left out after, the tenant's expiry read once
-per pass, and the pass's duration on its own line."""
+"""The sweep's pass: the requeue of expired leases and the outbox relay, once
+a pass across tenants and again while a batch comes back full, its budget and
+where the next pass resumes, a purge called again while its batch comes back
+full, a deleted tenant marked purged once nothing of it is left and left out
+after, the tenant's expiry read once per pass, and the pass's duration on its
+own line."""
 
 import json
 import logging
@@ -28,18 +30,23 @@ from tadas.workers.maintenance.main import build_loop
 
 class Tenants(WorkManagerInterface):
     """The part of the work manager the sweep asks: a fixed list of tenants,
-    nothing stale, nothing to purge across tenants, and a record of the
-    tenants it was asked to mark purged. A partial double."""
+    the counts the requeue returns in turn (nothing stale unless given),
+    nothing to purge across tenants, and a record of the calls in order and
+    of the tenants it was asked to mark purged. A partial double."""
 
-    def __init__(self, contexts: Sequence[OpContext]) -> None:
+    def __init__(self, contexts: Sequence[OpContext], requeued: Sequence[int] = (0,)) -> None:
         self.contexts = list(contexts)
         self.marked: list[UUID] = []
+        self.requeued = list(requeued)
+        self.calls: list[str] = []
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
+        self.calls.append("contexts")
         return list(self.contexts)
 
-    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
-        return 0
+    async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
+        self.calls.append("requeue")
+        return self.requeued.pop(0) if len(self.requeued) > 1 else self.requeued[0]
 
     async def purge_items(self) -> int:
         return 0
@@ -52,18 +59,23 @@ class Tenants(WorkManagerInterface):
 Tenants.__abstractmethods__ = frozenset()
 
 
-def listed(contexts: Sequence[OpContext]) -> Tenants:
-    return Tenants(contexts)  # pyright: ignore[reportAbstractUsage] (a partial double)
+def listed(contexts: Sequence[OpContext], requeued: Sequence[int] = (0,)) -> Tenants:
+    return Tenants(contexts, requeued)  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
 class Outbox(OutboxRelayInterface):
-    """The part of the relay the sweep asks, counting its purges. A partial double."""
+    """The part of the relay the sweep asks: the counts the relay returns in
+    turn (nothing pending unless given), counting its relays and its purges.
+    A partial double."""
 
-    def __init__(self) -> None:
+    def __init__(self, relayed: Sequence[int] = (0,)) -> None:
         self.purges = 0
+        self.relays = 0
+        self.relayed = list(relayed)
 
     async def relay_pending(self, limit: int) -> int:
-        return 0
+        self.relays += 1
+        return self.relayed.pop(0) if len(self.relayed) > 1 else self.relayed[0]
 
     async def purge_done(self, retention: timedelta, limit: int) -> int:
         self.purges += 1
@@ -73,8 +85,8 @@ class Outbox(OutboxRelayInterface):
 Outbox.__abstractmethods__ = frozenset()
 
 
-def quiet_outbox() -> Outbox:
-    return Outbox()  # pyright: ignore[reportAbstractUsage] (a partial double)
+def quiet_outbox(relayed: Sequence[int] = (0,)) -> Outbox:
+    return Outbox(relayed)  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
 def service_contexts(count: int) -> list[OpContext]:
@@ -326,3 +338,64 @@ async def test_a_backlog_spends_no_budget_a_chore_needs(tmp_path: Path) -> None:
         await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     ids = sorted(ctx.org_id for ctx in contexts)
     assert calls == [(name, org_id) for org_id in ids for name in ("backlog", "cleanup")]
+
+
+async def test_the_requeue_runs_once_a_pass_across_tenants_before_any_tenant(
+    tmp_path: Path,
+) -> None:
+    """However many tenants there are, and with no budget at all, a pass
+    requeues expired leases in one call, before it lists the tenants, so a
+    crashed worker's item waits one pass and not its tenant's turn."""
+    container = build_container(tmp_path)
+    work = listed(service_contexts(3))
+    calls: list[tuple[str, UUID]] = []
+    loop = sweeping(
+        container,
+        work,
+        {"one": recording(calls, "one")},
+        fast_options(sweep_budget=timedelta(0)),
+    )
+    for _ in range(2):
+        await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert work.calls == ["requeue", "contexts", "requeue", "contexts"]
+    assert len(calls) == 2, "a tenant a pass, and the requeue in none of them"
+
+
+async def test_a_full_requeue_batch_is_requeued_again_while_the_budget_lasts(
+    tmp_path: Path,
+) -> None:
+    container = build_container(tmp_path)
+    work = listed(service_contexts(0), requeued=(2, 2, 1))
+    loop = sweeping(container, work, {}, fast_options(requeue_batch=2))
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert work.calls == ["requeue", "requeue", "requeue", "contexts"]
+
+    spent = listed(service_contexts(0), requeued=(2,))
+    loop = sweeping(container, spent, {}, fast_options(requeue_batch=2, sweep_budget=timedelta(0)))
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert spent.calls == ["requeue", "contexts"], "past the budget, one batch a pass"
+
+
+async def test_the_relay_runs_again_while_its_batch_comes_back_full(tmp_path: Path) -> None:
+    """A backlog of pending rows, after a crash or an outage of the bus,
+    drains at the pace of the budget and not of one batch a pass. A batch
+    that came back short, a row failing in it among the reasons, ends it."""
+    container = build_container(tmp_path)
+    outbox = quiet_outbox(relayed=(2, 2, 1, 2))
+    loop = sweeping(
+        container, listed(service_contexts(0)), {}, fast_options(outbox_batch=2), outbox
+    )
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert outbox.relays == 3
+
+    spent = quiet_outbox(relayed=(2,))
+    loop = sweeping(
+        container,
+        listed(service_contexts(0)),
+        {},
+        fast_options(outbox_batch=2, sweep_budget=timedelta(0)),
+        spent,
+    )
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert spent.relays == 2, "past the budget, one batch a pass"

@@ -64,6 +64,10 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_api_key_by_digest"),
         ("TenancyStorageInterface", "redeem_socket_ticket"),
         ("WorkStorageInterface", "claim_next"),
+        # The sweep's requeue of expired leases: a named write in the system
+        # scope, like the claim it undoes. A crashed worker's item waits one
+        # pass for it, not the turn of its tenant in a ring of every tenant.
+        ("WorkStorageInterface", "requeue_stale"),
         ("WorkStorageInterface", "purge_items"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
@@ -129,6 +133,10 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "disable_operator"),
         ("TenancyManagerInterface", "grant_operator_token"),
         ("WorkManagerInterface", "claim"),
+        # The sweep's requeue across tenants: a dead letter it makes is
+        # written under its tenant's service context, minted from this stage
+        # as the claim mints one.
+        ("WorkManagerInterface", "requeue_stale"),
         ("WorkManagerInterface", "maintenance_contexts"),
         # The org a verified delivery from the payment processor names, before
         # any stage exists for it: the webhook consumer's lookup.

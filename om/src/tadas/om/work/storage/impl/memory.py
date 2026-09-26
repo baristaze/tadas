@@ -82,18 +82,22 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
             return org_id, claimed
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, limit: int
-    ) -> list[WorkItem]:
-        changed: list[WorkItem] = []
+        self, now: datetime, stagger: timedelta, limit: int
+    ) -> list[tuple[UUID, WorkItem]]:
+        changed: list[tuple[UUID, WorkItem]] = []
+        positions: dict[UUID, int] = {}
         async with self._lock:
             stale = [
-                item
-                for item in self._rows(self._items, org_id)
+                (org_id, item)
+                for org_id, item in self._rows_across_tenants(self._items)
                 if item.status is WorkStatus.CLAIMED
                 and item.lease_expires_at is not None
                 and item.lease_expires_at < now
             ][:limit]
-            for position, item in enumerate(stale):
+            for org_id, item in stale:
+                # The position among the tenant's own items in the batch.
+                position = positions.get(org_id, 0)
+                positions[org_id] = position + 1
                 if is_exhausted(item):
                     update = {"status": WorkStatus.FAILED}
                 else:
@@ -113,7 +117,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                     }
                 )
                 self._items[item.id] = (org_id, requeued)
-                changed.append(requeued)
+                changed.append((org_id, requeued))
         return changed
 
     async def purge_items(self, before: datetime, limit: int) -> int:
