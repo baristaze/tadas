@@ -8,7 +8,7 @@ tenants, then the chores of the tenants one read across tenants finds with
 a chore due, then the purge of a tenant past its retention per tenant, then
 every namespace's purge of its rows past their retention across tenants,
 then the purges of done outbox rows and settled work items, within a time
-budget, then the three gauges of the queue and the outbox), and drain first
+budget, then the four gauges of the queue and the outbox), and drain first
 on stop."""
 
 import asyncio
@@ -23,6 +23,7 @@ from opentelemetry.trace import SpanKind
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import (
+    OUTBOX_FAILED_RECENTLY,
     OUTBOX_OLDEST_PENDING_SECONDS,
     OUTCOMES,
     SWEEP_SECONDS,
@@ -101,9 +102,10 @@ class LoopOptions(Platform):
     # A pass takes no new tenant past this, and the next pass resumes at the
     # tenant it stopped at, so a pass stays shorter than the interval.
     sweep_budget: timedelta = timedelta(seconds=20)
-    # The dead-letter gauge counts the items that failed this long ago or
-    # less, so one failure reads as one for this long and then goes. The
-    # alarm on it says the same window (the alarms module).
+    # The two dead-letter gauges, the queue's and the outbox's, count what
+    # failed for good this long ago or less, so one failure reads as one for
+    # this long and then goes. The alarms on them say the same window (the
+    # alarms module).
     failed_window: timedelta = timedelta(minutes=15)
 
 
@@ -469,7 +471,7 @@ class WorkerLoop:
         in turn with the others, while the budget lasts. The purges across
         tenants run on every pass, each at least once and again while its
         batch comes back full and the budget lasts. A living tenant with no
-        chore due costs a pass no read at all. The three reads of the queue
+        chore due costs a pass no read at all. The four reads of the queue
         and the outbox end every pass, whatever the budget, since the alarms
         read them."""
         clock = asyncio.get_running_loop().time
@@ -534,7 +536,7 @@ class WorkerLoop:
         seconds = clock() - started
         SWEEP_SECONDS.observe(seconds)
         # One line per pass, its numbers as fields: the alarms module's log
-        # filters read the duration and the three gauges off it.
+        # filters read the duration and the four gauges off it.
         log.info(
             "sweep: pass took %.3fs over %d of %d tenants, chores in %d%s",
             seconds,
@@ -555,10 +557,12 @@ class WorkerLoop:
         )
 
     async def _gauges(self) -> dict[str, int]:
-        """The three numbers the queue and outbox alarms read, one read each
+        """The four numbers the queue and outbox alarms read, one read each
         across every tenant: how long the item ready longest has waited, how
-        many items failed within the window, and how long ago the oldest
-        pending outbox row landed. A read that fails leaves its field off the
+        many items failed within the window, how long ago the oldest pending
+        outbox row landed, and how many outbox rows failed for good within
+        the window. A dead letter is no longer pending, so the lag cannot see
+        it; the last count does. A read that fails leaves its field off the
         line and its gauge as it was, so the alarm sees no data, which keeps
         its state, and never a zero that would clear it."""
         found: dict[str, int] = {}
@@ -566,6 +570,7 @@ class WorkerLoop:
             ("work_oldest_ready_seconds", WORK_OLDEST_READY_SECONDS, self._oldest_ready),
             ("work_failed_recently", WORK_FAILED_RECENTLY, self._failed_recently),
             ("outbox_oldest_pending_seconds", OUTBOX_OLDEST_PENDING_SECONDS, self._oldest_pending),
+            ("outbox_failed_recently", OUTBOX_FAILED_RECENTLY, self._outbox_failed_recently),
         )
         for name, gauge, read in reads:
             try:
@@ -585,6 +590,9 @@ class WorkerLoop:
 
     async def _oldest_pending(self) -> int:
         return int((await self._outbox.oldest_pending_age()).total_seconds())
+
+    async def _outbox_failed_recently(self) -> int:
+        return await self._outbox.failed_within(self._options.failed_window)
 
     def _from_resume_point(self, contexts: list[OpContext]) -> list[OpContext]:
         """The pass's tenants in id order, the system scope first, turned to

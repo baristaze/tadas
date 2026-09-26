@@ -1,8 +1,8 @@
 """Storage of the outbox. A row is never written on its own: the storage
 base lands the rows that announce a write in the same commit as the core row
 (`_insert(..., outbox_rows)` and `_upsert(..., outbox_rows)` in the `core`
-role). The claim, the purge, and the read of the oldest pending row are
-cross-tenant and serve the sweep."""
+role). The claim, the purge, the read of the oldest pending row, and the
+count of the dead letters are cross-tenant and serve the sweep."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -63,6 +63,13 @@ class OutboxStorageInterface(ABC):
         """Cross-tenant, for the sweep's relay gauge: when the oldest row that
         is neither done nor failed landed; None when every row is settled. A
         row waiting out its delay after a failed attempt is pending."""
+        ...
+
+    @abstractmethod
+    async def count_failed_since(self, since: datetime) -> int:
+        """Cross-tenant, for the sweep's dead-letter gauge: how many rows
+        failed for good after `since`, in any tenant. A row that failed an
+        attempt and waits for its next one is not failed."""
         ...
 
     @abstractmethod

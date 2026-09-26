@@ -6,7 +6,7 @@ a living tenant that costs the purges nothing, the chores run in the tenants
 one read across tenants finds with a chore due and in no other, a page of
 them a pass, a deleted tenant marked purged once nothing of it is left and
 left out after, the tenant's expiry read once per pass, and the pass's
-duration and the three gauges of the queue and the outbox on its own line."""
+duration and the four gauges of the queue and the outbox on its own line."""
 
 import json
 import logging
@@ -21,7 +21,11 @@ from prometheus_client import REGISTRY
 from worker_support import build_container, fast_options, request
 
 from tadas.infra.cache import CacheScope
-from tadas.infra.observability import WORK_OLDEST_READY_SECONDS, JsonFormatter
+from tadas.infra.observability import (
+    OUTBOX_FAILED_RECENTLY,
+    WORK_OLDEST_READY_SECONDS,
+    JsonFormatter,
+)
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.opcontext import CredentialKind, OpContext, RequestContext, Role, build_context
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
@@ -105,9 +109,17 @@ class Outbox(OutboxRelayInterface):
         self.relays = 0
         self.relayed = list(relayed)
         self.oldest_pending = timedelta(0)
+        self.failed: int | Exception = 0
+        self.windows: list[timedelta] = []
 
     async def oldest_pending_age(self) -> timedelta:
         return self.oldest_pending
+
+    async def failed_within(self, window: timedelta) -> int:
+        self.windows.append(window)
+        if isinstance(self.failed, Exception):
+            raise self.failed
+        return self.failed
 
     async def relay_pending(self, limit: int) -> int:
         self.relays += 1
@@ -368,16 +380,17 @@ def pass_line(caplog: pytest.LogCaptureFixture) -> dict[str, object]:
 async def test_a_pass_reads_the_queue_and_the_outbox_onto_its_line_and_its_gauges(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The three numbers the queue and outbox alarms read, in whole seconds
+    """The four numbers the queue and outbox alarms read, in whole seconds
     and counts, as fields of the pass's line (the cloud's metric filters) and
-    as gauges (what Grafana draws). The dead letters are counted over the
-    loop's window, fifteen minutes by default."""
+    as gauges (what Grafana draws). The dead letters of the queue and of the
+    outbox are counted over the loop's window, fifteen minutes by default."""
     container = build_container(tmp_path)
     work = listed(service_contexts(1))
     work.oldest_ready = timedelta(minutes=11, seconds=0.6)
     work.failed = 2
     outbox = quiet_outbox()
     outbox.oldest_pending = timedelta(minutes=6)
+    outbox.failed = 3
     loop = sweeping(container, work, {}, fast_options(), outbox)
     with caplog.at_level(logging.INFO, logger="tadas.workers.maintenance.loop"):
         await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
@@ -385,31 +398,38 @@ async def test_a_pass_reads_the_queue_and_the_outbox_onto_its_line_and_its_gauge
     assert line["work_oldest_ready_seconds"] == 660
     assert line["work_failed_recently"] == 2
     assert line["outbox_oldest_pending_seconds"] == 360
-    assert work.windows == [timedelta(minutes=15)]
+    assert line["outbox_failed_recently"] == 3
+    assert work.windows == outbox.windows == [timedelta(minutes=15)]
     assert REGISTRY.get_sample_value("tadas_work_oldest_ready_seconds") == 660
     assert REGISTRY.get_sample_value("tadas_work_failed_recently") == 2
     assert REGISTRY.get_sample_value("tadas_outbox_oldest_pending_seconds") == 360
+    assert REGISTRY.get_sample_value("tadas_outbox_failed_recently") == 3
 
 
 async def test_a_gauge_that_cannot_be_read_is_left_off_the_line_and_as_it_was(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """No field is no data point, which keeps the alarm's state; a zero
-    would clear an alarm on a queue nobody could read. The other two are
-    read and written as ever."""
+    would clear an alarm on a queue nobody could read. The others are read
+    and written as ever."""
     container = build_container(tmp_path)
     work = listed(service_contexts(1))
     work.oldest_ready = RuntimeError("the database is down")
     work.failed = 1
+    outbox = quiet_outbox()
+    outbox.failed = RuntimeError("the database is down")
     WORK_OLDEST_READY_SECONDS.set(900)
-    loop = sweeping(container, work, {}, fast_options())
+    OUTBOX_FAILED_RECENTLY.set(4)
+    loop = sweeping(container, work, {}, fast_options(), outbox)
     with caplog.at_level(logging.INFO, logger="tadas.workers.maintenance.loop"):
         await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     line = pass_line(caplog)
     assert "work_oldest_ready_seconds" not in line
+    assert "outbox_failed_recently" not in line
     assert line["work_failed_recently"] == 1
     assert line["outbox_oldest_pending_seconds"] == 0
     assert REGISTRY.get_sample_value("tadas_work_oldest_ready_seconds") == 900
+    assert REGISTRY.get_sample_value("tadas_outbox_failed_recently") == 4
 
 
 class Due:

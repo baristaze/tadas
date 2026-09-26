@@ -120,6 +120,7 @@ tenantless = [
     "MediaStorageInterface.read_purgeable",
     "OrchestrationsStorageInterface.purge_settled",
     "OutboxStorageInterface.claim_pending",
+    "OutboxStorageInterface.count_failed_since",
     "OutboxStorageInterface.oldest_pending_at",
     "OutboxStorageInterface.purge_done",
     "SlackStorageInterface.purge",
