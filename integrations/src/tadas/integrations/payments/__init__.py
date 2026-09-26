@@ -94,11 +94,12 @@ class PaymentsInterface(ABC):
 
     @abstractmethod
     async def set_quantity(
-        self, subscription_id: str, quantity: int, idempotency_key: str
+        self, subscription: ProviderSubscription, quantity: int, idempotency_key: str
     ) -> ProviderSubscription:
         """The seat count of a per-seat subscription, with no proration: the
         change applies from the next invoice. The key makes a repeated call
-        one change."""
+        one change. `subscription` is the one just read, whose item it
+        changes, so the change is one call."""
         ...
 
     @abstractmethod

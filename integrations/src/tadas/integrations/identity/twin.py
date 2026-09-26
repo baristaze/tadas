@@ -307,8 +307,9 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         return revoked
 
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str
+        self, *, organization_id: str, user_id: str, email: str
     ) -> ProvidedInvitation | None:
+        # The record of who accepted decides, whatever address it was sent to.
         for invitation in self.invitations.values():
             if (
                 invitation.organization_id == organization_id

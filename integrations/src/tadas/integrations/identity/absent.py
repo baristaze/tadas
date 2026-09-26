@@ -84,7 +84,7 @@ class IdentityProviderAbsentImpl(IdentityProviderInterface):
         self._refuse()
 
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str
+        self, *, organization_id: str, user_id: str, email: str
     ) -> ProvidedInvitation | None:
         self._refuse()
 
