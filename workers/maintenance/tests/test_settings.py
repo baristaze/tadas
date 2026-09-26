@@ -240,11 +240,12 @@ def test_the_worker_hands_each_retention_to_its_manager(tmp_path: Path) -> None:
     assert options.outbox_retention == timedelta(days=8)
 
 
-def test_the_event_retention_is_off_until_it_is_set() -> None:
-    """0 keeps every event: the sweep never moves a floor (ADR 0040)."""
+def test_the_event_retention_keeps_ninety_days_and_0_turns_it_off() -> None:
+    """The sweep trims events older than 90 days by default. 0 keeps every
+    event: the sweep never moves a floor (ADR 0040)."""
     base = {"_env_file": None, "environment": "test"}
-    assert events_options(MaintenanceSettings.model_validate(base)).retention is None
-    kept = MaintenanceSettings.model_validate({**base, "event_retention_days": 90})
-    assert events_options(kept).retention == timedelta(days=90)
+    assert events_options(MaintenanceSettings.model_validate(base)).retention == timedelta(days=90)
+    off = MaintenanceSettings.model_validate({**base, "event_retention_days": 0})
+    assert events_options(off).retention is None
     with pytest.raises(ValidationError):
         MaintenanceSettings.model_validate({**base, "event_retention_days": -1})
