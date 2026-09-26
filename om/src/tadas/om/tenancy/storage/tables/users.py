@@ -25,10 +25,13 @@ class Users(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        # The sweep's index. The unique one above is among the living, so it
-        # serves neither "removed before the cut" nor a deleted tenant's rows:
-        # those are the rows it leaves out, and they are what the purge reads.
+        # A tenant's users, living or removed: the member list, and the purge
+        # of a tenant past its retention. The unique one above is among the
+        # living, so it serves neither.
         Index("ix_users_org_id_deleted_at", "org_id", "deleted_at"),
+        # The sweep's purge reads the removed ones by their removal, across
+        # tenants; only they are in it.
+        Index("ix_users_deleted_at", "deleted_at", postgresql_where=text("deleted_at IS NOT NULL")),
         Index("ix_users_identity_id", "identity_id"),
     )
     identity_id: Mapped[UUID]

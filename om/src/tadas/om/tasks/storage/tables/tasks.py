@@ -57,13 +57,9 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
             "status",
             postgresql_where=text("assignee_id IS NULL AND deleted_at IS NULL"),
         ),
-        # The purge reads the deleted ones by their delete; only they are in it.
-        Index(
-            "ix_tasks_org_id_deleted_at",
-            "org_id",
-            "deleted_at",
-            postgresql_where=text("deleted_at IS NOT NULL"),
-        ),
+        # The sweep reads the deleted ones by their delete, across tenants;
+        # only they are in it.
+        Index("ix_tasks_deleted_at", "deleted_at", postgresql_where=text("deleted_at IS NOT NULL")),
     )
     title: Mapped[str]
     notes: Mapped[str]

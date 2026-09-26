@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Index
+from sqlalchemy import BigInteger, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import (
@@ -14,13 +14,22 @@ from tadas.om.storage.tables.base import (
 
 class Files(IdentifiableMixin, NamedMixin, TrackableMixin, SoftDeletableMixin, Base):
     __tablename__ = "files"
-    # A subject's files by id, the sweep's two reads, and the usage sum; each
-    # read leads with org_id, so org_id gets no index of its own.
+    # A subject's files by id, a tenant's rows, and the usage sum; each read
+    # leads with org_id, so org_id gets no index of its own.
     __org_id_index__ = False
     __table_args__ = (
         Index("ix_files_org_id_purpose_subject_id_id", "org_id", "purpose", "subject_id", "id"),
         Index("ix_files_org_id_deleted_at", "org_id", "deleted_at"),
         Index("ix_files_org_id_status_created_at", "org_id", "status", "created_at"),
+        # The sweep's two reads across tenants: the deleted files by their
+        # delete, and the live pending uploads by their birth.
+        Index("ix_files_deleted_at", "deleted_at", postgresql_where=text("deleted_at IS NOT NULL")),
+        Index(
+            "ix_files_status_created_at",
+            "status",
+            "created_at",
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
     key: Mapped[str]
     extension: Mapped[str]

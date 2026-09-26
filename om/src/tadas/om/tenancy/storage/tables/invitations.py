@@ -28,8 +28,12 @@ class Invitations(IdentifiableMixin, TrackableMixin, Base):
             unique=True,
             postgresql_where=text("state = 'pending'"),
         ),
-        # What the purges read: the tenant's invitations, by their expiry.
+        # A tenant's invitations, for the purge of a tenant past its retention.
         Index("ix_invitations_org_id_expires_at", "org_id", "expires_at"),
+        # The sweep's purge reads, across tenants, the expired ones and the
+        # closed ones by their last change.
+        Index("ix_invitations_expires_at", "expires_at"),
+        Index("ix_invitations_updated_at", "updated_at"),
     )
     email: Mapped[str]
     role: Mapped[str]

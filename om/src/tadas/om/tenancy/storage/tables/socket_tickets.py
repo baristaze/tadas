@@ -14,7 +14,10 @@ class SocketTickets(IdentifiableMixin, CreatedMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("uq_socket_tickets_ticket_hash", "ticket_hash", unique=True),
+        # A tenant's tickets, for the purge of a tenant past its retention.
         Index("ix_socket_tickets_org_id_expires_at", "org_id", "expires_at"),
+        # The sweep's purge reads the expired ones across tenants.
+        Index("ix_socket_tickets_expires_at", "expires_at"),
     )
     user_id: Mapped[UUID]
     ticket_hash: Mapped[str]

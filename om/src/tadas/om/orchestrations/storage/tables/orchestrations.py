@@ -10,7 +10,8 @@ from tadas.om.storage.tables.base import Base, IdentifiableMixin, TrackableMixin
 
 class Orchestrations(IdentifiableMixin, TrackableMixin, Base):
     __tablename__ = "orchestrations"
-    # org_id leads every index here, so it gets none of its own.
+    # org_id leads every index of a tenant's records, so it gets none of its
+    # own.
     __org_id_index__ = False
     __table_args__ = (
         # A record kept per period is one per org, kind, and period: the
@@ -25,8 +26,11 @@ class Orchestrations(IdentifiableMixin, TrackableMixin, Base):
         ),
         # The org's records of a kind, newest first.
         Index("ix_orchestrations_org_id_kind_id", "org_id", "kind", "id"),
-        # The wake reads the parked ones; the purge reads the settled ones.
+        # The wake reads the parked ones.
         Index("ix_orchestrations_org_id_status_updated_at", "org_id", "status", "updated_at"),
+        # The sweep's purge reads the settled ones by their last change,
+        # across tenants: one range per settled status.
+        Index("ix_orchestrations_status_updated_at", "status", "updated_at"),
     )
     kind: Mapped[str]
     input: Mapped[dict[str, Any]]

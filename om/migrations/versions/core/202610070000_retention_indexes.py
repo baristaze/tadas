@@ -1,0 +1,23 @@
+"""The purges across tenants: an index under each, led by the column its
+retention is counted on, and the three indexes only the per-tenant purges
+read, dropped, with the fence's that the attempt's index now serves.
+
+Revision ID: 202610070000
+Revises: 202610030000
+"""
+
+from tadas.om.storage.migrate import run_sql
+from tadas.om.storage.roles import DatabaseRole
+
+revision = "202610070000"
+down_revision = "202610030000"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    run_sql(DatabaseRole.CORE, "202610070000_retention_indexes.up.sql")
+
+
+def downgrade() -> None:
+    run_sql(DatabaseRole.CORE, "202610070000_retention_indexes.down.sql")

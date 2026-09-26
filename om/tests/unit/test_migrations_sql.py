@@ -81,11 +81,13 @@ only other org_id index is partial."""
 def test_the_purge_of_a_tenant_has_an_index_the_orm_and_the_chain_agree_on(
     table: str, name: str
 ) -> None:
-    """The sweep reads `org_id = X AND deleted_at < Y` every 30 seconds per
-    tenant, and `org_id = X` alone under a deleted one. Both target the rows a
-    partial unique index `WHERE deleted_at IS NULL` leaves out, so each table
-    carries a plain (org_id, deleted_at) index. `make migrate-check` compares
-    the ORM metadata with the migrated schema, so both say it."""
+    """The purge of a tenant past its retention reads `org_id = X` alone, the
+    member list reads `org_id = X AND deleted_at IS NULL`, and the purge of
+    the memberships of the users the sweep removes reads by tenant too. The
+    first and the last target rows a partial unique index `WHERE deleted_at
+    IS NULL` leaves out, so each table carries a plain (org_id, deleted_at)
+    index. `make migrate-check` compares the ORM metadata with the migrated
+    schema, so both say it."""
     orm = role_metadata(DatabaseRole.CORE).tables[f"core.{table}"]
     index = next((i for i in orm.indexes if i.name == name), None)
     assert index is not None, f"{table} declares no {name}"
@@ -101,23 +103,24 @@ def test_the_purge_of_a_tenant_has_an_index_the_orm_and_the_chain_agree_on(
 def test_the_re_mint_fence_has_an_index_the_orm_and_the_chain_agree_on() -> None:
     """The re-mint of a secret is conditional on the marker still holding the
     attempt making the write, so the rerun's statement reads the pending
-    marker by `(org_id, attempt_id)`. `uq_idempotency_records_org_id_user_id_key`
-    leads with the caller's key and the table carries no org_id index of its
-    own, so the fence has one over the pending markers, the only ones it reads;
-    the purge reads the abandoned attempts through it too. `make migrate-check`
+    marker by its attempt. `uq_idempotency_records_org_id_user_id_key` leads
+    with the caller's key, so the fence has an index over the pending
+    markers, the only ones it reads. An attempt token is minted once, so the
+    attempt alone finds the one marker, and the purge reads the abandoned
+    attempts of every tenant through the same index. `make migrate-check`
     compares the ORM metadata with the migrated schema, so both say it."""
-    name = "ix_idempotency_records_org_id_attempt_id"
+    name = "ix_idempotency_records_attempt_id"
     orm = role_metadata(DatabaseRole.CORE).tables["core.idempotency_records"]
     index = next((i for i in orm.indexes if i.name == name), None)
     assert index is not None, f"the markers declare no {name}"
-    assert [c.name for c in index.columns] == ["org_id", "attempt_id"]
+    assert [c.name for c in index.columns] == ["attempt_id"]
     assert not index.unique
     assert str(index.dialect_kwargs["postgresql_where"]) == "status IS NULL"
     chain = "\n".join(
         path.read_text() for path in (MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql")
     )
     assert (
-        f"CREATE INDEX {name} ON core.idempotency_records (org_id, attempt_id) WHERE status IS NULL"
+        f"CREATE INDEX {name} ON core.idempotency_records (attempt_id) WHERE status IS NULL"
     ) in chain
 
 
@@ -128,10 +131,18 @@ PARTIAL_INDEXES = {
     ),
     "ix_tasks_org_id_assignee_id_status": "deleted_at IS NULL",
     "ix_tasks_org_id_created_by_status": "assignee_id IS NULL AND deleted_at IS NULL",
-    "ix_idempotency_records_org_id_attempt_id": "status IS NULL",
+    "ix_idempotency_records_attempt_id": "status IS NULL",
+    "ix_tasks_deleted_at": "deleted_at IS NOT NULL",
+    "ix_files_deleted_at": "deleted_at IS NOT NULL",
+    "ix_files_status_created_at": "deleted_at IS NULL",
+    "ix_users_deleted_at": "deleted_at IS NOT NULL",
+    "ix_memberships_deleted_at": "deleted_at IS NOT NULL",
+    "ix_api_keys_deleted_at": "deleted_at IS NOT NULL",
+    "ix_slack_installations_deleted_at": "deleted_at IS NOT NULL",
+    "ix_slack_install_states_redeemed_at": "redeemed_at IS NOT NULL",
 }
-"""The partial indexes the task lists, the cleanup, the fence, and the purge
-read, with their predicates."""
+"""The partial indexes the task lists, the cleanup, the fence, and the purges
+across tenants read, with their predicates."""
 
 
 @pytest.mark.parametrize(("name", "predicate"), sorted(PARTIAL_INDEXES.items()))
