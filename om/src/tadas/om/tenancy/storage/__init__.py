@@ -227,8 +227,8 @@ class TenancyStorageInterface(ABC):
         member_row: Callable[[User], OutboxRow],
         revocation_row: Callable[[str, UUID, UUID], OutboxRow],
     ) -> tuple[OutboxRow, ...]:
-        """A named atomic write: the tenant's owner deletes it, and nobody
-        keeps a way in. In one commit or not at all: the org as given, every
+        """A named atomic write: the tenant's owner, or an operator, deletes
+        it, and nobody keeps a way in. In one commit or not at all: the org as given, every
         live user of the tenant soft-deleted with their membership ended,
         every live session and unrevoked api key revoked, every pending
         invitation revoked, and the outbox rows, all stamped with the org's

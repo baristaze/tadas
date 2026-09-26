@@ -130,7 +130,9 @@ class TenancyOperatorManagerInterface(ABC):
         returned as they are. The owner role and the service role are refused
         by name: the one owner is the one `create_org` minted. The rows record
         the operator's identity as their maker, since an operator has no user
-        in the tenant. `attempt` as on `create_org`, for the user's id."""
+        in the tenant. `attempt` as on `create_org`, for the user's id. An org
+        deleted, or closed and waiting for the queue to delete it, is
+        NotFound."""
         ...
 
     @abstractmethod
@@ -158,10 +160,20 @@ class TenancyOperatorManagerInterface(ABC):
 
     @abstractmethod
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> Org:
-        """Soft-deletes the org and announces it (`tenancy.org.deleted`), so its
-        principals stop resolving at once and every socket of the tenant closes.
-        Its users, credentials, and work stay for the sweep: queued work fails
-        on its next claim, and the purge takes the tenant's rows once the
-        retention has passed. A personal org is refused (PersonalOrgFixed): it
-        is its person's place for as long as the person exists."""
+        """Deletes a team org the way its owner does (ADR 0042), with the
+        operator's identity as the actor of every row. One commit closes it
+        (`TenancyStorageInterface.write_closed_org`): every member's user and
+        membership end, every session and api key is revoked, each announced,
+        so every socket of the tenant closes, every pending invitation is
+        revoked, and the org lets go of its organization at the identity
+        provider. The same commit asks for `DELETE_ORG`, which ends the
+        providers (the identity provider's organization, the processor's
+        subscription and customer, the Slack app) and then deletes the org;
+        the sweep purges it once the retention has passed.
+
+        Answers the closed org, still live (`deleted_at` unset) until the
+        worker deletes it. An org closed already is answered as it stands,
+        and nothing is asked for twice; a deleted one is NotFound. A personal
+        org is refused (PersonalOrgFixed): it goes only with its person's
+        account (ADR 0041)."""
         ...

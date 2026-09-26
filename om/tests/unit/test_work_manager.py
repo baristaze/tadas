@@ -598,7 +598,11 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
     admin = await tenancy.admit_operator(
         await tenancy.authenticate_login(request(APP), token.token)
     )
+    # The operator's deletion, carried to its end as the worker ends it.
     await managers.tenancy_operator.delete_org(admin, ctx.org_id)
+    await tenancy.delete_closed_org(
+        await tenancy.service_context(request(APP), ctx.org_id, admin.identity_id)
+    )
 
     claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert claimed is not None and claimed[1].id == bobs.id
