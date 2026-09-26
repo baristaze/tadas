@@ -7,13 +7,15 @@ from uuid import UUID
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
 from tadas.om.events import EventsManagerInterface
-from tadas.om.exceptions import ValidationFailed
+from tadas.om.exceptions import NotAuthenticated, ValidationFailed
 from tadas.om.opcontext import ActorScope, OpContext
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
 from tadas.services.api.services.realtime import (
     CREDENTIAL_REVOKED,
     MEMBERSHIP_ENDED,
+    RIGHTS_CHANGED,
     RealtimeServiceInterface,
 )
 from tadas.services.api.types.events import EntityChangedView
@@ -24,15 +26,18 @@ PROJECTIONS: dict[Topics, Callable[[TopicPayload], EntityChangedView]] = {
 """The topics the channel carries, each with the view its payload is projected
 onto before a frame is offered. A topic outside this map never reaches a client."""
 
-REVOCATIONS: dict[str, tuple[Literal["credential", "user", "org"], str]] = {
+REVOCATIONS: dict[str, tuple[Literal["credential", "user", "membership", "org"], str]] = {
     "tenancy.session.revoked": ("credential", CREDENTIAL_REVOKED),
     "tenancy.api_key.deleted": ("credential", CREDENTIAL_REVOKED),
     "tenancy.user.deleted": ("user", MEMBERSHIP_ENDED),
+    "tenancy.membership.updated": ("membership", RIGHTS_CHANGED),
     "tenancy.org.deleted": ("org", MEMBERSHIP_ENDED),
 }
 """The change kinds that end a socket: which id of the socket the target
-names (the credential behind its ticket, its user, or its org, whose
-deletion ends every membership in it) and the close reason."""
+names (the credential behind its ticket, its user, the membership its
+context was built from, or its org, whose deletion ends every membership in
+it) and the close reason. A membership's change is a change of its role, so
+the socket closes to be opened again under the role the member has now."""
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,7 @@ class AttachedSocket:
     org_id: UUID
     user_id: UUID
     credential_id: UUID
+    membership_id: UUID
     end: Callable[[str], None]
 
 
@@ -62,6 +68,21 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
     async def head(self, ctx: OpContext) -> int:
         return await self._events.get_head(ctx)
 
+    async def recheck(self, principal: SocketPrincipal) -> str | None:
+        ctx = principal.ctx
+        # The socket is a request that stays open: its recheck runs under the
+        # request stage of the handshake that opened it, which its context
+        # carries.
+        try:
+            current = await self._tenancy.resume(
+                ctx, ctx.org_id, principal.credential_kind, ctx.credential_id, record_use=False
+            )
+        except NotAuthenticated as refused:
+            return refused.code
+        if current.ctx.security != ctx.security:
+            return RIGHTS_CHANGED
+        return None
+
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicketView:
         issued = await self._tenancy.issue_ticket(ctx)
         remaining = int((issued.expires_at - utcnow()).total_seconds())
@@ -80,10 +101,15 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
 
         return self._topics.subscribe(topic, f"socket:{ctx.user_id}", forward)
 
-    def attach(self, ctx: OpContext, end: Callable[[str], None]) -> Callable[[], None]:
+    def attach(self, principal: SocketPrincipal, end: Callable[[str], None]) -> Callable[[], None]:
+        ctx = principal.ctx
         socket_id = next(self._ids)
         self._sockets[socket_id] = AttachedSocket(
-            org_id=ctx.org_id, user_id=ctx.user_id, credential_id=ctx.credential_id, end=end
+            org_id=ctx.org_id,
+            user_id=ctx.user_id,
+            credential_id=ctx.credential_id,
+            membership_id=principal.membership_id,
+            end=end,
         )
 
         def detach() -> None:
@@ -104,6 +130,7 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
             named = {
                 "credential": attached.credential_id,
                 "user": attached.user_id,
+                "membership": attached.membership_id,
                 "org": attached.org_id,
             }[subject]
             if named == payload.target_id:
