@@ -1,10 +1,11 @@
 """The operator plane over the memory impls: what the allowlist entry lets
 an operator do, the reads of one named tenant and the trail they leave, the
-platform's size, and the creates that share their implementation with the
-seeding commands."""
+platform's size and the sweep's tally of it, and the creates that share
+their implementation with the seeding commands."""
 
 import logging
 from collections.abc import Sequence
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -160,6 +161,7 @@ async def test_a_read_operator_reads_and_is_refused_every_write(
     # And the personal org of each of the three people who own them.
     assert len([o for o in every if o.personal]) == 3
     assert (await plane.operator.get_org(reader, org.id)).slug == "acme"
+    await plane.operator.tally_size()
     assert (await plane.operator.size(reader)).tenants == 6
     for write in (
         plane.operator.create_org(reader, "Other", "other", "bob@example.test", "Bob"),
@@ -488,24 +490,35 @@ async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
     assert not any("example.test" in line or "open " in line for line in trail)
 
 
-async def test_the_size_counts_the_living_and_the_last_day(
+async def test_the_sweeps_tally_counts_the_living_and_the_last_day(
     plane: Plane, reader: OperatorContext, writer: OperatorContext
 ) -> None:
-    before = utcnow()
     _, org = await plane.manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
     await plane.manager.add_member(request(), "acme", "bob@example.test", "B", Role.MEMBER)
     await seed_tasks(plane, org.id, 2, TaskStatus.OPEN)
-    size = await plane.operator.size(reader)
+    before = utcnow()
+    tally = await plane.operator.tally_size()
     # The two operators' own orgs count, as does each operator's user in them,
     # and every person's personal org and their user there.
-    assert (size.tenants, size.users) == (7, 8)
-    assert (size.tasks_last_24h, size.events_last_24h) == (2, 3)
-    assert before - size.since < utcnow() - size.since  # the window ends at the read
+    assert (tally.tenants, tally.users) == (7, 8)
+    assert (tally.tasks_last_24h, tally.events_last_24h) == (2, 3)
+    assert before <= tally.counted_at <= utcnow()
+    assert tally.counted_at - tally.since == timedelta(hours=24)  # the window ends at the count
+    assert await plane.operator.size(reader) == tally
     await plane.operator.delete_org(writer, org.id)
-    # A closed org counts until the queue has deleted it.
+    # The read is the tally, not a count: nothing moves until the next one.
     assert (await plane.operator.size(reader)).tenants == 7
     await plane.worker_deletes(org.id, writer)
+    assert (await plane.operator.size(reader)).tenants == 7
+    await plane.operator.tally_size()
     assert (await plane.operator.size(reader)).tenants == 6
+
+
+async def test_the_size_is_unavailable_until_the_sweep_has_counted_it(
+    plane: Plane, reader: OperatorContext
+) -> None:
+    with pytest.raises(NotFound, match="not counted yet"):
+        await plane.operator.size(reader)
 
 
 async def test_the_seeding_path_is_unchanged_by_the_shared_implementation(plane: Plane) -> None:

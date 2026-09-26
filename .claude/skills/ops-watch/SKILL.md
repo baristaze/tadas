@@ -81,7 +81,9 @@ tracker is reported as "not read", never as "no errors".
    uv run tadas-ops size --env <env>
    ```
 
-   Keep the numbers; the first responder rule of step 6 reads them.
+   Keep the numbers and how long ago the worker counted them; the
+   first responder rule of step 6 reads them. The worker counts every
+   five minutes, so a count older than ten minutes is itself a finding.
 3. Each interval, wait for it to close, then read its lines. The
    wait:
 
@@ -160,7 +162,7 @@ tracker is reported as "not read", never as "no errors".
 # Watch: <env>, <start> to <end>, every <interval>
 
 **Credential.** <profile and the Arn it resolved to, or local>
-**Size.** <tenants> tenants, <users> users, <n> written in the last day
+**Size.** <tenants> tenants, <users> users, <n> written in the last day, counted <age> ago
 **Ended.** <window passed | escalated on <alarm> at <time>>
 
 ## Alarms
