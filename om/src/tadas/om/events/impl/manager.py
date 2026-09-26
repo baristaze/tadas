@@ -49,13 +49,13 @@ class EventsManagerImpl(EventsManagerInterface):
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         ctx.require(Permission.READ)
         after = max(0, after_seq)
-        page = await self._storage.read_after(ctx.org_id, after, self._clamp(limit))
-        # The floor is read after the page. A trim that committed before the
-        # page was read is seen here too, so a page with a hole never leaves.
-        floor = await self._storage.read_floor(ctx.org_id)
-        if after < floor:
-            raise StreamTruncated(floor=floor, head=await self._storage.read_head(ctx.org_id))
-        return page
+        # The floor is read after the page, in its transaction. A trim that
+        # committed before the page was read is seen there too, so a page with
+        # a hole never leaves.
+        page = await self._storage.read_page(ctx.org_id, after, self._clamp(limit))
+        if after < page.floor:
+            raise StreamTruncated(floor=page.floor, head=page.head)
+        return list(page.events)
 
     async def purge_across_tenants(self) -> int:
         if self._options.retention is None:
