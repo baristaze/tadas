@@ -15,6 +15,8 @@ import {
 } from "react";
 import { tokens } from "../tokens";
 
+export * from "./icons";
+
 /** The product's mark: a check in the accent square, and the name. */
 export function BrandMark({ size = 28, withName = true }: { size?: number; withName?: boolean }) {
   return (
@@ -451,12 +453,15 @@ export function MenuItem({
   onSelect,
   disabled,
   tone = "plain",
+  icon,
   children,
 }: {
   onSelect: () => void;
   disabled?: boolean;
   /** `danger` is a choice that changes many things at once, in red. */
   tone?: "plain" | "danger";
+  /** A 16-pixel mark before the words, from the kit's icons. */
+  icon?: ReactNode;
   children: ReactNode;
 }) {
   const { close } = useContext(MenuContext);
@@ -473,7 +478,8 @@ export function MenuItem({
       }}
       className="tadas-menu-item"
     >
-      {children}
+      <MenuIcon icon={icon} />
+      <span className="tadas-menu-label">{children}</span>
     </button>
   );
 }
@@ -483,10 +489,13 @@ export function MenuItem({
 export function MenuItemRadio({
   checked,
   onSelect,
+  icon,
   children,
 }: {
   checked: boolean;
   onSelect: () => void;
+  /** A 16-pixel mark before the words; the check stays at the far end. */
+  icon?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -498,13 +507,26 @@ export function MenuItemRadio({
       onClick={onSelect}
       className="tadas-menu-item"
     >
-      <span>{children}</span>
+      <MenuIcon icon={icon} />
+      <span className="tadas-menu-label">{children}</span>
       {checked ? (
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" style={{ color: tokens.color.link }}>
           <path d="M3 7.5l2.75 2.75L11 4.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       ) : null}
     </button>
+  );
+}
+
+/** The slot an item's icon sits in: a fixed width, so the words line up
+ * down the menu. An item with no icon in a menu where others have one
+ * keeps the same empty space (kit.css). */
+function MenuIcon({ icon }: { icon: ReactNode }) {
+  if (icon === undefined || icon === null) return null;
+  return (
+    <span className="tadas-menu-icon" aria-hidden="true">
+      {icon}
+    </span>
   );
 }
 
