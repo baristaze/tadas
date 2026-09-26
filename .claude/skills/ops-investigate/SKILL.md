@@ -237,7 +237,7 @@ named with `-dead` after it. Slack's calls in are in
    aws logs start-query --profile tadas-<env>-investigate \
      --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
      --start-time <start> --end-time <end> \
-     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
+     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|payments_key_refused|refused the runtime key|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
    ```
 
    What each line means, and the secret it points to:
@@ -260,7 +260,11 @@ named with `-dead` after it. Slack's calls in are in
      the runtime key could not read at start, and the log line `the
      stripe runtime key lacks <resource> (group <group>)` says where
      the dashboard's editor keeps it: the person adds it to the key,
-     which takes effect at once. A `503` on
+     which takes effect at once. `payments_key_refused` (503) on a
+     request, or `stripe refused the runtime key for <call>` in either
+     log group, is the same key refused on a call while the process
+     runs: revoked, or without that permission. Work that made the call
+     stays parked until the key is fixed. A `503` on
      `/webhooks/stripe` is `tadas/<env>/stripe_webhook_secret`; a
      `400` there is a signing secret that does not match the
      endpoint's, and the processor retries it.

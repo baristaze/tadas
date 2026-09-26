@@ -18,6 +18,7 @@ from worker_support import request
 from tadas.infra.buckets import Buckets
 from tadas.infra.cache import CacheScope
 from tadas.integrations.exceptions import (
+    PaymentsKeyRefused,
     PaymentsRefused,
     ProviderConflict,
     ProviderRefused,
@@ -252,7 +253,7 @@ async def test_a_refusal_of_the_call_fails_and_one_that_may_pass_parks(
     ("error", "outcome"),
     [
         (PaymentsRefused("delete customer", "invalid_request_error"), WorkRefused),
-        (ProviderUnavailable("the runtime key may not delete customer"), WorkParked),
+        (PaymentsKeyRefused("delete customer", "PermissionError"), WorkParked),
     ],
 )
 async def test_the_processor_refusing_the_call_fails_it_and_its_key_parks_it(
