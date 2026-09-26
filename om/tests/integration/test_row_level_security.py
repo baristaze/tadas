@@ -14,6 +14,7 @@ import pytest
 from contracts.event_storage import make_event
 from contracts.factories import make_identity, make_user
 from contracts.idempotency_storage import make_record
+from contracts.work_storage import make_item
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -26,9 +27,16 @@ from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyR
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
 from tadas.om.storage.logins import MIGRATION_LOGIN, RUNTIME_LOGIN, SYSTEM_LOGIN
 from tadas.om.storage.roles import DatabaseRole, role_for
-from tadas.om.storage.scopes import POLICY_NAME, TABLE_SCOPES, ScopeKind, scope_for
+from tadas.om.storage.scopes import (
+    POLICY_NAME,
+    SYSTEM_POLICY_NAME,
+    TABLE_SCOPES,
+    ScopeKind,
+    scope_for,
+)
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 from tadas.om.tenancy.storage.tables.users import Users
+from tadas.om.work.storage.impl.postgres import WorkStoragePostgresImpl
 
 pytestmark = pytest.mark.integration
 
@@ -193,14 +201,31 @@ async def test_every_table_holds_the_policy_its_scope_declares(
         policies = (
             await session.execute(
                 text(
-                    "SELECT policyname, cmd, qual, with_check FROM pg_policies"
-                    " WHERE schemaname = :schema AND tablename = :table"
+                    "SELECT policyname, cmd, roles::text[] AS roles, qual, with_check"
+                    " FROM pg_policies WHERE schemaname = :schema AND tablename = :table"
+                    " ORDER BY policyname"
                 ),
                 {"schema": role.value, "table": table_name},
             )
         ).all()
     if not fenced:
         assert policies == [], f"{table_name} is system-scoped and carries {policies}"
+        return
+    if scope.by_login:
+        # One policy per login (ADR 0042): the runtime login's on the tenant
+        # alone, the system login's on the system scope alone, and no other
+        # login admitted by either.
+        assert [(p.policyname, p.cmd, p.roles) for p in policies] == [
+            (SYSTEM_POLICY_NAME, "ALL", [SYSTEM_LOGIN]),
+            (POLICY_NAME, "ALL", [RUNTIME_LOGIN]),
+        ], policies
+        system, tenant = policies
+        for expression in (tenant.qual, tenant.with_check):
+            assert "org_id = (NULLIF(current_setting('app.org_id'" in expression, expression
+            assert "00000000-0000-0000-0000-000000000000" not in expression, expression
+        for expression in (system.qual, system.with_check):
+            assert "'00000000-0000-0000-0000-000000000000'" in expression, expression
+            assert "org_id" not in expression.replace("'app.org_id'", ""), expression
         return
     assert len(policies) == 1, f"{table_name} carries {len(policies)} policies"
     policy = policies[0]
@@ -298,3 +323,81 @@ async def test_a_user_is_narrowed_on_the_identity_behind_it(pg_sessions: Session
         assert [row.id for row in await session.execute(read_all, {"org": org})] == [ann.id]
     async with tenancy._session_for(Users, org_id=org, identity_id=bob.identity_id) as session:
         assert [row.id for row in await session.execute(read_all, {"org": org})] == [bob.id]
+
+
+async def _work_orgs(session: AsyncSession, org_id: UUID | None) -> set[UUID]:
+    """The tenants of the work items a transaction sees, with no tenant
+    predicate of its own: only the policy narrows it."""
+    if org_id is not None:
+        await set_scope(session, org_id, None, None)
+    return set((await session.execute(text("SELECT org_id FROM queue.work_items"))).scalars())
+
+
+async def test_the_queue_fence_admits_each_login_to_its_half_alone(
+    pg_sessions: Sessions, migration_engine: AsyncEngine
+) -> None:
+    """The work items are fenced by login (ADR 0042). The runtime login sees
+    the tenant it names and nothing under the system scope; the system login
+    sees every tenant under the system scope and nothing under a tenant or
+    under no setting; a login neither policy names sees nothing at all."""
+    work = WorkStoragePostgresImpl(pg_sessions)
+    mine, theirs = new_id(), new_id()
+    await work.create_item(mine, make_item())
+    await work.create_item(theirs, make_item())
+    runtime, system = pg_sessions[DatabaseRole.QUEUE], pg_sessions.system[DatabaseRole.QUEUE]
+    async with runtime() as session:
+        assert await _work_orgs(session, mine) == {mine}
+    async with runtime() as session:
+        assert await _work_orgs(session, EMPTY_UUID) == set()
+    async with runtime() as session:
+        assert await _work_orgs(session, None) == set()
+    async with system() as session:
+        assert await _work_orgs(session, EMPTY_UUID) == {mine, theirs}
+    async with system() as session:
+        assert await _work_orgs(session, mine) == set()
+    async with system() as session:
+        assert await _work_orgs(session, None) == set()
+    async with migration_engine.connect() as connection:
+        for org_id in (mine, EMPTY_UUID):
+            async with connection.begin():
+                await connection.execute(
+                    text("SELECT set_config('app.org_id', :org, true)"), {"org": str(org_id)}
+                )
+                seen = (await connection.execute(text("SELECT org_id FROM queue.work_items"))).all()
+                assert seen == [], f"the migration login saw {seen} under {org_id}"
+    # A write outside the transaction's tenant is refused on the runtime login.
+    async with runtime() as session:
+        await set_scope(session, mine, None, None)
+        with pytest.raises(DBAPIError) as refused:
+            await session.execute(
+                text("UPDATE queue.work_items SET org_id = :other"), {"other": theirs}
+            )
+        assert "row-level security" in str(refused.value)
+
+
+async def test_the_queue_policy_is_what_refuses_the_other_tenant(
+    pg_sessions: Sessions, migration_engine: AsyncEngine
+) -> None:
+    """The negative control on the table fenced by login, run twice: a
+    statement with no tenant predicate reads one tenant's items while the
+    policies are in place, and both tenants' with row-level security off."""
+    work = WorkStoragePostgresImpl(pg_sessions)
+    mine, theirs = new_id(), new_id()
+    await work.create_item(mine, make_item())
+    await work.create_item(theirs, make_item())
+
+    async def orgs_seen() -> set[UUID]:
+        async with pg_sessions[DatabaseRole.QUEUE]() as session:
+            return await _work_orgs(session, mine)
+
+    assert await orgs_seen() == {mine}
+    try:
+        async with migration_engine.begin() as connection:
+            await connection.execute(
+                text("ALTER TABLE queue.work_items DISABLE ROW LEVEL SECURITY")
+            )
+        assert await orgs_seen() == {mine, theirs}
+    finally:
+        async with migration_engine.begin() as connection:
+            await connection.execute(text("ALTER TABLE queue.work_items ENABLE ROW LEVEL SECURITY"))
+    assert await orgs_seen() == {mine}

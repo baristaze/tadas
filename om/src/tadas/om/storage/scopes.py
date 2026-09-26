@@ -18,7 +18,12 @@ IDENTITY_SETTING = "app.identity_id"
 missing one reads as NULL, which makes every comparison false: fail closed."""
 
 POLICY_NAME = "tenant_fence"
-"""One policy per table, `FOR ALL`, `USING` and `WITH CHECK` the same."""
+"""One policy per table, `FOR ALL`, `USING` and `WITH CHECK` the same; on a
+table fenced by login, the runtime login's half of the pair."""
+
+SYSTEM_POLICY_NAME = "system_fence"
+"""On a table fenced by login, the system login's half: every row, when the
+transaction names the system scope (ADR 0042)."""
 
 
 class ScopeKind(StrEnum):
@@ -46,6 +51,12 @@ class TableScope:
     kind: ScopeKind
     person_column: str | None = None
     identity_column: str | None = None
+    by_login: bool = False
+    """The fence is two policies, one per login, instead of one policy with
+    the system-scope clause beside the tenant comparison: `tenant_fence` to
+    the runtime login, on the tenant alone, and `system_fence` to the system
+    login, on the system scope alone. Taken where a statement of the system
+    scope must plan on the table's real row counts (ADR 0042)."""
 
     def __post_init__(self) -> None:
         if self.kind is ScopeKind.BOTH and (self.person_column is None) == (
@@ -60,6 +71,8 @@ class TableScope:
             self.person_column or self.identity_column
         ):
             raise ValueError(f"a {self.kind.value}-scoped table declares no column")
+        if self.by_login and self.kind is not ScopeKind.ORG:
+            raise ValueError("only an org-scoped table is fenced by login")
 
     @property
     def narrowing(self) -> tuple[str, str] | None:
@@ -83,7 +96,9 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "tasks": TableScope(ScopeKind.ORG),
     "files": TableScope(ScopeKind.ORG),
     "outbox_rows": TableScope(ScopeKind.ORG),
-    "work_items": TableScope(ScopeKind.ORG),
+    # The claim reads every tenant's ready items in the system scope, and the
+    # planner must see how many there are to walk its index in order.
+    "work_items": TableScope(ScopeKind.ORG, by_login=True),
     "events": TableScope(ScopeKind.ORG),
     "event_cursors": TableScope(ScopeKind.ORG),
     "billing_accounts": TableScope(ScopeKind.ORG),

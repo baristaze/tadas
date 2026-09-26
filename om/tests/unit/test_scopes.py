@@ -11,10 +11,12 @@ import re
 import pytest
 
 import tadas.om
+from tadas.om.storage.logins import RUNTIME_LOGIN, SYSTEM_LOGIN
 from tadas.om.storage.migrate import MIGRATIONS_DIR, role_metadata
 from tadas.om.storage.roles import DROPPED_TABLE_ROLES, TABLE_ROLES, DatabaseRole, role_for
 from tadas.om.storage.scopes import (
     POLICY_NAME,
+    SYSTEM_POLICY_NAME,
     TABLE_SCOPES,
     ScopeKind,
     TableScope,
@@ -64,6 +66,8 @@ def test_a_scope_declares_the_column_its_kind_needs() -> None:
         TableScope(ScopeKind.IDENTITY, person_column="user_id", identity_column="identity_id")
     with pytest.raises(ValueError):
         TableScope(ScopeKind.ORG, person_column="user_id")
+    with pytest.raises(ValueError):
+        TableScope(ScopeKind.BOTH, person_column="user_id", by_login=True)
 
 
 def test_a_person_is_narrowed_on_the_setting_that_names_it() -> None:
@@ -106,11 +110,11 @@ def chain(role: DatabaseRole) -> str:
     )
 
 
-def policy_in(sql: str, qualified: str) -> str | None:
+def policy_in(sql: str, qualified: str, name: str = POLICY_NAME) -> str | None:
     """The policy a table carries at the end of the chain: the last statement
     that creates or alters it, since a later migration may narrow it anew."""
     statements = re.findall(
-        rf"(?:CREATE|ALTER) POLICY {POLICY_NAME} ON {re.escape(qualified)}\b[^;]*;", sql
+        rf"(?:CREATE|ALTER) POLICY {name} ON {re.escape(qualified)}\b[^;]*;", sql
     )
     return statements[-1] if statements else None
 
@@ -136,6 +140,15 @@ def test_the_chain_carries_the_policy_the_scope_declares(table_name: str) -> Non
     latest = policy_in(sql, qualified)
     assert latest is not None
     settings = set(re.findall(r"current_setting\('(app\.\w+)'", latest))
+    if scope.by_login:
+        # Two policies, each bound to its login: the tenant alone for the
+        # runtime login, the system scope alone for the system login.
+        system = policy_in(sql, qualified, SYSTEM_POLICY_NAME)
+        assert system is not None, f"{table_name} has no {SYSTEM_POLICY_NAME} policy"
+        assert f"TO {RUNTIME_LOGIN}\n" in latest and "00000000-0000" not in latest, latest
+        assert f"TO {SYSTEM_LOGIN}\n" in system and "org_id =" not in system, system
+        assert settings == {"app.org_id"}, f"{table_name} is narrowed on {settings}"
+        return
     if scope.narrowing is None:
         assert settings == {"app.org_id"}, f"{table_name} is narrowed on {settings}"
         return
@@ -156,18 +169,20 @@ def test_the_system_scope_clause_is_spelled_in_every_policy(role: DatabaseRole) 
         if scope_for(name.split(".")[-1]).kind is not ScopeKind.SYSTEM
     ]
     # A table the chain dropped took its policy with it.
-    policies = [
+    policies = {
         table
         for table in re.findall(rf"CREATE POLICY {POLICY_NAME} ON \w+\.(\w+)", sql)
         if table not in DROPPED_TABLE_ROLES
-    ]
+    }
     assert len(policies) == len(fenced), (
         f"{role.value}: {len(policies)} policies for {len(fenced)} tables"
     )
     # Twice per policy: `USING` and `WITH CHECK` carry the same expression.
+    # A table fenced by login spells it in the system login's policy.
     empty_uuid = "'00000000-0000-0000-0000-000000000000'"
     for name in fenced:
-        latest = policy_in(sql, name)
+        by_login = scope_for(name.split(".")[-1]).by_login
+        latest = policy_in(sql, name, SYSTEM_POLICY_NAME if by_login else POLICY_NAME)
         assert latest is not None, f"{name} has no policy"
         spelled = latest.count(f"current_setting('app.org_id', true) = {empty_uuid}")
         assert spelled == 2, f"{name}: the system scope is spelled {spelled} times"
