@@ -28,6 +28,8 @@ from tadas.integrations.identity import (
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import refuse_past, seats_metered
+from tadas.om.billing.types.account import BillingAccount
+from tadas.om.billing.types.billing import Entitlements
 from tadas.om.billing.types.plan import Lever
 from tadas.om.exceptions import (
     Conflict,
@@ -914,11 +916,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 teams=membership.teams,
                 credential_id=api_key.id,
             )
-            # A key of an org whose plan has none is kept and refused, never
-            # revoked: it says why, and it works again the day the org is on
-            # a plan with keys. The plan comes from the account read with
-            # the principal, as current as a read of its own.
-            refuse_past(self._entitlements.entitlements_of(ctx, account).plan, Lever.API_KEYS, 0)
+            self._refuse_keyless(self._entitlements.entitlements_of(ctx, account))
             return ctx
         raise InvalidCredential("this route accepts a session token or an api key")
 
@@ -1046,6 +1044,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         *,
         record_use: bool = True,
     ) -> SocketPrincipal:
+        account: BillingAccount | None = None
         if credential_kind is CredentialKind.SESSION_TOKEN:
             session = await self._storage.read_session(org_id, credential_id)
             if session is None:
@@ -1061,7 +1060,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
             if api_key is None:
                 raise InvalidCredential("the api key behind the ticket is gone")
             self._check_api_key(api_key)
-            org, user, membership = await self._principal(org_id, api_key.user_id)
+            (
+                found_org,
+                found_user,
+                found_membership,
+                account,
+            ) = await self._storage.read_key_principal(org_id, api_key.user_id)
+            org, user, membership = self._live_principal(found_org, found_user, found_membership)
             role = capped_role(api_key.role, membership.role)
             expires_at = api_key.expires_at
         else:
@@ -1076,6 +1081,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
             teams=membership.teams,
             credential_id=credential_id,
         )
+        if credential_kind is CredentialKind.API_KEY:
+            # The socket asks the plan what the key's every request asks it,
+            # from the account read with the principal: a key the plan no
+            # longer allows closes its socket at the next recheck.
+            self._refuse_keyless(self._entitlements.entitlements_of(ctx, account))
         return SocketPrincipal(
             ctx=ctx,
             expires_at=expires_at,
@@ -1853,7 +1863,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return admit
 
     async def _refuse_without_keys(self, ctx: OpContext) -> None:
-        entitlements = await self._entitlements.get_entitlements(ctx)
+        self._refuse_keyless(await self._entitlements.get_entitlements(ctx))
+
+    @staticmethod
+    def _refuse_keyless(entitlements: Entitlements) -> None:
+        """PlanLimitReached when the org's plan has no api keys. A key of such
+        an org is kept and refused, never revoked: the refusal says why, and
+        the key works again the day the org is on a plan with keys."""
         refuse_past(entitlements.plan, Lever.API_KEYS, 0)
 
     # Credentials.

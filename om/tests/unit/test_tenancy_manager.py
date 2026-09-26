@@ -1230,7 +1230,8 @@ async def test_each_credential_is_checked_in_the_fewest_reads(
 ) -> None:
     """A session reads its digest and its principal. An api key reads its
     digest and its principal with the org's account beside it, and the plan
-    is decided from that account, not from a read of its own. The operator
+    is decided from that account, not from a read of its own; so does the
+    recheck of the socket it opened. The operator
     gate reads the credential with its identity, once, and nothing more."""
     org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
     assert org is not None
@@ -1258,6 +1259,12 @@ async def test_each_credential_is_checked_in_the_fewest_reads(
     reads.clear()
     await manager.authenticate(request(), key.key)
     assert reads == ["read_api_key_by_digest", "read_key_principal"]
+    # A key's socket asks again in as many reads, the plan among them.
+    reads.clear()
+    await manager.resume(
+        request(), org[1].id, CredentialKind.API_KEY, key.api_key.id, record_use=False
+    )
+    assert reads == ["read_api_key", "read_key_principal"]
     for credential in (login.token, token.token):
         reads.clear()
         await manager.admit_operator(await manager.authenticate_login(request(), credential))

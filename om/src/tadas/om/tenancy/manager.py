@@ -303,11 +303,13 @@ class TenancyManagerInterface(ABC):
     ) -> SocketPrincipal:
         """Platform-internal: re-checks the credential behind a redeemed socket
         ticket and yields the socket's context with the credential's expiry,
-        the bound on the socket's authority. The redemption calls it once,
-        and an open socket calls it again on an interval. That recheck passes
-        `record_use=False`: it asks whether the credential still holds, and a
-        question is not a use, so an open socket never keeps an idle session
-        alive."""
+        the bound on the socket's authority. An api key is refused with
+        PlanLimitReached when the org's plan has no keys, as its every
+        request is, from the account read with its principal. The redemption
+        calls it once, and an open socket calls it again on an interval. That
+        recheck passes `record_use=False`: it asks whether the credential
+        still holds, and a question is not a use, so an open socket never
+        keeps an idle session alive."""
         ...
 
     @abstractmethod
