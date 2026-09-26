@@ -192,6 +192,7 @@ async def test_a_move_answers_the_rank_written_out_and_moves_no_other_task(
     a = await add(client, owner, "a")
     b = await add(client, owner, "b")
     assert (b["rank"], a["rank"], c["rank"]) == ("-2", "-1", "0")
+    rank = ""
     for index in range(60):
         moved = a if index % 2 == 0 else c
         current = (await client.get(f"/v1/tasks/{moved['id']}", headers=owner)).json()
