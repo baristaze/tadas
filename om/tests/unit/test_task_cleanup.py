@@ -4,7 +4,7 @@ write, the task reopened mid-run left alone, the task done 89 days ago kept,
 a step that errors retried from its cursor, and the archived task read and
 restored."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -22,6 +22,7 @@ from tadas.om.orchestrations.types.orchestration import (
 )
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.om.tasks.rules import CLEANUP_BATCH
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -36,7 +37,7 @@ def request() -> RequestContext:
 
 
 class World:
-    def __init__(self, tmp_path: Path, storage: StorageMemoryImpl | None = None) -> None:
+    def __init__(self, tmp_path: Path, storage: StorageInterface | None = None) -> None:
         self.storage = storage or StorageMemoryImpl()
         self.managers: Managers = build_managers(
             self.storage, InfraLocalImpl(tmp_path), tasks_options=TasksOptions()
@@ -155,7 +156,7 @@ async def test_a_task_reopened_mid_run_is_left_alone(tmp_path: Path) -> None:
         manager: Managers | None = None
         ctx: OpContext | None = None
 
-        async def read_archivable(self, org_id: UUID, before, limit: int) -> list[UUID]:  # type: ignore[no-untyped-def]
+        async def read_archivable(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
             found = await super().read_archivable(org_id, before, limit)
             if self.target is not None and self.manager is not None and self.ctx is not None:
                 task = await self.manager.tasks.get_task(self.ctx, self.target)

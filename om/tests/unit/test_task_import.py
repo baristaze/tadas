@@ -27,6 +27,7 @@ from tadas.om.orchestrations.types.orchestration import (
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.rules import IMPORT_BATCH, IMPORT_MAX_ROWS
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskFilter
@@ -41,7 +42,7 @@ def request() -> RequestContext:
 
 
 class World:
-    def __init__(self, tmp_path: Path, storage: StorageMemoryImpl | None = None) -> None:
+    def __init__(self, tmp_path: Path, storage: StorageInterface | None = None) -> None:
         self.storage = storage or StorageMemoryImpl()
         self.managers: Managers = build_managers(self.storage, InfraLocalImpl(tmp_path))
 
