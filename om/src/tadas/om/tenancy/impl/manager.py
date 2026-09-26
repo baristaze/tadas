@@ -1170,6 +1170,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotFound(f"org {ctx.org_id} not found")
         return org
 
+    async def get_me(self, ctx: OpContext) -> OrgMembership:
+        ctx.require(Permission.READ)
+        org, user, membership = await self._storage.read_principal(ctx.org_id, ctx.user_id)
+        if org is None or org.deleted_at is not None:
+            raise NotFound(f"org {ctx.org_id} not found")
+        if user is None or user.deleted_at is not None or membership is None:
+            raise NotFound(f"user {ctx.user_id} not found")
+        return OrgMembership(org=org, user=user, role=membership.role)
+
     async def create_org(
         self, ctx: OpContext, name: str, slug: str | None, attempt: Attempt | None = None
     ) -> OrgMembership:
@@ -1423,18 +1432,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._relay.relay(ctx.org_id, row)
         return closed
 
-    async def update_user(self, ctx: OpContext, user: User) -> User:
+    async def rename_user(self, ctx: OpContext, user_id: UUID, display_name: str) -> User:
         ctx.require(Permission.READ)
-        if user.id != ctx.user_id:
+        if user_id != ctx.user_id:
             ctx.require(Permission.MANAGE_MEMBERS)
-        existing = await self._live_user(ctx, user.id)
-        if not user.display_name.strip():
+        existing = await self._live_user(ctx, user_id)
+        if not display_name.strip():
             raise ValidationFailed("display name is required")
         # model_copy does not validate; the copy carries caller input, so it does.
         updated = User.model_validate(
             {
                 **existing.model_dump(),
-                "display_name": user.display_name,
+                "display_name": display_name,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
             }
