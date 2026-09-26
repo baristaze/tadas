@@ -80,6 +80,8 @@ class Recorder:
         return Window(self.trips[mark[0] :], self.txns[mark[1] :], self.calls[mark[2] :])
 
     def record(self, kind: str, sql: str) -> None:
+        if UNCOUNTED.get():
+            return
         txn = CURRENT.get()
         trip = Trip(kind, " ".join(sql.split())[:300], txn.n if txn else None)
         self.trips.append(trip)
@@ -115,11 +117,12 @@ class Window:
 
     def detail(self) -> list[str]:
         """One line per transaction: its role and scope, the storage method,
-        its round trips, and the statements after the scope's own."""
+        its round trips, and its statements. The scope rides on the `BEGIN`
+        and is no statement of its own."""
         lines = []
         for txn in self.txns:
             kinds = [t.kind for t in txn.trips if t.kind != "PREPARE"]
-            statements = [t.sql[:200] for t in txn.trips if t.kind in ("EXEC", "EXECMANY")][1:]
+            statements = [t.sql[:200] for t in txn.trips if t.kind in ("EXEC", "EXECMANY")]
             lines.append(
                 f"T{txn.n} {txn.role}/{txn.scope} {txn.method}: {len(kinds)} trips | "
                 + " ; ".join(statements)
@@ -132,6 +135,7 @@ class Window:
 
 REC = Recorder()
 CURRENT: contextvars.ContextVar[Txn | None] = contextvars.ContextVar("audit_txn", default=None)
+UNCOUNTED: contextvars.ContextVar[bool] = contextvars.ContextVar("audit_uncounted", default=False)
 _installed = False
 
 
@@ -345,12 +349,14 @@ class World:
         from sqlalchemy.ext.asyncio import create_async_engine
 
         engine = create_async_engine(superuser_on(self.name))
+        token = UNCOUNTED.set(True)
         try:
             async with engine.begin() as connection:
                 result = await connection.exec_driver_sql(statement)
                 return list(result.all()) if result.returns_rows else []
         finally:
             await engine.dispose()
+            UNCOUNTED.reset(token)
 
 
 @asynccontextmanager

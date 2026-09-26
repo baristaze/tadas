@@ -147,22 +147,21 @@ def window() -> Window:
     txn = Txn(0, "core", "tenant", "Tasks.read_task")
     trips = [
         Trip("BEGIN", "", 0),
-        Trip("EXEC", "SELECT set_config('app.org_id', $1, true)", 0),
         Trip("PREPARE", "SELECT * FROM core.tasks", 0),
         Trip("EXEC", "SELECT * FROM core.tasks", 0),
         Trip("ROLLBACK", "", 0),
         Trip("EXEC", "SELECT 1", None),
     ]
-    txn.trips = trips[:5]
+    txn.trips = trips[:4]
     return Window(trips, [txn])
 
 
 def test_a_window_counts_round_trips_warm_and_cold() -> None:
     w = window()
-    assert (w.round_trips, w.prepares, w.warm_round_trips, w.statements) == (6, 1, 5, 3)
+    assert (w.round_trips, w.prepares, w.warm_round_trips, w.statements) == (5, 1, 4, 2)
     assert w.roles == ["core"]
     first, stray = w.detail()
-    assert first.startswith("T0 core/tenant Tasks.read_task: 4 trips | SELECT * FROM core.tasks")
+    assert first == "T0 core/tenant Tasks.read_task: 3 trips | SELECT * FROM core.tasks"
     assert stray == "outside the funnel: 1 trips"
 
 
