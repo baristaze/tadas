@@ -133,9 +133,13 @@ Zustand, one realtime channel.
   token on the way. Only then does the hold end. An exchange that fails
   after its session was refused signs the tab out; any other refusal
   leaves the tab where it was and says why. A new team org is created
-  under an idempotency key and then switched into the same way. The token
-  change reopens the realtime socket; a later 4401 from the old socket
-  signs nothing out, since it belongs to a token the tab no longer holds.
+  under an idempotency key and then switched into the same way. The
+  signed-in shell is keyed by the org (`src/app/routes.tsx`), so a switch
+  mounts it afresh: the page on show, its queries, its open dialogs and
+  drafts, and the realtime provider all start over in the new org, and
+  nothing of the old one stays on screen. The new provider opens a new
+  socket; a later 4401 from the old socket signs nothing out, since it
+  belongs to a token the tab no longer holds.
 - Tasks. Adding one is a single text box: type the title and press Enter,
   or click Add. The due date is set by editing the task, with a date
   picker and a link that clears it. A due date is a date, never a time:
