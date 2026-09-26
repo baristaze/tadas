@@ -52,6 +52,7 @@ pythonpath = [
     "clients/python/tests",
     "apps/cli/tests",
     "ops/tests",
+    "ops/audit",
 ]
 asyncio_default_fixture_loop_scope = "function"
 testpaths = [
