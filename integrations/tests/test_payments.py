@@ -4,12 +4,15 @@ local environment, the boot's refusal of a key that is not a restricted key
 of the environment's mode, the processes
 reading the runtime key alone, the boot's check of what the key may read,
 the real client's reading of a subscription, the timeout and the retries
-every call it makes is sent with, and its translation of a failure by whose
-problem it is: the key's, the request's, or the processor's."""
+every call it makes is sent with, the request's deadline a call a request
+makes is cut at, and its translation of a failure by whose problem it is:
+the key's, the request's, or the processor's."""
 
+import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from typing import Any
 from uuid import uuid4
@@ -18,6 +21,8 @@ import httpx
 import pytest
 import stripe
 
+from tadas.infra.base import utcnow
+from tadas.infra.deadline import PASSED
 from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.integrations.exceptions import (
     DeliveryRefused,
@@ -449,6 +454,85 @@ async def test_every_call_is_sent_with_the_timeout_and_a_timeout_is_tried_twice_
         await payments.close()
     at = 2.5
     assert sent == [{"connect": at, "read": at, "write": at, "pool": at}] * 3
+
+
+async def stripe_answering(
+    answer: Callable[[httpx.Request], Coroutine[None, None, httpx.Response]],
+) -> PaymentsStripeImpl:
+    """The real client, as the process opens it (a ten second timeout, two
+    retries), over a transport the test answers."""
+    payments = PaymentsStripeImpl(
+        api_key="rk_test_x",
+        account_id="acct_test",
+        webhook_secret=SECRET,
+        timeout=timedelta(seconds=10),
+        check_at_start=False,
+    )
+    await payments.start()
+    transport = payments._http  # the SDK's own, given a transport the test answers
+    assert transport is not None
+    await transport._client_async.aclose()
+    transport._client_async = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+    return payments
+
+
+async def test_a_stripe_that_hangs_ends_at_the_deadline_not_after_its_retries() -> None:
+    """At a ten second timeout and two retries a Stripe that hangs holds a
+    call about thirty seconds. Under a request's deadline the attempt in
+    flight is cut there, and the call is unreachable."""
+    sent: list[httpx.Request] = []
+
+    async def hang(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        await asyncio.sleep(3600)
+        raise AssertionError("never answered")
+
+    payments = await stripe_answering(hang)
+    began = time.monotonic()
+    try:
+        with pytest.raises(BackendUnreachable) as raised:
+            deadline = utcnow() + timedelta(seconds=0.3)
+            await asyncio.wait_for(payments.create_customer(uuid4(), "Acme", deadline=deadline), 5)
+    finally:
+        await payments.close()
+    waited = time.monotonic() - began
+    assert raised.value.message == f"stripe create customer could not reach the backend: {PASSED}"
+    assert 0.25 <= waited < 1.0, waited
+    assert len(sent) == 1
+
+
+async def test_the_two_calls_of_a_checkout_share_the_deadline() -> None:
+    """A checkout finds its price, then makes its session: each answers in a
+    fifth of a second, well inside the timeout, and together they do not fit
+    in the three tenths the request has left."""
+    sent: list[str] = []
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        await asyncio.sleep(0.2)
+        if request.url.path == "/v1/prices":
+            price = {"id": "price_1", "object": "price", "lookup_key": "team_monthly"}
+            return httpx.Response(200, json={"object": "list", "data": [price], "has_more": False})
+        return httpx.Response(200, json={"id": "cs_1", "object": "checkout.session", "url": "u"})
+
+    payments = await stripe_answering(slow)
+    try:
+        with pytest.raises(BackendUnreachable) as raised:
+            await payments.create_checkout(
+                customer_id="cus_1",
+                org_id=uuid4(),
+                lookup_key="team_monthly",
+                quantity=1,
+                success_url="https://portal.example/ok",
+                cancel_url="https://portal.example/no",
+                deadline=utcnow() + timedelta(seconds=0.3),
+            )
+    finally:
+        await payments.close()
+    assert raised.value.message == (
+        f"stripe create checkout session could not reach the backend: {PASSED}"
+    )
+    assert sent == ["/v1/prices", "/v1/checkout/sessions"]
 
 
 def test_a_subscription_is_read_from_the_item_where_the_period_now_sits() -> None:

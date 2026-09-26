@@ -204,7 +204,12 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         return f"{TWIN_LOGOUT}?{urlencode(query)}"
 
     async def authenticate_code(
-        self, code: str, *, code_verifier: str | None, invitation_token: str | None = None
+        self,
+        code: str,
+        *,
+        code_verifier: str | None,
+        invitation_token: str | None = None,
+        deadline: datetime | None = None,
     ) -> ProvidedSignIn:
         signed_in = self._codes.pop(code, None)
         if signed_in is None:
@@ -214,7 +219,7 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
             raise ProviderRefused("the verifier does not match the sign-in's challenge")
         return signed_in
 
-    async def start_device(self) -> DeviceAuthorization:
+    async def start_device(self, *, deadline: datetime | None = None) -> DeviceAuthorization:
         user_code = f"{next(self._counter):04d}-TWIN"
         device_code = f"{self._id('device')}:{user_code}"
         self._devices[device_code] = "pending"
@@ -227,7 +232,9 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
             interval=5,
         )
 
-    async def authenticate_device(self, device_code: str) -> ProvidedSignIn:
+    async def authenticate_device(
+        self, device_code: str, *, deadline: datetime | None = None
+    ) -> ProvidedSignIn:
         state = self._devices.get(device_code)
         if state is None:
             raise ProviderRefused("unknown device code")
@@ -240,7 +247,9 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         del self._devices[device_code]
         return state
 
-    async def ensure_organization(self, *, external_id: str, name: str) -> ProvidedOrganization:
+    async def ensure_organization(
+        self, *, external_id: str, name: str, deadline: datetime | None = None
+    ) -> ProvidedOrganization:
         for org in self.organizations.values():
             if org.external_id == external_id:
                 return org
@@ -248,14 +257,21 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         self.organizations[made.id] = made
         return made
 
-    async def get_organization(self, organization_id: str) -> ProvidedOrganization:
+    async def get_organization(
+        self, organization_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedOrganization:
         org = self.organizations.get(organization_id)
         if org is None:
             raise ProviderRefused(f"no organization {organization_id}")
         return org
 
     async def send_invitation(
-        self, *, email: str, organization_id: str, expires_in_days: int
+        self,
+        *,
+        email: str,
+        organization_id: str,
+        expires_in_days: int,
+        deadline: datetime | None = None,
     ) -> ProvidedInvitation:
         if organization_id not in self.organizations:
             raise ProviderRefused(f"no organization {organization_id}")
@@ -273,7 +289,7 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         return invitation
 
     async def find_pending_invitation(
-        self, *, email: str, organization_id: str
+        self, *, email: str, organization_id: str, deadline: datetime | None = None
     ) -> ProvidedInvitation | None:
         for invitation in self.invitations.values():
             if (
@@ -284,7 +300,9 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
                 return invitation
         return None
 
-    async def resend_invitation(self, invitation_id: str) -> ProvidedInvitation:
+    async def resend_invitation(
+        self, invitation_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedInvitation:
         invitation = self.invitations.get(invitation_id)
         if invitation is None or invitation.state is InvitationState.ACCEPTED:
             raise ProviderRefused("the invitation cannot be sent again")
@@ -298,7 +316,9 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         self.sent.append(resent)
         return resent
 
-    async def revoke_invitation(self, invitation_id: str) -> ProvidedInvitation:
+    async def revoke_invitation(
+        self, invitation_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedInvitation:
         invitation = self.invitations.get(invitation_id)
         if invitation is None or invitation.state is not InvitationState.PENDING:
             raise ProviderRefused("only a pending invitation is revoked")
@@ -307,7 +327,12 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         return revoked
 
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str, email: str
+        self,
+        *,
+        organization_id: str,
+        user_id: str,
+        email: str,
+        deadline: datetime | None = None,
     ) -> ProvidedInvitation | None:
         # The record of who accepted decides, whatever address it was sent to.
         for invitation in self.invitations.values():
@@ -320,7 +345,12 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         return None
 
     async def portal_link(
-        self, *, organization_id: str, intent: PortalIntent, return_url: str
+        self,
+        *,
+        organization_id: str,
+        intent: PortalIntent,
+        return_url: str,
+        deadline: datetime | None = None,
     ) -> str:
         if organization_id not in self.organizations:
             raise ProviderRefused(f"no organization {organization_id}")

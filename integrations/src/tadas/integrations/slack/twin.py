@@ -11,7 +11,7 @@ the twin."""
 
 import logging
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -142,7 +142,9 @@ class SlackTwinImpl(SlackInterface):
         code = self.approve(TWIN_TEAM, TWIN_INSTALLER, TWIN_TEAM_NAME)
         return f"{redirect_uri}?{urlencode({'code': code, 'state': state})}"
 
-    async def exchange_code(self, code: str, redirect_uri: str) -> SlackGrant:
+    async def exchange_code(
+        self, code: str, redirect_uri: str, *, deadline: datetime | None = None
+    ) -> SlackGrant:
         self._maybe_fail("oauth.v2.access")
         grant = self._codes.pop(code, None)
         if grant is None:
@@ -157,7 +159,7 @@ class SlackTwinImpl(SlackInterface):
         self._revoked.add(refresh_token)  # a refresh token works once
         return self._mint(team)
 
-    async def uninstall(self, token: str) -> None:
+    async def uninstall(self, token: str, *, deadline: datetime | None = None) -> None:
         self._maybe_fail("apps.uninstall")
         team = self.team_of(token)
         if team is None:
@@ -165,7 +167,7 @@ class SlackTwinImpl(SlackInterface):
         self.uninstalled.append(team)
         self.revoke_team(team)
 
-    async def revoke(self, token: str) -> None:
+    async def revoke(self, token: str, *, deadline: datetime | None = None) -> None:
         self._maybe_fail("auth.revoke")
         self._revoked.add(token)
 

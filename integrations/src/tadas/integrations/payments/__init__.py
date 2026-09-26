@@ -15,9 +15,15 @@ is `PaymentsRefused`: the same request gets the same answer. A refusal
 of the process's own key (revoked, or without the permission) is
 `PaymentsKeyRefused`, a `ProviderUnavailable`: nothing is wrong with the
 call, and it goes through once a person fixes the key. A processor that
-throttles, or does not answer, is unavailable too."""
+throttles, or does not answer, is unavailable too.
+
+A call a request makes (the customer, the checkout, the portal, the cancel
+and its undo) carries the request's `deadline`, which every call it makes
+shares (ADR 0069), and ends by then, unavailable, as when the processor does
+not answer. The rest are a worker's, bounded by the item's lease."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 from tadas.integrations.payments.types import (
@@ -38,7 +44,9 @@ class PaymentsInterface(ABC):
         ...
 
     @abstractmethod
-    async def create_customer(self, org_id: UUID, name: str) -> str:
+    async def create_customer(
+        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+    ) -> str:
         """The processor's customer for one org, created once: the call carries
         an idempotency key derived from the org, so two starts that race make
         one customer. The customer's metadata names the org."""
@@ -54,6 +62,7 @@ class PaymentsInterface(ABC):
         quantity: int,
         success_url: str,
         cancel_url: str,
+        deadline: datetime | None = None,
     ) -> str:
         """A hosted checkout for a subscription to the price the lookup key
         names, at `quantity`, for the org's customer; returns its URL. The
@@ -63,7 +72,12 @@ class PaymentsInterface(ABC):
 
     @abstractmethod
     async def create_portal_session(
-        self, customer_id: str, return_url: str, update_payment_method: bool = False
+        self,
+        customer_id: str,
+        return_url: str,
+        update_payment_method: bool = False,
+        *,
+        deadline: datetime | None = None,
     ) -> str:
         """The processor's own page for the customer: payment methods,
         invoices, a change of plan, cancellation. Returns its URL. With
@@ -86,7 +100,7 @@ class PaymentsInterface(ABC):
 
     @abstractmethod
     async def set_cancel_at_period_end(
-        self, subscription_id: str, cancel: bool
+        self, subscription_id: str, cancel: bool, *, deadline: datetime | None = None
     ) -> ProviderSubscription:
         """Ends the subscription when its current period ends, or takes that
         back; the org keeps what it paid for until then."""

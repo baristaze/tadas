@@ -167,6 +167,11 @@ says.
   the request's wins over the client's. WorkOS's does, and falls back to
   60 seconds. A test reads the timeout a request is sent with, for each
   provider.
+- **A request's deadline on every call a request makes.** A method a
+  request can call takes the request's `deadline`, the instant its time
+  runs out, which every call of the request shares (ADR 0069). The call
+  ends by then, as a call the provider does not answer ends. A worker's
+  calls carry none: its item's lease bounds them.
 - **One exception family.** Every provider error is translated into an
   integration exception, each a leaf of infra's (`ProviderUnavailable`
   is a `503`, `ProviderRefused` a `400`, `ProviderConflict` a `409`),
@@ -201,5 +206,18 @@ For WorkOS and Stripe the timeout bounds each wait on the network (to
 connect, to send, and between bytes of the answer), not an attempt as a
 whole; for Slack it bounds the attempt. WorkOS also waits as long as a
 `Retry-After` on a 429 or a server error asks, with no cap of its own.
-A request that makes several calls waits for each in turn; nothing
-bounds the request as a whole.
+
+That is what a call costs a worker. A request makes its calls in turn,
+and they share its deadline, `TADAS_REQUEST_DEADLINE_SECONDS` (20
+seconds) from when it was admitted, so a provider that hangs costs a
+request that and no more (ADR 0069):
+
+- a call that starts with no time left does not start;
+- a call still waiting at the deadline, on an attempt, on the wait
+  before the next, or on a wait the provider asked for, is cut there;
+- WorkOS sends each attempt with the smaller of the timeout and what is
+  left, and a `Retry-After` longer than what is left ends the call at
+  once instead of being slept;
+- the call then raises what it raises when the provider does not
+  answer: `ProviderUnavailable` for WorkOS, `BackendUnreachable` for
+  Stripe (both `503 unavailable`), and `SlackFailed` for Slack.

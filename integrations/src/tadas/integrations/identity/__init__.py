@@ -6,7 +6,12 @@ which the tenancy manager creates lazily and names by the Tadas org's id.
 
 One interface, a real client (`workos.py`), a deterministic twin
 (`twin.py`), and the absent provider (`absent.py`) of a process that signs
-nobody in, such as the worker."""
+nobody in, such as the worker.
+
+A call a request makes carries the request's `deadline`, the instant its
+time runs out, which every call it makes shares (ADR 0069). The call ends by
+then, `ProviderUnavailable`, as when the provider does not answer. The two
+deletions are a worker's, bounded by the item's lease, and take none."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -122,7 +127,12 @@ class IdentityProviderInterface(ABC):
 
     @abstractmethod
     async def authenticate_code(
-        self, code: str, *, code_verifier: str | None, invitation_token: str | None = None
+        self,
+        code: str,
+        *,
+        code_verifier: str | None,
+        invitation_token: str | None = None,
+        deadline: datetime | None = None,
     ) -> ProvidedSignIn:
         """Exchanges the code the browser brought back, server-side, with the
         verifier the sign-in started with. ProviderRefused for a code that is
@@ -138,32 +148,43 @@ class IdentityProviderInterface(ABC):
         ...
 
     @abstractmethod
-    async def start_device(self) -> DeviceAuthorization:
+    async def start_device(self, *, deadline: datetime | None = None) -> DeviceAuthorization:
         """Starts a sign-in for a device with no browser of its own."""
         ...
 
     @abstractmethod
-    async def authenticate_device(self, device_code: str) -> ProvidedSignIn:
+    async def authenticate_device(
+        self, device_code: str, *, deadline: datetime | None = None
+    ) -> ProvidedSignIn:
         """Asks whether the person confirmed the device sign-in: the sign-in
         when they did, DevicePending or DeviceSlowDown while they have not,
         DeviceDenied or DeviceExpired when it will never come."""
         ...
 
     @abstractmethod
-    async def ensure_organization(self, *, external_id: str, name: str) -> ProvidedOrganization:
+    async def ensure_organization(
+        self, *, external_id: str, name: str, deadline: datetime | None = None
+    ) -> ProvidedOrganization:
         """The provider's organization for a Tadas org: the one that carries
         `external_id` when there is one, else a new one. Rerun, it creates
         nothing."""
         ...
 
     @abstractmethod
-    async def get_organization(self, organization_id: str) -> ProvidedOrganization:
+    async def get_organization(
+        self, organization_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedOrganization:
         """ProviderRefused for an id the provider does not hold."""
         ...
 
     @abstractmethod
     async def send_invitation(
-        self, *, email: str, organization_id: str, expires_in_days: int
+        self,
+        *,
+        email: str,
+        organization_id: str,
+        expires_in_days: int,
+        deadline: datetime | None = None,
     ) -> ProvidedInvitation:
         """The provider sends the email with the sign-in link. ProviderConflict
         when an invitation for the address is pending in the organization."""
@@ -171,20 +192,29 @@ class IdentityProviderInterface(ABC):
 
     @abstractmethod
     async def find_pending_invitation(
-        self, *, email: str, organization_id: str
+        self, *, email: str, organization_id: str, deadline: datetime | None = None
     ) -> ProvidedInvitation | None:
         """The pending invitation for the address in the organization."""
         ...
 
     @abstractmethod
-    async def resend_invitation(self, invitation_id: str) -> ProvidedInvitation: ...
+    async def resend_invitation(
+        self, invitation_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedInvitation: ...
 
     @abstractmethod
-    async def revoke_invitation(self, invitation_id: str) -> ProvidedInvitation: ...
+    async def revoke_invitation(
+        self, invitation_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedInvitation: ...
 
     @abstractmethod
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str, email: str
+        self,
+        *,
+        organization_id: str,
+        user_id: str,
+        email: str,
+        deadline: datetime | None = None,
     ) -> ProvidedInvitation | None:
         """The invitation of the organization the person accepted, when one
         is: the provider's record of who accepted it, which a sign-in reads
@@ -197,7 +227,12 @@ class IdentityProviderInterface(ABC):
 
     @abstractmethod
     async def portal_link(
-        self, *, organization_id: str, intent: PortalIntent, return_url: str
+        self,
+        *,
+        organization_id: str,
+        intent: PortalIntent,
+        return_url: str,
+        deadline: datetime | None = None,
     ) -> str:
         """A short-lived link to the provider's admin portal for the
         organization, where its admin sets up single sign-on themselves."""

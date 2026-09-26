@@ -3,9 +3,10 @@ caller decides on; the real client makes each call under the token it is
 handed and never carries it in what it raises; a command's answer goes to
 Slack's own address alone; an install's code and a refresh become tokens;
 a call in is checked against the signing secret over its raw body, in
-constant time, inside five minutes; the twin signs the way Slack does, stays
-local, issues tokens that renew once, and fails on request; and the off
-client reaches Slack for nothing."""
+constant time, inside five minutes; a call a request makes ends at the
+request's deadline; the twin signs the way Slack does, stays local, issues
+tokens that renew once, and fails on request; and the off client reaches
+Slack for nothing."""
 
 import asyncio
 import time
@@ -21,6 +22,8 @@ from slack_sdk.signature import SignatureVerifier
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.web.async_slack_response import AsyncSlackResponse
 
+from tadas.infra.base import utcnow
+from tadas.infra.deadline import PASSED
 from tadas.infra.exceptions import InfraException
 from tadas.integrations.slack import (
     BOT_SCOPES,
@@ -382,6 +385,39 @@ async def test_a_call_slack_never_answers_ends_at_the_timeout_from_settings(
         waited = time.monotonic() - began
     assert raised.value.slack_code == "TimeoutError"
     assert waited >= seconds and slack.calls == 1
+
+
+async def test_a_call_a_request_makes_ends_at_its_deadline_not_at_the_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The session's timeout is the process's, ten seconds here; the request
+    has four tenths of a second left, and the install's exchange ends then,
+    as a failure the install's page reports."""
+    slack = SilentSlack()
+    async with slack.serving() as base_url:
+        made = AsyncWebClient.__init__
+
+        def aimed(self: AsyncWebClient, *args: Any, **kwargs: Any) -> None:
+            made(self, *args, base_url=base_url, **kwargs)
+
+        monkeypatch.setattr(AsyncWebClient, "__init__", aimed)
+        client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=10))
+        await client.start()
+        began = time.monotonic()
+        try:
+            with pytest.raises(SlackFailed) as raised:
+                deadline = utcnow() + timedelta(seconds=0.4)
+                await asyncio.wait_for(
+                    client.exchange_code("code", "https://api.example/oauth", deadline=deadline),
+                    5,
+                )
+        finally:
+            await client.close()
+        waited = time.monotonic() - began
+    assert raised.value.slack_code == "deadline"
+    assert raised.value.message == PASSED
+    assert 0.35 <= waited < 1.5, waited
+    assert slack.calls == 1
 
 
 async def test_the_web_client_refuses_a_foreign_response_url_before_any_request() -> None:
