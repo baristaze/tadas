@@ -263,6 +263,23 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(stmt, org_id=org_id) as session:
             return [(rank, task_id) for rank, task_id in (await session.execute(stmt))]
 
+    async def count_open_and_read_places(
+        self, org_id: UUID, criterion: TaskFilter, exclude: UUID | None, limit: int
+    ) -> tuple[int, list[Place]]:
+        count = (
+            select(func.count())
+            .select_from(Tasks)
+            .where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
+        )
+        places = select(Tasks.rank, Tasks.id).where(_live(org_id, TaskStatus.OPEN))
+        if exclude is not None:
+            places = places.where(Tasks.id != exclude)
+        places = places.order_by(Tasks.rank, Tasks.id).limit(limit)
+        async with self._session_for(Tasks, org_id=org_id) as session:
+            counted = (await session.execute(count)).scalar_one()
+            top = [(rank, task_id) for rank, task_id in (await session.execute(places))]
+            return counted, top
+
     async def read_open_places_before(self, org_id: UUID, before: Place, limit: int) -> list[Place]:
         stmt = (
             select(Tasks.rank, Tasks.id)

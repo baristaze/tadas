@@ -168,6 +168,14 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         places = [(t.rank, t.id) for t in self._live(org_id, TaskStatus.OPEN) if t.id != exclude]
         return sorted(p for p in places if after is None or p > after)[:limit]
 
+    async def count_open_and_read_places(
+        self, org_id: UUID, criterion: TaskFilter, exclude: UUID | None, limit: int
+    ) -> tuple[int, list[Place]]:
+        return (
+            await self.count_open_tasks(org_id, criterion),
+            await self.read_open_places(org_id, exclude, None, limit),
+        )
+
     async def read_open_places_before(self, org_id: UUID, before: Place, limit: int) -> list[Place]:
         places = [(t.rank, t.id) for t in self._live(org_id, TaskStatus.OPEN)]
         return sorted((p for p in places if p < before), reverse=True)[:limit]

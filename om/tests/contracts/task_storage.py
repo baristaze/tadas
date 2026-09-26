@@ -40,6 +40,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "update_archived_in_step",
         "count_done_tasks",
+        "count_open_and_read_places",
         "count_open_tasks",
         "create_task",
         "create_tasks_in_step",
@@ -383,6 +384,20 @@ class TaskStorageContract:
         await bump(storage, org_a, gone, deleted_at=utcnow(), deleted_by=new_id())
         assert await storage.count_open_tasks(org_a, team()) == 1
         assert await storage.count_open_tasks(org_b, team()) == 0
+
+    async def test_the_count_and_the_top_places_are_read_together(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """What the two reads answer on their own, and nothing of another
+        tenant's."""
+        org_a, org_b = new_id(), new_id()
+        first, second, done = make_task("First"), make_task("Second"), make_task("Done")
+        for task in (first, second, done):
+            await seed(storage, org_a, task)
+        await bump(storage, org_a, done, status=TaskStatus.DONE)
+        places = await storage.read_open_places(org_a, exclude=first.id, after=None, limit=1)
+        assert await storage.count_open_and_read_places(org_a, team(), first.id, 1) == (2, places)
+        assert await storage.count_open_and_read_places(org_b, team(), None, 10) == (0, [])
 
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()

@@ -223,7 +223,7 @@ class TasksManagerImpl(TasksManagerInterface):
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
-        await self._room_for_one_more(ctx)
+        rank = await self._rank_for_one_more(ctx, exclude=task.id)
         # The platform stamps the provenance and the clock, as enqueue does:
         # a caller cannot backdate a task or create one already deleted.
         now = utcnow()
@@ -236,7 +236,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "deleted_at": None,
                 "deleted_by": None,
                 "status": TaskStatus.OPEN,
-                **placed(await self._top_rank(ctx, exclude=task.id)),
+                **placed(rank),
                 "version": 1,
                 "reminded_at": None,
             }
@@ -278,8 +278,7 @@ class TasksManagerImpl(TasksManagerInterface):
             "version": expected_version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
-            await self._room_for_one_more(ctx)
-            changes.update(placed(await self._top_rank(ctx, exclude=task.id)))
+            changes.update(placed(await self._rank_for_one_more(ctx, exclude=task.id)))
             changes["archived_at"] = None  # an open task is never archived
         rescheduled = task.due_on != current.due_on
         if rescheduled:
@@ -889,19 +888,20 @@ class TasksManagerImpl(TasksManagerInterface):
         # of it.
         return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
-    async def _room_for_one_more(self, ctx: OpContext) -> None:
-        """The plan's bound on active tasks, asked before one more is open. It
-        reads the count and then writes, so two creates that race at the
-        bound can both land: a lever and not a fence, and the next create
-        after them is refused."""
+    async def _rank_for_one_more(self, ctx: OpContext, exclude: UUID) -> Decimal:
+        """The top rank one more open task takes, once the plan's bound on
+        active tasks lets it open. Under a bound, the count and the top place
+        are one read; with none, the place alone is. It reads the count and
+        then writes, so two creates that race at the bound can both land: a
+        lever and not a fence, and the next create after them is refused."""
         entitlements = await self._entitlements.get_entitlements(ctx)
         if entitlements.limits.active_tasks is None:
-            return
-        refuse_past(
-            entitlements.plan,
-            Lever.ACTIVE_TASKS,
-            await self._storage.count_open_tasks(ctx.org_id, self._everyone(ctx)),
+            return await self._top_rank(ctx, exclude)
+        count, top = await self._storage.count_open_and_read_places(
+            ctx.org_id, self._everyone(ctx), exclude, NEIGHBOURS
         )
+        refuse_past(entitlements.plan, Lever.ACTIVE_TASKS, count)
+        return top_rank(top)
 
     @staticmethod
     def _everyone(ctx: OpContext) -> TaskFilter:
