@@ -1,4 +1,4 @@
-# ADR 0042: A unique rule on org_id alone sits beside the purge's index
+# ADR 0043: A unique rule on org_id alone sits beside the purge's index
 
 **Status**: accepted (2026-10-03).
 
