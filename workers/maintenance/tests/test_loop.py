@@ -395,6 +395,7 @@ async def until(predicate: Callable[[], bool], within: float = 3.0) -> None:
         ),
         (RuntimeError("the claim is broken"), logging.ERROR),
     ],
+    ids=["unavailable", "any-other"],
 )
 async def test_a_claim_that_fails_is_counted_and_logged_at_its_level(
     tmp_path: Path,

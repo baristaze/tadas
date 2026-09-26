@@ -40,6 +40,7 @@ def counted(outcome: str) -> float:
         PoolTimeoutError("QueuePool limit of size 1 overflow 0 reached"),
         TimeoutError(),  # the driver's own connect timeout
     ],
+    ids=["pool", "connect"],
 )
 def test_a_checkout_past_its_bound_is_unavailable(error: Exception) -> None:
     before = counted("checkout_timeout")
@@ -72,6 +73,7 @@ def test_a_statement_past_its_deadline_is_unavailable() -> None:
         RuntimeError("anything else"),
         ConnectionRefusedError(),
     ],
+    ids=["deadlock", "unique-key", "runtime", "refused"],
 )
 def test_any_other_failure_is_left_as_it_is(error: Exception) -> None:
     before = (counted("checkout_timeout"), counted("statement_timeout"))
