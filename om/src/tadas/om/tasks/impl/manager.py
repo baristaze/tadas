@@ -430,14 +430,17 @@ class TasksManagerImpl(TasksManagerInterface):
             rows = (outbox_row(ctx, "tasks.task.updated", task.id, {}),)
             updates.append((changed, task.version, rows))
         landed = await self._storage.update_tasks_if_current(ctx.org_id, updates)
+        landed_rows: list[OutboxRow] = []
         for (changed, _, rows), hit in zip(updates, landed, strict=True):
             if hit:
                 bulk.change(changed.id)
-                await self._relay_all(ctx, rows)
+                landed_rows.extend(rows)
             else:
                 bulk.skip(changed.id, SkipReason.CHANGED)
                 if bulk.room is not None:
                     bulk.room += 1  # the room it held goes to the next batch
+        # The batch's events take one run of numbers under one hold of the cursor.
+        await self._relay_all(ctx, landed_rows)
 
     def _plan_bound(self, bulk: _BulkChange) -> PlanBound:
         """The bound a reopen met, as the refusal of one more reopen names it."""
