@@ -8,7 +8,14 @@ subscription itself (cancel at the period's end, the seat count), the end
 of both when an account is deleted (the subscription canceled at once, the
 customer deleted), a read of a subscription as the processor holds it now,
 and the check of an inbound delivery's signature. It has a real client and a deterministic
-twin; the twin refuses to run outside a local environment."""
+twin; the twin refuses to run outside a local environment.
+
+Every call fails by whose problem it is. A refusal of the request itself
+is `PaymentsRefused`: the same request gets the same answer. A refusal
+of the process's own key (revoked, or without the permission) is
+`PaymentsKeyRefused`, a `ProviderUnavailable`: nothing is wrong with the
+call, and it goes through once a person fixes the key. A processor that
+throttles, or does not answer, is unavailable too."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID
@@ -99,9 +106,7 @@ class PaymentsInterface(ABC):
         """Ends the subscription now, not at its period's end: the account it
         paid for is gone. No proration and no refund is made. A subscription
         the processor no longer knows, or one canceled already, is done
-        already, and that is no error. A refusal of the process's own key is
-        `ProviderUnavailable`: nothing is wrong with the call, and it goes
-        through once a person fixes the key."""
+        already, and that is no error."""
         ...
 
     @abstractmethod
@@ -110,8 +115,7 @@ class PaymentsInterface(ABC):
         subscription it still has and removes its payment methods. The
         processor keeps the invoices it issued, as the law asks of it. A
         customer it no longer knows is deleted already, and that is no
-        error. A refusal of the process's own key is `ProviderUnavailable`,
-        as on `cancel_subscription`."""
+        error."""
         ...
 
     @abstractmethod
