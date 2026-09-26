@@ -16,7 +16,7 @@ arrives from the pipe, and the panes are drawn from those stamps on one
 timeline into a GIF.
 
     make up
-    uv run --with pillow python scripts/record_cli_demo.py docs/media/cli-demo.gif
+    uv run python scripts/record_cli_demo.py docs/media/cli-demo.gif
 
 Every line fits its pane: the recorder stops, writing nothing, when a line
 would wrap. Other stacks: --api. --still writes a PNG per pane of the final
@@ -377,7 +377,7 @@ async def record(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("out", help="the GIF to write, e.g. docs/media/cli-demo.gif")
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--owner", default="owner@example.test")
