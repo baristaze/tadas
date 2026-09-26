@@ -1,14 +1,17 @@
 from collections.abc import Sequence
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import (
     ColumnElement,
     DateTime,
+    Integer,
     Numeric,
+    Table,
     Uuid,
     and_,
+    bindparam,
     func,
     literal,
     literal_column,
@@ -18,7 +21,8 @@ from sqlalchemy import (
     tuple_,
     update,
 )
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import ARRAY, insert
+from sqlalchemy.sql.dml import ReturningUpdate
 
 from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import PreconditionFailed, TenantMismatch
@@ -33,6 +37,46 @@ from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.tables.tasks import Tasks
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+
+WRITTEN: tuple[str, ...] = tuple(
+    name for name in cast(Table, Tasks.__table__).c.keys() if name != "org_id"
+)
+"""The columns a bulk update writes from the task; `org_id` never moves."""
+
+
+def _update_if_current_statement() -> ReturningUpdate[Any]:
+    """A batch of a bulk change, in one statement. The tasks arrive as one
+    array per column, beside the version each was read at, so the statement
+    is the same for one task and for a hundred, and it is compiled and
+    prepared once. Each row is written only when it is the tenant's and
+    still at its version: the fence is per row, in the join, and a row that
+    moved is left out without refusing the rest. Returns the ids written.
+
+    Built on the table and not the mapped class, so it runs as one Core
+    statement with its arrays as plain parameters. No parameter takes a
+    column's name (`new_<column>`, `tenant`): those are the SET clause's."""
+    table = cast(Table, Tasks.__table__)
+    incoming = (
+        func.unnest(
+            *(bindparam(f"new_{name}", type_=ARRAY(table.c[name].type)) for name in WRITTEN),
+            bindparam("expected_version", type_=ARRAY(Integer())),
+        )
+        .table_valued(*WRITTEN, "expected_version")
+        .render_derived(name="incoming")
+    )
+    return (
+        update(table)
+        .where(
+            table.c.id == incoming.c.id,
+            table.c.org_id == bindparam("tenant", type_=Uuid()),
+            table.c.version == incoming.c.expected_version,
+        )
+        .values({name: incoming.c[name] for name in WRITTEN if name != "id"})
+        .returning(table.c.id)
+    )
+
+
+UPDATE_IF_CURRENT = _update_if_current_statement()
 
 
 def _live(org_id: UUID, status: TaskStatus) -> ColumnElement[bool]:
@@ -368,31 +412,28 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def update_tasks_if_current(
         self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
     ) -> tuple[bool, ...]:
-        # The same compare-and-set as `update_tasks`, one statement a task, in
-        # one transaction; a statement that hits no row is a task that moved,
+        # The same compare-and-set as `update_tasks`, every task in one
+        # statement; a task the statement did not write is one that moved,
         # left alone while the others land. Only the rows of the tasks that
-        # landed join the commit.
+        # landed join the commit, and they go in one batch at the flush.
+        if not updates:
+            return ()
+        written = [to_values(task, Tasks) for task, _, _ in updates]
+        params: dict[str, Any] = {
+            f"new_{name}": [values[name] for values in written] for name in WRITTEN
+        }
+        params["expected_version"] = [expected for _, expected, _ in updates]
+        params["tenant"] = org_id
         async with self._session_for(Tasks, org_id=org_id) as session:
-            landed: list[bool] = []
-            for task, expected_version, outbox_rows in updates:
-                values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
-                stmt = (
-                    update(Tasks)
-                    .where(
-                        Tasks.id == task.id,
-                        Tasks.org_id == org_id,
-                        Tasks.version == expected_version,
-                    )
-                    .values(**values)
-                    .returning(Tasks.id)
-                )
-                hit = (await session.execute(stmt)).scalar_one_or_none() is not None
-                landed.append(hit)
-                if hit:
-                    for outbox_row in outbox_rows:
-                        session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            hit = set((await session.execute(UPDATE_IF_CURRENT, params)).scalars())
+            session.add_all(
+                to_row(outbox_row, OutboxRows, org_id=org_id)
+                for task, _, outbox_rows in updates
+                if task.id in hit
+                for outbox_row in outbox_rows
+            )
             await session.commit()
-            return tuple(landed)
+            return tuple(task.id in hit for task, _, _ in updates)
 
     async def _why_not(
         self, org_id: UUID, task_id: UUID, expected_version: int

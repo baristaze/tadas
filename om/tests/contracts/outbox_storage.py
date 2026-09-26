@@ -93,7 +93,7 @@ class OutboxStorageContract:
         claimed = [r for r in await claim_all(outbox) if r.id == row.id]
         assert [r.org_id for r in claimed] == [org]
         # The tenant the row names is the one the rest of the namespace takes.
-        await outbox.mark_done(claimed[0].org_id, claimed[0].id)
+        await outbox.mark_done(claimed[0].org_id, [claimed[0].id])
         assert row.id not in {r.id for r in await claim_all(outbox)}
 
     async def test_a_claim_spends_an_attempt_and_sets_the_next_with_a_growing_delay(
@@ -130,7 +130,7 @@ class OutboxStorageContract:
         # lands, and the next sweep claims it alone: the poison row waits out
         # its delay and the new row is not behind it.
         await outbox.record_failure(org, poison_row.id, "bus down", None)
-        await outbox.mark_done(org, fine_row.id)
+        await outbox.mark_done(org, [fine_row.id])
         newer = make_task()
         newer_row = make_row(org, newer.id)
         await tasks.create_task(org, newer, (newer_row,))
@@ -188,11 +188,29 @@ class OutboxStorageContract:
         task = make_task()
         row = make_row(org, task.id)
         await tasks.create_task(org, task, (row,))
-        await outbox.mark_done(new_id(), row.id)  # another tenant: no effect
+        await outbox.mark_done(new_id(), [row.id])  # another tenant: no effect
         assert row.id in {r.id for r in await claim_all(outbox)}
-        await outbox.mark_done(org, row.id)
-        await outbox.mark_done(org, row.id)
+        await outbox.mark_done(org, [row.id])
+        await outbox.mark_done(org, [row.id])
         assert row.id not in {r.id for r in await claim_all(outbox)}
+
+    async def test_mark_done_takes_a_batch_and_only_the_tenants_rows_of_it(
+        self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        mine: list[OutboxRow] = []
+        for _ in range(3):
+            task = make_task()
+            mine.append(make_row(org, task.id))
+            await tasks.create_task(org, task, (mine[-1],))
+        task = make_task()
+        theirs = make_row(other, task.id)
+        await tasks.create_task(other, task, (theirs,))
+        await outbox.mark_done(org, [])  # nothing to mark: no effect
+        await outbox.mark_done(org, [*(row.id for row in mine), theirs.id, new_id()])
+        pending = {r.id for r in await claim_all(outbox)}
+        assert not pending & {row.id for row in mine}
+        assert theirs.id in pending, "another tenant's row in the batch is left as is"
 
     async def test_a_failed_row_is_a_dead_letter_never_claimed_again(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
@@ -210,7 +228,7 @@ class OutboxStorageContract:
         done = make_task()
         done_row = make_row(org, done.id)
         await tasks.create_task(org, done, (done_row,))
-        await outbox.mark_done(org, done_row.id)
+        await outbox.mark_done(org, [done_row.id])
         await outbox.record_failure(org, done_row.id, "too late", utcnow())
         # The purge is cross-tenant, so only what it takes of these two rows
         # is asserted: nothing before they settled, both once the cut passes.
@@ -230,7 +248,7 @@ class OutboxStorageContract:
             if i % 2:
                 await outbox.record_failure(org, row.id, "for good", utcnow())
             else:
-                await outbox.mark_done(org, row.id)
+                await outbox.mark_done(org, [row.id])
         later = utcnow() + timedelta(seconds=1)
         assert await outbox.purge_done(later, 2) == 4, "two done, two failed"
         assert await outbox.purge_done(later, 2) == 2
@@ -244,7 +262,7 @@ class OutboxStorageContract:
         done_row, pending_row = make_row(org, done.id), make_row(org, pending.id)
         await tasks.create_task(org, done, (done_row,))
         await tasks.create_task(org, pending, (pending_row,))
-        await outbox.mark_done(org, done_row.id)
+        await outbox.mark_done(org, [done_row.id])
         assert await outbox.purge_done(utcnow() - timedelta(hours=1), 1000) == 0
         assert await outbox.purge_done(utcnow() + timedelta(seconds=1), 1000) >= 1
         assert pending_row.id in {r.id for r in await claim_all(outbox)}
@@ -267,13 +285,13 @@ class OutboxStorageContract:
             task = make_task()
             rows[name] = make_row(owner, task.id, age=age)
             await tasks.create_task(owner, task, (rows[name],))
-        await outbox.mark_done(org, rows["done"].id)
+        await outbox.mark_done(org, [rows["done"].id])
         await outbox.record_failure(org, rows["failed"].id, "for good", utcnow())
         # One attempt spent and failed: the row waits for its next attempt.
         await claim_all(outbox, backoff=timedelta(hours=1))
         await outbox.record_failure(other, rows["retrying"].id, "bus down", None)
         assert await outbox.oldest_pending_at() == rows["retrying"].created_at
-        await outbox.mark_done(other, rows["retrying"].id)
+        await outbox.mark_done(other, [rows["retrying"].id])
         assert await outbox.oldest_pending_at() == rows["fresh"].created_at
-        await outbox.mark_done(org, rows["fresh"].id)
+        await outbox.mark_done(org, [rows["fresh"].id])
         assert await outbox.oldest_pending_at() is None

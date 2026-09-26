@@ -35,8 +35,9 @@ class OutboxRelayInterface(ABC):
         one call, so they take one run of contiguous numbers under one hold of
         the tenant's cursor instead of one hold each, and are published in
         that order; the work rows are enqueued one by one. Every row is then
-        marked done. Returns False, and never raises, when a step failed: the
-        rows are durable and the sweep relays what is left."""
+        marked done in one statement, once all of them are delivered. Returns
+        False, and never raises, when a step failed: the rows are durable and
+        the sweep relays them."""
         ...
 
     @abstractmethod
@@ -44,10 +45,11 @@ class OutboxRelayInterface(ABC):
         """Platform-internal, for the sweep: claims up to `limit` rows whose next
         attempt is due and that are older than the grace (a younger row is the
         request path's to relay), oldest first and never a row another sweep
-        holds, and relays each; a row that fails keeps its error and waits out a
-        delay that doubles per attempt, and one whose attempts are spent is
-        failed for good, logged, counted, and named by an audit event. Returns
-        how many were relayed."""
+        holds, and relays each tenant's rows together, as `relay_all` does.
+        When a tenant's rows fail together, each is relayed alone: a row that
+        fails keeps its error and waits out a delay that doubles per attempt,
+        and one whose attempts are spent is failed for good, logged, counted,
+        and named by an audit event. Returns how many were relayed."""
         ...
 
     @abstractmethod

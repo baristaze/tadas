@@ -1539,8 +1539,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # their membership ended, not because a credential was revoked; then
         # each revocation, as the record it is. Every row is durable already:
         # whatever a crash leaves unrelayed, the sweep relays.
-        for landed in (*rows, *revocations):
-            await self._relay.relay(ctx.org_id, landed)
+        await self._relay.relay_all(ctx.org_id, (*rows, *revocations))
         return removed
 
     async def delete_account(
@@ -1629,8 +1628,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # Each removal first, so a socket closes because its person left;
         # then each revocation, as the record it is. Every row is durable
         # already: whatever a crash leaves unrelayed, the sweep relays.
+        by_org: dict[UUID, list[OutboxRow]] = {}
         for landed in (*rows, *revocations):
-            await self._relay.relay(landed.org_id, landed)
+            by_org.setdefault(landed.org_id, []).append(landed)
+        for org_id, landed_rows in by_org.items():
+            await self._relay.relay_all(org_id, landed_rows)
         log.info("identity %s deleted its account", identity.id)
         provider_logout = None if asking is None else self._provider_logout(asking, return_to)
         return AccountDeleted(deleted_at=now, provider_logout_url=provider_logout)
@@ -1730,8 +1732,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # Each member's removal first, so a socket closes because its person
         # left; then each revocation, as the record it is. Every row is
         # durable already: whatever a crash leaves unrelayed, the sweep relays.
-        for landed in (work, *ended):
-            await self._relay.relay(ctx.org_id, landed)
+        await self._relay.relay_all(ctx.org_id, (work, *ended))
         log.info("owner %s deleted org %s", ctx.user_id, org.id)
         landing = None if asking is None else await self._land_home(user, asking)
         return OrgDeleted(deleted_at=now, session=landing)
@@ -2169,12 +2170,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return org, user, membership
 
     async def _memberships_of(self, identity_id: UUID) -> tuple[OrgMembership, ...]:
-        found: list[OrgMembership] = []
+        """The places a person holds, each the org, the user, and the role, in
+        one read whatever their number. The read asks for one past the most a
+        person may hold, so a list cut short is never taken for the whole:
+        more than that (two adds that raced past the refusal) is
+        `MembershipLimitReached`, as `users_of` answers."""
         most = self._options.max_orgs_per_identity
-        for org_id, user in await users_of(self._storage, identity_id, most):
-            org = await self._storage.read_org(org_id)
-            membership = await self._storage.read_membership_for_user(org_id, user.id)
-            if org is None or org.deleted_at is not None or membership is None:
-                continue
-            found.append(OrgMembership(org=org, user=user, role=membership.role))
+        found = await self._storage.read_memberships_by_identity(identity_id, most + 1)
+        if len(found) > most:
+            raise MembershipLimitReached(
+                f"identity {identity_id} is a member of more than {most} orgs"
+            )
         return tuple(found)

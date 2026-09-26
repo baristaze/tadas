@@ -406,7 +406,11 @@ context on keeps the stage the callee needs.
   batch: `read_tasks` or a page of the list, the rules a single edit
   applies (`tasks.rules.bulk_skip`), then `update_tasks_if_current`, the
   compare-and-set of `update_tasks` with each row fenced on its own and
-  a stale one left alone rather than refusing the batch. A reopen reads
+  a stale one left alone rather than refusing the batch. In Postgres the
+  batch is one `UPDATE ... FROM unnest(...)`: one array per column and
+  the version each task was read at, joined on the id, the tenant, and
+  that version, returning the ids it wrote; the outbox rows of those
+  tasks follow in one batch in the same commit. A reopen reads
   the plan's room once, as a step of an import does, and names the
   bound (`PlanBound`) for the tasks past it. The answer (`BulkOutcome`)
   lists the tasks it changed and skipped up to `BULK_REPORT_CAP` and
@@ -630,16 +634,21 @@ context on keeps the stage the callee needs.
   actor, the request, and the app are: the relay and the sweep run with
   no context and read the tenant off the row. The claim hands back rows
   and not pairs, because the row already names its tenant.
-  The manager then calls `OutboxRelayInterface.relay(org_id, row)` for
-  each; the tenant stays first in the signature, the shape an operation
-  without a principal takes, and the row now also knows it. The row's
+  The manager then hands the rows its write landed to
+  `OutboxRelayInterface.relay_all(org_id, rows)` (`relay` is the call
+  of one); the tenant stays first in the signature, the shape an
+  operation without a principal takes, and the row now also knows it. The row's
   kind is its destination: an entity change appends the
   `Event` under the row's id and publishes `entity_changed` with
   `(kind, target_id, seq)`; a `work.<kind>` row is enqueued by the
   relay (`WorkManagerInterface.enqueue_relayed(org_id, row)`, no
   context, the actor from the row, the row's id as the item's
   idempotency key, so a relay that runs twice leaves one item) and
-  publishes `work_available`. Either way the row is then marked done.
+  publishes `work_available`. Once every row of the call is delivered,
+  they are marked done in one conditional statement (`done_at` is set
+  where it is null, by the row ids as one array parameter, so one
+  prepared statement serves a row or a hundred); a failure before that
+  marks none and leaves the call to the sweep.
   The relay reaches the work manager through a provider the business
   root binds, because the work manager needs the tenancy manager, which
   needs the relay; the graph the root hands back is still whole.
@@ -665,7 +674,10 @@ context on keeps the stage the callee needs.
   (a younger row is the request path's to relay), so two sweeps relay
   disjoint sets; it spends an attempt and sets `next_attempt_at` with a
   delay that doubles per attempt, so a row that will not relay waits on
-  its own and starves nothing behind it. A failed relay keeps its
+  its own and starves nothing behind it. The sweep relays each
+  tenant's claimed rows together, as `relay_all` does; when they fail
+  together it relays each alone, so only the row that fails spends its
+  attempt on an error. A failed relay keeps its
   `last_error`; past the relay's `max_attempts` the row is failed for
   good (`failed_at`), logged, counted as `dead_letter`, and named by an
   `outbox.row.failed` event under the row's own provenance, best effort,

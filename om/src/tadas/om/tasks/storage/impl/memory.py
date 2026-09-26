@@ -244,7 +244,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
     ) -> tuple[bool, ...]:
         # Each check and its write together, one batch under the lock, as the
-        # conditional statements share one transaction in Postgres.
+        # one conditional statement writes the batch in Postgres.
         async with self._lock:
             landed: list[bool] = []
             for task, expected_version, outbox_rows in updates:

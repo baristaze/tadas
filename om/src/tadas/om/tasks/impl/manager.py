@@ -255,8 +255,8 @@ class TasksManagerImpl(TasksManagerInterface):
                 # The id is held, and not in this tenant: refused, never a 500.
                 raise TenantMismatch(f"task {created.id} is not in {ctx.org_id}")
             return existing
-        for row in rows:  # the work rows ride the same commit and the same relay
-            await self._relay.relay(ctx.org_id, row)
+        # The work rows ride the same commit and the same relay.
+        await self._relay.relay_all(ctx.org_id, rows)
         return created
 
     async def update_task(self, ctx: OpContext, task: Task, expected_version: int) -> Task:
@@ -799,8 +799,7 @@ class TasksManagerImpl(TasksManagerInterface):
         reminded = await self._storage.mark_reminded(ctx.org_id, task_id, due_on, utcnow(), rows)
         if reminded is None:
             return None
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)
         return reminded
 
     async def respace_ranks(self, ctx: OpContext) -> int:
@@ -981,8 +980,7 @@ class TasksManagerImpl(TasksManagerInterface):
         write starts (`work`) land in the same commit."""
         rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, {}), *work)
         await self._storage.update_task(ctx.org_id, task, expected_version, rows)
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)
 
     @staticmethod
     def _reminder_rows(ctx: OpContext, task: Task) -> tuple[OutboxRow, ...]:

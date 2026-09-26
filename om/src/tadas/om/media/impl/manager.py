@@ -80,8 +80,7 @@ class MediaManagerImpl(MediaManagerInterface):
             if existing is None:
                 raise TenantMismatch(f"file {created.id} is not in {ctx.org_id}")
             return existing
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)
         return created
 
     async def issue_upload(self, ctx: OpContext, file_id: UUID) -> UploadForm:
@@ -251,5 +250,4 @@ class MediaManagerImpl(MediaManagerInterface):
         relay at once; the sweep catches what a crash left behind."""
         rows = (outbox_row(ctx, f"media.file.{action}", file.id, {}),)
         await self._storage.write_file(ctx.org_id, file, rows)
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)
