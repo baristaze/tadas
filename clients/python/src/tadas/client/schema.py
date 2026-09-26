@@ -382,6 +382,18 @@ class OperatorRole(StrEnum):
     write = 'write'
 
 
+class OperatorTokenView(BaseModel):
+    """
+    One operator token as its operator reads it: never the secret, which is
+    kept as its digest. `revoked_at` is set once it was ended.
+    """
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    id: Annotated[UUID, Field(title='Id')]
+    permission: OperatorRole
+    revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
+
+
 class OperatorView(BaseModel):
     """
     Who the operator plane admitted: the identity and what its allowlist
@@ -623,10 +635,11 @@ class SignInStartView(BaseModel):
 
 class SignedOutView(BaseModel):
     """
-    The session that ended, and `provider_logout_url`: where the browser
-    goes next to end the identity provider's session behind it, so the next
-    sign-in on this browser asks who it is. Null when the sign-in left no
-    session there (the device sign-in, the local sign-in). It names the
+    The credential that ended, a session, a sign-in, or an operator
+    token, and `provider_logout_url`: where the browser goes next to end the
+    identity provider's session behind it, so the next sign-in on this
+    browser asks who it is. Null when the sign-in left no session there
+    (the device sign-in, the local sign-in, an operator token). It names the
     provider's session, which is not a secret.
     """
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
@@ -1145,11 +1158,13 @@ class IssuedApiKeyView(BaseModel):
 
 class IssuedOperatorTokenView(BaseModel):
     """
-    The token in the clear on the first response only; a replay under the
-    same Idempotency-Key answers with `token` null. A client that lost the
-    first answer mints another; the lost one expires within the hour.
+    The token in the clear, on this answer only; `id` names it afterwards,
+    in the list and the revoke, and is no secret. The mint ends the sign-in
+    it was given, so a client that lost this answer signs in again for
+    another token and revokes the lost one by its id from the list.
     """
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    id: Annotated[UUID, Field(title='Id')]
     permission: OperatorRole
     token: Annotated[str | None, Field(title='Token')]
 
@@ -1226,6 +1241,15 @@ class OperatorBillingView(BaseModel):
     paid_plan: Plan | None
     plan: Plan
     status: SubscriptionStatus | None
+
+
+class OperatorTokenPageView(BaseModel):
+    """
+    One page of the caller's live operator tokens, newest first;
+    `next_cursor` as on `UserPageView`.
+    """
+    items: Annotated[list[OperatorTokenView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
 
 
 class OperatorWorkItemView(BaseModel):

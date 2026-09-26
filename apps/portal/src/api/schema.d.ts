@@ -32,16 +32,45 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Tokens
+         * @description The caller's own live operator tokens, newest first: the ids a revoke
+         *     names, whoever minted them (the caller, or the grant job for a machine
+         *     identity). Never a token's secret.
+         */
+        get: operations["list_tokens_v1_admin_me_tokens_get"];
         put?: never;
         /**
          * Mint Token
-         * @description An operator token for an agent: one permission, never wider than the
-         *     caller's entry, an hour at most. Minted only from a sign-in that
-         *     verified a second factor, so a token never mints a token.
+         * @description An operator token: one permission, never wider than the caller's
+         *     entry, an hour at most. Minted only from a sign-in that verified a second
+         *     factor, which it ends, so a token never mints a token and a sign-in
+         *     mints one.
          */
         post: operations["mint_token_v1_admin_me_tokens_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/me/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Token
+         * @description Ends one of the caller's own tokens at once; its next request is
+         *     refused. Ending one ended already answers it as stored. Another
+         *     operator's token is `404`: ending it is the grant job's disable.
+         */
+        delete: operations["revoke_token_v1_admin_me_tokens__token_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1925,9 +1954,10 @@ export interface components {
         };
         /**
          * IssuedOperatorTokenView
-         * @description The token in the clear on the first response only; a replay under the
-         *     same Idempotency-Key answers with `token` null. A client that lost the
-         *     first answer mints another; the lost one expires within the hour.
+         * @description The token in the clear, on this answer only; `id` names it afterwards,
+         *     in the list and the revoke, and is no secret. The mint ends the sign-in
+         *     it was given, so a client that lost this answer signs in again for
+         *     another token and revokes the lost one by its id from the list.
          */
         IssuedOperatorTokenView: {
             /**
@@ -1935,6 +1965,11 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
             permission: components["schemas"]["OperatorRole"];
             /** Token */
             token: string | null;
@@ -2155,6 +2190,42 @@ export interface components {
          * @enum {string}
          */
         OperatorRole: "read" | "write";
+        /**
+         * OperatorTokenPageView
+         * @description One page of the caller's live operator tokens, newest first;
+         *     `next_cursor` as on `UserPageView`.
+         */
+        OperatorTokenPageView: {
+            /** Items */
+            items: components["schemas"]["OperatorTokenView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * OperatorTokenView
+         * @description One operator token as its operator reads it: never the secret, which is
+         *     kept as its digest. `revoked_at` is set once it was ended.
+         */
+        OperatorTokenView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            permission: components["schemas"]["OperatorRole"];
+            /** Revoked At */
+            revoked_at: string | null;
+        };
         /**
          * OperatorView
          * @description Who the operator plane admitted: the identity and what its allowlist
@@ -2504,10 +2575,11 @@ export interface components {
         };
         /**
          * SignedOutView
-         * @description The session that ended, and `provider_logout_url`: where the browser
-         *     goes next to end the identity provider's session behind it, so the next
-         *     sign-in on this browser asks who it is. Null when the sign-in left no
-         *     session there (the device sign-in, the local sign-in). It names the
+         * @description The credential that ended, a session, a sign-in, or an operator
+         *     token, and `provider_logout_url`: where the browser goes next to end the
+         *     identity provider's session behind it, so the next sign-in on this
+         *     browser asks who it is. Null when the sign-in left no session there
+         *     (the device sign-in, the local sign-in, an operator token). It names the
          *     provider's session, which is not a secret.
          */
         SignedOutView: {
@@ -2958,6 +3030,42 @@ export interface operations {
             };
         };
     };
+    list_tokens_v1_admin_me_tokens_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorTokenPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     mint_token_v1_admin_me_tokens_post: {
         parameters: {
             query?: never;
@@ -2965,7 +3073,6 @@ export interface operations {
                 authorization?: string | null;
                 "x-app"?: string | null;
                 "x-app-version"?: string | null;
-                "idempotency-key"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -2977,12 +3084,47 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["IssuedOperatorTokenView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_token_v1_admin_me_tokens__token_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorTokenView"];
                 };
             };
             /** @description Validation Error */
