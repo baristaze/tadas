@@ -36,6 +36,9 @@ module "environment" {
   # one. The pool is sized to the instance at the autoscaling ceilings, so
   # the flip below is safe: a db.t4g.micro takes about 80 connections, and
   # (2 x 2 API + 1 worker) x 2 pools x 6 + 8 for the one-off tasks is 68.
+  # The API task has half a vCPU, and the 1 GB Fargate requires at that
+  # size: the collector sidecar shares its CPU, and a page load's reads
+  # arrive together.
   vpc_cidr                     = "10.10.0.0/16"
   bucket_prefix                = "tadas-staging"
   database_instance_class      = "db.t4g.micro"
@@ -45,8 +48,8 @@ module "environment" {
   cache_node_type              = "cache.t4g.micro"
   cache_node_count             = 1
   api_desired_count            = 1
-  api_cpu                      = 256
-  api_memory                   = 512
+  api_cpu                      = 512
+  api_memory                   = 1024
   maintenance_desired_count    = 1
   maintenance_cpu              = 256
   maintenance_memory           = 512
