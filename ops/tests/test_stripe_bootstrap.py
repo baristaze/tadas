@@ -183,7 +183,6 @@ def test_the_command_reads_its_own_key_and_never_the_runtime_one(
     monkeypatch.chdir(ROOT)
     monkeypatch.delenv("TADAS_STRIPE_BOOTSTRAP_KEY", raising=False)
     monkeypatch.setenv("TADAS_STRIPE_RUNTIME_KEY", "rk_test_not_a_real_key")
-    monkeypatch.setenv("TADAS_STRIPE_ORG_KEY", "rk_test_not_a_real_key")
     assert main(["stripe-bootstrap", "--env", "staging", "--secret-store", "none"]) == 2
     err = capsys.readouterr().err
     assert "set TADAS_STRIPE_BOOTSTRAP_KEY" in err

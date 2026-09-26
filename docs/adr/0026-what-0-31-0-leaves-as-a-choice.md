@@ -1,6 +1,9 @@
 # ADR 0026: What guideline 0.31.0 leaves as a choice, and what release B removes
 
-**Status**: accepted (2026-09-22).
+**Status**: accepted (2026-09-22). When the two dead identity columns
+are dropped is superseded (2026-09-25) by
+[ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
+they leave the mapping first, and the release after drops them.
 
 ## Context
 

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Computed, Index, text
+from sqlalchemy import BigInteger, Column, Computed, DateTime, Index, Integer, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import Base, GlobalIdentifiableMixin, TrackableMixin
@@ -27,31 +27,29 @@ class Identities(GlobalIdentifiableMixin, TrackableMixin, Base):
             unique=True,
             postgresql_where=text("subject IS NOT NULL"),
         ),
+        # Three dead columns, in the table and out of the mapping. Tadas keeps
+        # no password (sign-in is the identity provider's), and the run of
+        # failed sign-ins is `sign_in_delays`, keyed on the email's digest.
+        # A mapped column is named by every insert the mapper emits, deferred
+        # or not, so the release before this one names all three in each new
+        # identity, and a migration runs before the services roll: a drop here
+        # would fail its sign-ups mid-rollout. Out of the mapping, no statement
+        # of this release names them, and the release after this one drops
+        # them with these lines. The hashes are already gone (migration
+        # 202609280000).
+        Column("password_hash", Text(), nullable=True),
+        Column("failed_sign_ins", Integer(), server_default=text("0"), nullable=False),
+        Column("last_failed_sign_in_at", DateTime(timezone=True), nullable=True),
     )
+    __mapper_args__ = {
+        "exclude_properties": ["password_hash", "failed_sign_ins", "last_failed_sign_in_at"]
+    }
     email: Mapped[str]
     email_digest: Mapped[str] = mapped_column(Computed(EMAIL_DIGEST, persisted=True))
     issuer: Mapped[str | None]
     subject: Mapped[str | None]
-    # Tadas keeps no password: sign-in is the identity provider's. The column
-    # is dead and deferred, as the two below are: no read names it and no
-    # write sets it, and it is nullable, so this release's inserts leave it
-    # empty. The release before this one reads it in every identity read, and
-    # a migration runs before the services roll, so a drop here would break a
-    # request it served mid-rollout. The release after this one drops the
-    # column, with the hashes it still holds, and this line.
-    password_hash: Mapped[str | None] = mapped_column(deferred=True)
     operator_role: Mapped[str | None]
     totp_secret: Mapped[str | None]
     totp_confirmed_at: Mapped[datetime | None]
     totp_last_step: Mapped[int | None] = mapped_column(BigInteger())
     time_zone: Mapped[str | None]
-    # The run of failed sign-ins moved to `sign_in_delays`, keyed on the
-    # email's digest. The columns are dead and deferred: no read names them
-    # and no write sets them, the database's default fills the one that is
-    # NOT NULL, and the mapping stays so the schema check has something to
-    # compare with. The release before this one still named them in every
-    # identity read, and a migration runs before the services roll, so a drop
-    # here would break a sign-in it served mid-rollout. The release after
-    # this one drops the columns and these two lines.
-    failed_sign_ins: Mapped[int] = mapped_column(server_default=text("0"), deferred=True)
-    last_failed_sign_in_at: Mapped[datetime | None] = mapped_column(deferred=True)

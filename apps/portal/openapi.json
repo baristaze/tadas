@@ -91,7 +91,7 @@
       },
       "AddTaskRequest": {
         "additionalProperties": false,
-        "description": "`due_on` is the day the task is due, `YYYY-MM-DD`, never a time. It\nschedules one reminder at nine in the morning of that day, in the time\nzone of the person the task is for (the assignee, or the creator), pushed\nto every open screen of the org and posted to its Slack channel when one\nis connected. `remind_at`, the due time of the release before, is still\ntaken for one release: its date, in its own offset, is the due date, and\n`due_on` wins when both are sent.",
+        "description": "`due_on` is the day the task is due, `YYYY-MM-DD`, never a time. It\nschedules one reminder at nine in the morning of that day, in the time\nzone of the person the task is for (the assignee, or the creator), pushed\nto every open screen of the org and posted to its Slack channel when one\nis connected.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -121,19 +121,6 @@
             "default": "",
             "title": "Notes",
             "type": "string"
-          },
-          "remind_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "title": "Remind At"
           },
           "title": {
             "maxLength": 500,
@@ -2377,19 +2364,6 @@
             "title": "Position",
             "type": "number"
           },
-          "remind_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "title": "Remind At"
-          },
           "reminded_at": {
             "anyOf": [
               {
@@ -2504,7 +2478,7 @@
       },
       "UpdateTaskRequest": {
         "additionalProperties": false,
-        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.\nAn explicit null `due_on` clears the due date; a new one reschedules the\nreminder, and the one scheduled before it never goes out. `remind_at`\nis taken for one release, as on the add.",
+        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.\nAn explicit null `due_on` clears the due date; a new one reschedules the\nreminder, and the one scheduled before it never goes out.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -2540,19 +2514,6 @@
               }
             ],
             "title": "Notes"
-          },
-          "remind_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "title": "Remind At"
           },
           "status": {
             "anyOf": [

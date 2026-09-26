@@ -4,7 +4,11 @@
 not a secret", and the key the reconcile command runs with, are
 superseded (2026-09-23) by [ADR 0033](0033-the-workos-key-is-the-applications.md):
 the key is the Tadas App application's, and it is the exchange's client
-secret.
+secret. When `identities.password_hash` is dropped is superseded
+(2026-09-25) by
+[ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
+the hashes are cleared and the column leaves the mapping, and the
+release after drops it.
 
 ## Context
 

@@ -33,9 +33,7 @@ class AddTaskRequest(BaseModel):
     schedules one reminder at nine in the morning of that day, in the time
     zone of the person the task is for (the assignee, or the creator), pushed
     to every open screen of the org and posted to its Slack channel when one
-    is connected. `remind_at`, the due time of the release before, is still
-    taken for one release: its date, in its own offset, is the due date, and
-    `due_on` wins when both are sent.
+    is connected.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -43,7 +41,6 @@ class AddTaskRequest(BaseModel):
     assignee_id: Annotated[UUID | None, Field(title='Assignee Id')] = None
     due_on: Annotated[date | None, Field(title='Due On')] = None
     notes: Annotated[str | None, Field(title='Notes')] = ''
-    remind_at: Annotated[AwareDatetime | None, Field(deprecated=True, title='Remind At')] = None
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
@@ -660,7 +657,6 @@ class TaskView(BaseModel):
     id: Annotated[UUID, Field(title='Id')]
     notes: Annotated[str, Field(title='Notes')]
     position: Annotated[float, Field(title='Position')]
-    remind_at: Annotated[AwareDatetime | None, Field(deprecated=True, title='Remind At')] = None
     reminded_at: Annotated[AwareDatetime | None, Field(title='Reminded At')] = None
     status: TaskStatus
     title: Annotated[str, Field(title='Title')]
@@ -719,8 +715,7 @@ class UpdateTaskRequest(BaseModel):
     again and decides over the current task. An update that names no version
     is refused with 422 `validation_failed`, since it would overwrite blind.
     An explicit null `due_on` clears the due date; a new one reschedules the
-    reminder, and the one scheduled before it never goes out. `remind_at`
-    is taken for one release, as on the add.
+    reminder, and the one scheduled before it never goes out.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -728,7 +723,6 @@ class UpdateTaskRequest(BaseModel):
     assignee_id: Annotated[UUID | None, Field(title='Assignee Id')] = None
     due_on: Annotated[date | None, Field(title='Due On')] = None
     notes: Annotated[str | None, Field(title='Notes')] = None
-    remind_at: Annotated[AwareDatetime | None, Field(deprecated=True, title='Remind At')] = None
     status: TaskStatus | None = None
     title: Annotated[Title | None, Field(title='Title')] = None
 

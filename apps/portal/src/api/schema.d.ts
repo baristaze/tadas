@@ -1101,9 +1101,7 @@ export interface components {
          *     schedules one reminder at nine in the morning of that day, in the time
          *     zone of the person the task is for (the assignee, or the creator), pushed
          *     to every open screen of the org and posted to its Slack channel when one
-         *     is connected. `remind_at`, the due time of the release before, is still
-         *     taken for one release: its date, in its own offset, is the due date, and
-         *     `due_on` wins when both are sent.
+         *     is connected.
          */
         AddTaskRequest: {
             /** Assignee Id */
@@ -1115,11 +1113,6 @@ export interface components {
              * @default
              */
             notes: string;
-            /**
-             * Remind At
-             * @deprecated
-             */
-            remind_at?: string | null;
             /** Title */
             title: string;
         };
@@ -2201,11 +2194,6 @@ export interface components {
             notes: string;
             /** Position */
             position: number;
-            /**
-             * Remind At
-             * @deprecated
-             */
-            remind_at?: string | null;
             /** Reminded At */
             reminded_at?: string | null;
             status: components["schemas"]["TaskStatus"];
@@ -2267,8 +2255,7 @@ export interface components {
          *     again and decides over the current task. An update that names no version
          *     is refused with 422 `validation_failed`, since it would overwrite blind.
          *     An explicit null `due_on` clears the due date; a new one reschedules the
-         *     reminder, and the one scheduled before it never goes out. `remind_at`
-         *     is taken for one release, as on the add.
+         *     reminder, and the one scheduled before it never goes out.
          */
         UpdateTaskRequest: {
             /** Assignee Id */
@@ -2277,11 +2264,6 @@ export interface components {
             due_on?: string | null;
             /** Notes */
             notes?: string | null;
-            /**
-             * Remind At
-             * @deprecated
-             */
-            remind_at?: string | null;
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;

@@ -32,10 +32,16 @@ TABLE_ROLES: dict[str, DatabaseRole] = {
     "billing_deliveries": DatabaseRole.CORE,
     "slack_installations": DatabaseRole.CORE,
     "slack_install_states": DatabaseRole.CORE,
-    "slack_connections": DatabaseRole.CORE,
-    "slack_link_codes": DatabaseRole.CORE,
     "slack_posts": DatabaseRole.CORE,
 }
+
+DROPPED_TABLE_ROLES: dict[str, DatabaseRole] = {
+    "slack_connections": DatabaseRole.CORE,
+    "slack_link_codes": DatabaseRole.CORE,
+}
+"""Tables the migration chain made and later dropped. No process reaches
+them, so `role_for` does not know them; only the chain names them, and its
+role check reads this map beside the live one."""
 
 
 def role_for(table_name: str) -> DatabaseRole:

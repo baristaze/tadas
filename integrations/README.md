@@ -56,8 +56,6 @@ is run.
   everything in one.
 - A key whose mode is not the environment's: production takes a live
   key, every other environment a test key. The prefix says which.
-- `TADAS_STRIPE_ORG_KEY`, the runtime key's retired name. The refusal
-  names the two that replaced it.
 
 Each refusal names the setting. The settings are `TADAS_BILLING_BACKEND`
 (`twin` or `stripe`), `TADAS_STRIPE_ACCOUNT_ID`, `TADAS_STRIPE_RUNTIME_KEY`,

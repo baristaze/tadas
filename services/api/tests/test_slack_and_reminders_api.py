@@ -1,6 +1,6 @@
 """The wire of reminders: a due date set, moved, and cleared on a task, and
-never a time; the deprecated due time taken as its date for one release; a
-person's time zone recorded. Slack's own wire is `test_slack_api.py`."""
+never a time; a due time refused; a person's time zone recorded. Slack's own
+wire is `test_slack_api.py`."""
 
 import httpx
 
@@ -14,7 +14,7 @@ async def test_a_due_date_is_set_moved_and_cleared(
     assert created.status_code == 201, created.text
     task = created.json()
     assert task["due_on"] == "2030-09-30" and task["reminded_at"] is None
-    assert task["remind_at"] is None, "the deprecated field is always null"
+    assert "remind_at" not in task, "a task carries a due date and no due time"
 
     async def patch(version: int, body: dict[str, object]) -> httpx.Response:
         headers = {**owner, "If-Match": f'"{version}"'}
@@ -41,35 +41,23 @@ async def test_a_due_date_is_a_date_and_never_a_time(
         assert refused.status_code == 422, wrong
 
 
-async def test_the_due_time_of_the_release_before_is_taken_as_its_date(
-    client: httpx.AsyncClient, owner: dict[str, str]
-) -> None:
-    """For one release, a client of the release before still sends
-    `remind_at`: its date in its own offset is the due date, an explicit
-    null clears it, and `due_on` wins when both are sent."""
-    late = "2030-09-30T23:30:00-05:00"  # already October 1 in UTC
-    created = await client.post(
-        "/v1/tasks", headers=owner, json={"title": "Old client", "remind_at": late}
-    )
-    assert created.status_code == 201, created.text
-    assert created.json()["due_on"] == "2030-09-30"
-    both = await client.post(
+async def test_a_due_time_is_refused(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
+    """`remind_at`, the due time a due date replaced, is no field of a task:
+    a create or an edit that sends it is refused, not read."""
+    refused = await client.post(
         "/v1/tasks",
         headers=owner,
-        json={"title": "Both", "remind_at": late, "due_on": "2030-12-24"},
+        json={"title": "Old client", "remind_at": "2030-09-30T23:30:00-05:00"},
     )
-    assert both.json()["due_on"] == "2030-12-24"
+    assert refused.status_code == 422, refused.text
+    created = await client.post("/v1/tasks", headers=owner, json={"title": "New client"})
     task = created.json()
-    cleared = await client.patch(
+    edited = await client.patch(
         f"/v1/tasks/{task['id']}",
         headers={**owner, "If-Match": f'"{task["version"]}"'},
         json={"remind_at": None},
     )
-    assert cleared.status_code == 200 and cleared.json()["due_on"] is None
-    naive = await client.post(
-        "/v1/tasks", headers=owner, json={"title": "When?", "remind_at": "2026-10-01T09:00:00"}
-    )
-    assert naive.status_code == 422, "a due time still carries its offset"
+    assert edited.status_code == 422, edited.text
 
 
 async def test_a_person_records_their_time_zone(

@@ -100,18 +100,6 @@ locals {
     TADAS_SLACK_SIGNING_SECRET = module.secrets.slack_signing_secret_arn
   }
 
-  # The revision before this release injected the master's URL as
-  # TADAS_DATABASE_URL, the payment processor's key under its retired name,
-  # stripe_org_key, and the Slack bot token the worker posted with. A
-  # rollout the circuit breaker rolls back starts that revision again, so
-  # the serving tasks' execution roles keep reading them until the release
-  # that ends the transition.
-  rollback_secret_arns = [
-    module.secrets.database_master_url_secret_arn,
-    module.secrets.stripe_org_key_secret_arn,
-    module.secrets.slack_bot_token_secret_arn,
-  ]
-
   # A one-off task opens small pools: it runs one command, not requests.
   # deployment/cloud/README.md counts them in the connection budget.
   one_off_environment = merge(local.process_environment, {
@@ -389,8 +377,6 @@ module "api" {
   target_group_arn   = module.load_balancer.target_group_arn
   policy_arns        = local.process_policies
 
-  rollback_secret_arns = local.rollback_secret_arns
-
   secrets = merge(local.process_secrets, {
     TADAS_TOTP_ENCRYPTION_KEY = module.secrets.totp_encryption_key_secret_arn
     TADAS_WORKOS_API_KEY      = module.secrets.workos_api_key_secret_arn
@@ -465,8 +451,6 @@ module "maintenance" {
   memory             = var.maintenance_memory
   metrics_port       = 9464
   policy_arns        = local.process_policies
-
-  rollback_secret_arns = local.rollback_secret_arns
 
   secrets = local.process_secrets
 

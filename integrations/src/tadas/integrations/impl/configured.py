@@ -65,14 +65,7 @@ RUNTIME_KEY_VARIABLE = "TADAS_STRIPE_RUNTIME_KEY"
 def refuse_unsafe_payments(settings: IntegrationsSettings, environment: str) -> None:
     """The payment processor's twin anywhere but local and test; a runtime
     key that is not a restricted key, or whose mode is not the environment's
-    (production takes a live key, every other environment a test key); and
-    the key's retired name, so a leftover line says what replaced it."""
-    if settings.stripe_org_key is not None:
-        raise UnsafeIntegration(
-            "TADAS_STRIPE_ORG_KEY is no longer read: the processes take a restricted key as "
-            f"{RUNTIME_KEY_VARIABLE}, and `tadas-ops stripe-bootstrap` its own as "
-            "TADAS_STRIPE_BOOTSTRAP_KEY (docs/runbooks/providers/stripe.md)"
-        )
+    (production takes a live key, every other environment a test key)."""
     if settings.billing_backend == "twin":
         if environment not in TWIN_ENVIRONMENTS:
             raise UnsafeIntegration(

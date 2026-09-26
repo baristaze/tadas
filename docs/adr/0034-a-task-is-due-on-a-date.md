@@ -1,6 +1,10 @@
 # ADR 0034: A task is due on a date, reminded at nine in its person's morning
 
-**Status**: accepted (2026-09-23)
+**Status**: accepted (2026-09-23). The contract half is superseded
+(2026-09-25) by
+[ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
+`remind_at` is off the wire and out of the mapping, nothing writes it,
+and the release after drops the column.
 
 ## Context
 

@@ -272,10 +272,7 @@ org's own secret, which the application writes under
 `tadas/<environment>/app/org/<org_id>/`, so the application policy and
 the account's task boundary give the serving tasks `CreateSecret`,
 `PutSecretValue`, and `DeleteSecret` on that part of the prefix alone.
-`slack_bot_token` stays one more release, read by no process of this
-one: the release before posts with it, and a rollback starts that
-release, so it is among the serving tasks' rollback secrets. The release
-after removes it. The steps are in
+The steps are in
 [the Slack runbook](../../../docs/runbooks/providers/slack.md).
 
 ## Checks

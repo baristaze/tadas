@@ -410,23 +410,6 @@ table anyway, then name it after the environment again. Write it (step
 Then, under **Developers** → **API keys**, open the old key's menu (⋯)
 and delete it. Both keys work until then, so nothing breaks in between.
 
-**The old secret, `stripe_org_key`.** It held the one key Tadas used
-before the runtime key and the bootstrap key. Nothing reads it now, but
-it stays in AWS for one more release, for two reasons: Terraform still
-owns it, and the release before this one still reads it if it is ever
-rolled back to. Once the runtime key works, turn it off:
-
-```bash
-aws secretsmanager put-secret-value --profile tadas-staging --region us-west-2 \
-  --secret-id tadas/staging/stripe_org_key --secret-string off
-```
-
-Do not delete it. AWS keeps a deleted secret's name for at least seven
-days, and the next deploy fails when it tries to make the secret again.
-Do not write any other text into it either. A rolled-back release reads
-any other value as a key, refuses it, and does not start. The next
-release removes the secret from Terraform, and Terraform deletes it.
-
 **The bootstrap key.** Make a new one with the bootstrap's rows, store
 it in the password manager, and run the bootstrap's dry run with it.
 Then delete the old one. No environment holds it, so nothing is
@@ -454,7 +437,6 @@ later, so nothing is lost.
 | A checkout or the portal answers `503` `billing_unavailable` | The runtime key is `off` or empty, or the task started before it was written | The API's start line in `/tadas/<env>/api`: `payments=stripe (not configured)` |
 | A checkout fails and the log says `stripe refused create checkout session` | The runtime key lacks **Checkout Sessions**, its own group in the editor | The start line says `the key lacks Checkout Sessions`. Set that group to Write on the key; it takes effect at once |
 | The API or the worker does not start, and the deploy rolls back | A key of the wrong mode (a live key in staging, a test key in production), an organization key, or a secret key. The boot check refuses it | `/tadas/<env>/api` and `/tadas/<env>/maintenance`; the refusal names the setting and says why |
-| A process refuses to start: `TADAS_STRIPE_ORG_KEY is no longer read` | A line with that name is left in `.env` or the shell | Remove it. The runtime key goes in `TADAS_STRIPE_RUNTIME_KEY`; the bootstrap's in `TADAS_STRIPE_BOOTSTRAP_KEY` |
 | Stripe shows failed deliveries answered `400` | The signing secret does not match the endpoint's | Stripe: **Developers** → **Webhooks** → the endpoint → its deliveries. Roll the secret as above |
 | Failed deliveries answered `503` | `tadas/<env>/stripe_webhook_secret` is `off` | The same page. Run the bootstrap, then roll the API |
 | A plan does not change after a paid checkout | The worker could not apply the delivery | `/tadas/<env>/maintenance`, and the queue `tadas-<env>-webhooks-dead`, where a delivery lands after its retries |

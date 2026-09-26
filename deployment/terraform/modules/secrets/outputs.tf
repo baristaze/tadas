@@ -66,12 +66,6 @@ output "slack_signing_secret_arn" {
   depends_on  = [aws_secretsmanager_secret_version.slack_app]
 }
 
-output "slack_bot_token_secret_arn" {
-  description = "The retired bot token the release before injects into the worker: in the rollback secrets for one release."
-  value       = aws_secretsmanager_secret.slack["bot"].arn
-  depends_on  = [aws_secretsmanager_secret_version.slack]
-}
-
 output "operator_token_secret_names" {
   description = "The two token secrets by kind (provisioner, smoke); empty until the grant task mints one."
   value       = { for kind, secret in aws_secretsmanager_secret.operator_token : kind => secret.name }
@@ -85,12 +79,6 @@ output "operator_tokens_policy_arn" {
 output "stripe_runtime_key_secret_arn" {
   description = "Injected into the API and the worker as TADAS_STRIPE_RUNTIME_KEY; \"off\" until set, which leaves billing unconfigured."
   value       = aws_secretsmanager_secret.stripe["stripe_runtime_key"].arn
-  depends_on  = [aws_secretsmanager_secret_version.stripe]
-}
-
-output "stripe_org_key_secret_arn" {
-  description = "The runtime key's retired name, which the release before this one injects; kept readable for one release so a rollback starts."
-  value       = aws_secretsmanager_secret.stripe["stripe_org_key"].arn
   depends_on  = [aws_secretsmanager_secret_version.stripe]
 }
 

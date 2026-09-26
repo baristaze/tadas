@@ -1,7 +1,7 @@
 """The payments integration without an account: the signature check every
 delivery passes, the ids a delivery names, the twin's refusal outside a
-local environment, the boot's refusals (a key that is not a restricted key
-of the environment's mode, and the key's retired name), the processes
+local environment, the boot's refusal of a key that is not a restricted key
+of the environment's mode, the processes
 reading the runtime key alone, the boot's check of what the key may read,
 and the real client's reading of a subscription."""
 
@@ -253,21 +253,11 @@ def test_only_a_restricted_key_of_the_account_is_taken_at_boot(
     assert key not in refusal.value.message
 
 
-def test_the_keys_retired_name_is_refused_at_boot_with_the_new_names() -> None:
-    configured = settings(billing_backend="stripe", stripe_org_key="rk_test_x")
-    with pytest.raises(UnsafeIntegration) as refusal:
-        refuse_unsafe_payments(configured, "staging")
-    assert "TADAS_STRIPE_RUNTIME_KEY" in refusal.value.message
-    assert "TADAS_STRIPE_BOOTSTRAP_KEY" in refusal.value.message
-    assert "rk_test_x" not in refusal.value.message
-
-
 def test_the_processes_read_the_runtime_key_and_never_the_bootstraps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TADAS_STRIPE_BOOTSTRAP_KEY", "rk_test_bootstrap")
     monkeypatch.delenv("TADAS_STRIPE_RUNTIME_KEY", raising=False)
-    monkeypatch.delenv("TADAS_STRIPE_ORG_KEY", raising=False)
     alone = IntegrationsSettings.model_validate(
         {"_env_file": None, "stripe_account_id": "acct_test"}
     )

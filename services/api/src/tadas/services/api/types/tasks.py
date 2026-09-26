@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import Field
 
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.types.common import RequestBody, View
@@ -23,9 +23,6 @@ class TaskView(View):
     # predates them.
     due_on: date | None = None
     reminded_at: datetime | None = None
-    # Replaced by `due_on`, and always null: a client of the release before
-    # reads it as "no due time". The release after this one removes it.
-    remind_at: datetime | None = Field(default=None, deprecated=True)
 
 
 class TaskPageView(View):
@@ -42,15 +39,12 @@ class AddTaskRequest(RequestBody):
     schedules one reminder at nine in the morning of that day, in the time
     zone of the person the task is for (the assignee, or the creator), pushed
     to every open screen of the org and posted to its Slack channel when one
-    is connected. `remind_at`, the due time of the release before, is still
-    taken for one release: its date, in its own offset, is the due date, and
-    `due_on` wins when both are sent."""
+    is connected."""
 
     title: str = Field(max_length=500)
     notes: str = ""
     assignee_id: UUID | None = None
     due_on: date | None = None
-    remind_at: AwareDatetime | None = Field(default=None, deprecated=True)
 
 
 class UpdateTaskRequest(RequestBody):
@@ -62,15 +56,13 @@ class UpdateTaskRequest(RequestBody):
     again and decides over the current task. An update that names no version
     is refused with 422 `validation_failed`, since it would overwrite blind.
     An explicit null `due_on` clears the due date; a new one reschedules the
-    reminder, and the one scheduled before it never goes out. `remind_at`
-    is taken for one release, as on the add."""
+    reminder, and the one scheduled before it never goes out."""
 
     title: str | None = Field(default=None, max_length=500)
     notes: str | None = None
     status: TaskStatus | None = None
     assignee_id: UUID | None = None
     due_on: date | None = None
-    remind_at: AwareDatetime | None = Field(default=None, deprecated=True)
 
 
 class MoveTaskRequest(RequestBody):

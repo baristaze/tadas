@@ -26,7 +26,7 @@ from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
 from tadas.om.tasks.rules import Place
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.storage.tables.tasks import Tasks, remind_at_of
+from tadas.om.tasks.storage.tables.tasks import Tasks
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
@@ -158,9 +158,7 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def create_task(
         self, org_id: UUID, task: Task, outbox_rows: tuple[OutboxRow, ...]
     ) -> bool:
-        return await self._insert(
-            Tasks, org_id, task, outbox_rows, remind_at=remind_at_of(task.due_on)
-        )
+        return await self._insert(Tasks, org_id, task, outbox_rows)
 
     async def update_task(
         self, org_id: UUID, task: Task, expected_version: int, outbox_rows: tuple[OutboxRow, ...]
@@ -177,7 +175,6 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(Tasks, org_id=org_id) as session:
             for task, expected_version, _ in updates:
                 values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
-                values["remind_at"] = remind_at_of(task.due_on)
                 stmt = (
                     update(Tasks)
                     .where(
