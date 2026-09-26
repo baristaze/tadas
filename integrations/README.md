@@ -165,7 +165,8 @@ says.
   client with the timeout from settings and hands it to the SDK. An SDK
   that names a timeout on each request as well gets the same one, since
   the request's wins over the client's. WorkOS's does, and falls back to
-  60 seconds. A test reads the timeout a request is sent with.
+  60 seconds. A test reads the timeout a request is sent with, for each
+  provider.
 - **One exception family.** Every provider error is translated into an
   integration exception, each a leaf of infra's (`ProviderUnavailable`
   is a `503`, `ProviderRefused` a `400`, `ProviderConflict` a `409`),
@@ -181,3 +182,24 @@ says.
 - **A twin that says it is one.** Every id the twin mints starts with
   `twin_`, and the configured root refuses it in a deployed
   environment.
+
+## What a provider that hangs costs a call
+
+Each SDK keeps its own retries. WorkOS's and Stripe's retry a timeout,
+so a provider that takes a call and never answers holds it for the
+timeout on every attempt, plus the waits between them. Slack's SDK
+retries only a dropped connection, never a timeout. At the default
+timeout of 10 seconds:
+
+| Provider | Attempts | Waits between them, at most | A call gives up after, at most |
+|----------|----------|-----------------------------|--------------------------------|
+| WorkOS | 4 | 1.5, 3, and 6 seconds | 50.5 seconds |
+| Stripe | 3 | 0.5 and 1 second | 31.5 seconds |
+| Slack | 1 | none | 10 seconds |
+
+For WorkOS and Stripe the timeout bounds each wait on the network (to
+connect, to send, and between bytes of the answer), not an attempt as a
+whole; for Slack it bounds the attempt. WorkOS also waits as long as a
+`Retry-After` on a 429 or a server error asks, with no cap of its own.
+A request that makes several calls waits for each in turn; nothing
+bounds the request as a whole.
