@@ -8,7 +8,8 @@ secret. When `identities.password_hash` is dropped is superseded
 (2026-09-25) by
 [ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
 the hashes are cleared and the column leaves the mapping, and the
-release after drops it.
+release after drops it. The drop is done (2026-09-25): migration
+202609290000 takes the column out of the table.
 
 ## Context
 

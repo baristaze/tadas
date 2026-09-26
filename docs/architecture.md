@@ -147,10 +147,8 @@ context on keeps the stage the callee needs.
   answers a new login that records it, behind the per-email delay.
   `dev_sign_in` signs in by address alone and is `NotFound` unless the
   options turn it on, which the API's settings refuse outside `local`
-  and `test` (ADR 0029). Tadas keeps no password:
-  `identities.password_hash` holds none, and it and the two columns of
-  the old sign-in delay are in the table and out of the mapping, so no
-  statement names them; the next release drops the three (ADR 0038).
+  and `test` (ADR 0029). Tadas keeps no password, and an identity has
+  no column for one.
   Invitations
   (`core.invitations`, org-scoped; one pending invitation per address
   in an org, the provider's id unique) are sent by the provider through
@@ -367,8 +365,6 @@ context on keeps the stage the callee needs.
   and announces nothing. The time zone is the person's identity's
   (`Identity.time_zone`, an IANA name `tenancy.rules.check_time_zone`
   accepts), which the portal sends through `PATCH /v1/me/identity`.
-  `tasks.remind_at` is dead: it is in the table and out of the mapping,
-  so no statement names it, and the next release drops it (ADR 0038).
 
 - `billing`: an org's plan and its account at the payment processor
   ([ADR 0031](adr/0031-plans-are-levers-and-the-processor-is-mirrored.md)).

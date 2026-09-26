@@ -5,7 +5,8 @@ dropped in [ADR 0026](0026-what-0-31-0-leaves-as-a-choice.md) (the
 last paragraph), [ADR 0028](0028-sign-in-is-the-identity-providers.md)
 ("Tadas keeps no password"), and
 [ADR 0034](0034-a-task-is-due-on-a-date.md) (the contract half); the
-rest of each record stands.
+rest of each record stands. The second step is done (2026-09-25):
+migration 202609290000 drops the four columns this record names.
 
 ## Context
 
