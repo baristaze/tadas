@@ -1,9 +1,10 @@
 """Storage of the work queue. The claim is the one named atomic method. The
-claim, the requeue of expired leases, and the purge reach across tenants in
-the system scope; every other operation takes org_id first. The
-claim mints a token, and the writes that move a claimed item are conditional
-on that token still being on the row, so a lost lease can never be written
-over, not even by the worker that held the item before and holds it again."""
+claim, the requeue of expired leases, the purge, and the two reads of the
+sweep's gauges reach across tenants in the system scope; every other
+operation takes org_id first. The claim mints a token, and the writes that
+move a claimed item are conditional on that token still being on the row, so
+a lost lease can never be written over, not even by the worker that held the
+item before and holds it again."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -95,6 +96,23 @@ class WorkStorageInterface(ABC):
         skipping items another transaction holds; returns how many. The one
         hard delete of the namespace. It takes no tenant: one statement
         reaches every tenant's settled items."""
+        ...
+
+    @abstractmethod
+    async def oldest_ready_at(self, now: datetime) -> datetime | None:
+        """Cross-tenant, for the sweep's backlog gauge, in the system scope:
+        the `available_at` of the queued item that has been ready longest at
+        `now`, on any lane and in any tenant; None when nothing is ready. An
+        item parked until later is not ready. One read of the first entry of
+        the index of queued items."""
+        ...
+
+    @abstractmethod
+    async def count_failed_since(self, since: datetime) -> int:
+        """Cross-tenant, for the sweep's dead-letter gauge, in the system
+        scope: how many items are failed and were last changed after `since`,
+        which is when they failed. An item an operator sent back is no longer
+        failed and is not counted."""
         ...
 
     @abstractmethod

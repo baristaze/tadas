@@ -69,8 +69,12 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # pass for it, not the turn of its tenant in a ring of every tenant.
         ("WorkStorageInterface", "requeue_stale"),
         ("WorkStorageInterface", "purge_items"),
+        # The sweep's gauges: one read each across every tenant's rows.
+        ("WorkStorageInterface", "oldest_ready_at"),
+        ("WorkStorageInterface", "count_failed_since"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
+        ("OutboxStorageInterface", "oldest_pending_at"),
         ("SlackStorageInterface", "read_installation_by_team"),
         ("SlackStorageInterface", "redeem_install_state"),
     }
@@ -100,11 +104,15 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxRelayInterface", "relay_all"),
         ("OutboxRelayInterface", "relay_pending"),
         ("OutboxRelayInterface", "purge_done"),
+        ("OutboxRelayInterface", "oldest_pending_age"),
         # And the enqueue the relay makes: it runs on the relay's side of the
         # handoff, under the tenant the row names, and stamps the actor from it.
         ("WorkManagerInterface", "enqueue_relayed"),
         # The queue's purge, like the outbox's: one sweep step across tenants.
         ("WorkManagerInterface", "purge_items"),
+        # The sweep's gauges of the queue, read across tenants like the purge.
+        ("WorkManagerInterface", "oldest_ready_age"),
+        ("WorkManagerInterface", "failed_within"),
     }
 )
 

@@ -272,6 +272,14 @@ class WorkManagerImpl(WorkManagerInterface):
             utcnow() - self._options.retention, self._options.purge_batch
         )
 
+    async def oldest_ready_age(self) -> timedelta:
+        now = utcnow()
+        oldest = await self._storage.oldest_ready_at(now)
+        return timedelta(0) if oldest is None else max(now - oldest, timedelta(0))
+
+    async def failed_within(self, window: timedelta) -> int:
+        return await self._storage.count_failed_since(utcnow() - window)
+
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)
 

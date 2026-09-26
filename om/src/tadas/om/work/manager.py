@@ -117,6 +117,22 @@ class WorkManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def oldest_ready_age(self) -> timedelta:
+        """Platform-internal: the sweep's backlog gauge, across tenants like
+        the purge: how long the item ready longest has waited for a worker, on
+        any lane; zero when nothing is ready. An item parked until later has
+        not waited yet. Takes no context, because it reads for no tenant and
+        no principal."""
+        ...
+
+    @abstractmethod
+    async def failed_within(self, window: timedelta) -> int:
+        """Platform-internal: the sweep's dead-letter gauge, across tenants
+        like the purge: how many items failed in the last `window` and are
+        still failed. Takes no context, for the same reason."""
+        ...
+
+    @abstractmethod
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         """Platform-internal: the tenancy manager's service contexts (the system
         scope first, then every tenant), for the sweep, each refining the request

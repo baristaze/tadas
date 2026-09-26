@@ -51,6 +51,14 @@ class OutboxRelayInterface(ABC):
         ...
 
     @abstractmethod
+    async def oldest_pending_age(self) -> timedelta:
+        """Platform-internal, for the sweep's relay gauge: how long ago the
+        oldest row that is neither done nor failed landed, across tenants;
+        zero when every row is settled. A row relays within the request that
+        wrote it, so an old one is a relay that keeps failing."""
+        ...
+
+    @abstractmethod
     async def purge_done(self, retention: timedelta, limit: int) -> int:
         """Platform-internal, for the sweep: deletes rows done or failed longer
         ago than `retention`, at most `limit` of each; returns how many. The

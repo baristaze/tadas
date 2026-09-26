@@ -1,7 +1,8 @@
 """Storage of the outbox. A row is never written on its own: the storage
 base lands the rows that announce a write in the same commit as the core row
 (`_insert(..., outbox_rows)` and `_upsert(..., outbox_rows)` in the `core`
-role). The claim and the purge are cross-tenant and serve the sweep."""
+role). The claim, the purge, and the read of the oldest pending row are
+cross-tenant and serve the sweep."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -52,6 +53,13 @@ class OutboxStorageInterface(ABC):
         """Stamps `last_error` on a row that is not done, and `failed_at` when
         given: the row is then a dead letter, never claimed again, purged with
         the done ones. A row already done, or unknown, is left as is."""
+        ...
+
+    @abstractmethod
+    async def oldest_pending_at(self) -> datetime | None:
+        """Cross-tenant, for the sweep's relay gauge: when the oldest row that
+        is neither done nor failed landed; None when every row is settled. A
+        row waiting out its delay after a failed attempt is pending."""
         ...
 
     @abstractmethod

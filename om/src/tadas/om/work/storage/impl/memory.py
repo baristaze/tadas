@@ -131,6 +131,21 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                 del self._items[item_id]
             return len(gone)
 
+    async def oldest_ready_at(self, now: datetime) -> datetime | None:
+        ready = [
+            item.available_at
+            for _, item in self._rows_across_tenants(self._items)
+            if item.status is WorkStatus.QUEUED and item.available_at <= now
+        ]
+        return min(ready, default=None)
+
+    async def count_failed_since(self, since: datetime) -> int:
+        return sum(
+            1
+            for _, item in self._rows_across_tenants(self._items)
+            if item.status is WorkStatus.FAILED and item.updated_at > since
+        )
+
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         return self._get(self._items, org_id, item_id)
 
