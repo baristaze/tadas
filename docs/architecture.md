@@ -1640,6 +1640,17 @@ page; this section says what exists.
   the account check, and the env file's fields are written once; the
   rules that stop a secret leaking stay inline in each of them, and
   `infra/tests/test_ops_skills.py` holds both halves.
+- **Audits.** Four more skills, `audit-retention`, `audit-query-indexes`,
+  `audit-database-calls`, and `audit-deploy-time`, each a read-only
+  analysis that repeats. The three about the database make a database of
+  their own on the local stack (`ops/audit/auditdb.py`, named
+  `audit_<slug>`), seed it (`ops/audit/seed.py`), measure it
+  (`ops/audit/explain.py`, `ops/audit/dbcalls.py`), and drop it; the
+  deploy audit reads the pipeline's runs and the cluster's events
+  (`ops/audit/deploy_timeline.py`) under the investigate profile. Each
+  writes a report and proposes tickets. `tickets-triage` gives every
+  open ticket a verdict against `main`. None of the tools is imported by
+  a process; `ops/tests/test_audit_database.py` runs them end to end.
   The first responder is an agent: `ops-investigate` and
   `ops-watch` read the platform's size (`tadas-ops size`) before they
   escalate an alarm, and a platform of one tenant and one user is the
