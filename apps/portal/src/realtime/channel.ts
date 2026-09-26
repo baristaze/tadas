@@ -39,6 +39,10 @@ export interface ChannelDeps {
   fetchEventsAfter(after: number, limit: number): Promise<EventView[]>;
   /** Hands one envelope to the router; the query cache is behind it. */
   route(envelope: Envelope): void;
+  /** Hands the router a record read back from the stream (a replay, the
+   * first catch-up). Only the last record of each entity is routed, so the
+   * entity's queries are read again whole; `route` when absent. */
+  routeReplayed?(envelope: Envelope): void;
   /** Refreshes every query, for a first catch-up the stream's tail cannot answer. */
   refreshAll(): Promise<unknown>;
   connection: { getState(): ConnectionState };
@@ -74,6 +78,7 @@ export function openChannel(deps: ChannelDeps): Channel {
   // When the page began reading, near enough: the provider opens the channel
   // in the same render that mounts the page's first queries.
   const startedAt = now();
+  const routeReplayed = deps.routeReplayed ?? deps.route;
   // Frames and replays are applied strictly in arrival order.
   let inbox: Promise<void> = Promise.resolve();
 
@@ -135,7 +140,7 @@ export function openChannel(deps: ChannelDeps): Channel {
       for (const event of page) {
         apply(eventEnvelope(event), (routed) => last.set(entityOf(event.kind), routed));
       }
-      for (const envelope of last.values()) deps.route(envelope);
+      for (const envelope of last.values()) routeReplayed(envelope);
       if (isLastPage(page.length, deps.pageSize) || cursor === null || cursor <= from) return;
       from = cursor;
     }
@@ -202,7 +207,7 @@ export function openChannel(deps: ChannelDeps): Channel {
     }
     const last = new Map<string, Envelope>();
     for (const event of recent) last.set(entityOf(event.kind), eventEnvelope(event));
-    for (const envelope of last.values()) deps.route(envelope);
+    for (const envelope of last.values()) routeReplayed(envelope);
   };
 
   const stopPolling = () => {

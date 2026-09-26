@@ -2,14 +2,26 @@
 // `entity_changed` push invalidates the queries that carry the entity named
 // inside its kind: by convention the queries whose key starts with the entity
 // name, and by the table below where the entity is read through another
-// query, or through none.
+// query, or through none. A task is the exception: a live push about one
+// reads that one task and places it into the lists (`taskHints.ts`), since a
+// tick would otherwise read both whole lists in every open tab.
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { keys } from "../queries/keys";
 import { entityOf, isEntityChanged, type Envelope } from "./envelopes";
 
 export interface RouteOutcome {
   invalidated: QueryKey[];
+  /** The tasks handed to the hints, to be read one by one. */
+  hinted?: string[];
 }
+
+/** Where a live push about a task goes; see `taskHints.ts`. */
+export interface TaskHintSink {
+  hint(id: string): unknown;
+}
+
+/** The entity whose pushes are read one record at a time. */
+export const TASK_ENTITY = keys.tasks.all[0];
 
 // Entities the convention does not reach on its own. A membership is read as
 // the role and the permissions inside `me`, and as the role in the person's
@@ -29,16 +41,23 @@ function targetsOf(entity: string): readonly QueryKey[] {
   return CARRIED_BY[entity] ?? [[entity]];
 }
 
-export function routeEnvelope(queryClient: QueryClient, envelope: Envelope): RouteOutcome {
+/** Routes one envelope. With `tasks`, a push about a task is read as that
+ * one task; without it (a replay, whose records are coalesced one per entity)
+ * the task lists are read again, as every other entity's queries are. */
+export function routeEnvelope(queryClient: QueryClient, envelope: Envelope, tasks?: TaskHintSink): RouteOutcome {
   if (!isEntityChanged(envelope)) return { invalidated: [] };
-  const targets = [...targetsOf(entityOf(envelope.payload.kind))];
+  const entity = entityOf(envelope.payload.kind);
+  if (tasks && entity === TASK_ENTITY) {
+    tasks.hint(envelope.payload.target_id);
+    return { invalidated: [], hinted: [envelope.payload.target_id] };
+  }
+  const targets = [...targetsOf(entity)];
   for (const queryKey of targets) void queryClient.invalidateQueries({ queryKey });
   return { invalidated: targets };
 }
 
 // A reminder is the one push a person is told about as well as refreshed by:
-// the task's queries refresh by the convention above, and this names the task
-// to announce. Null for every other frame.
+// the task is read and placed as above, and this names the task to announce. Null for every other frame.
 export const REMINDED_KIND = "tasks.task.reminded";
 
 export function reminderOf(envelope: Envelope): string | null {

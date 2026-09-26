@@ -39,10 +39,11 @@ describe("reorder", () => {
     expect(fx.showOrder.mock.calls[0]![0]!.map((t) => t.id)).toEqual(["b", "c", "a"]);
     expect(fx.move).toHaveBeenCalledWith("a", "c", 3);
     expect(fx.report).not.toHaveBeenCalled();
-    expect(fx.refetch).toHaveBeenCalledTimes(1);
+    // The answer is the list's news: no list is read again.
+    expect(fx.refetch).not.toHaveBeenCalled();
     // The row the server wrote goes back into the list: it carries version 4,
-    // so a second drag before the refetch lands names that and is not refused
-    // as someone else's change.
+    // so a second drag names that and is not refused as someone else's
+    // change.
     expect(fx.showMoved).toHaveBeenCalledWith(task("a", 4));
   });
 

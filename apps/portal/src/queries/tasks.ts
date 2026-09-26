@@ -11,9 +11,9 @@ import type {
 } from "../api";
 import { api } from "../app/api";
 import { keys } from "./keys";
+import { DONE_PAGE_SIZE, OPEN_PAGE_SIZE } from "./taskPlacement";
 
-export const DONE_PAGE_SIZE = 10;
-export const OPEN_PAGE_SIZE = 200;
+export { DONE_PAGE_SIZE, OPEN_PAGE_SIZE } from "./taskPlacement";
 
 /** A list a page at a time; the next page is the last page's cursor, and the
  * server says when there is none. Both lists page the same way; only the

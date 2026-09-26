@@ -7,6 +7,11 @@ import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, type MeView, type TaskPageView, type TaskView, type UserPageView } from "../../api";
+import { placeTask, refreshTaskLists, removeTask, taskStamp } from "../../queries/taskCache";
+import { fetchTask } from "../../queries/tasks";
+import { parseEnvelope } from "../../realtime/envelopes";
+import { routeEnvelope } from "../../realtime/router";
+import { createTaskHints, HINT_WINDOW_MS } from "../../realtime/taskHints";
 import { STALE_MESSAGE } from "./reorder";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
 
@@ -23,8 +28,14 @@ interface Held {
 const net = vi.hoisted(() => {
   const reads = new Map<string, unknown>();
   const writes: Held[] = [];
+  // Every read sent, in order: the lists, one task, the rest.
+  const log: string[] = [];
   const read = (path: string) => {
-    for (const [prefix, value] of reads) if (path.startsWith(prefix)) return Promise.resolve(value);
+    log.push(path);
+    for (const [prefix, value] of reads) {
+      if (!path.startsWith(prefix)) continue;
+      return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
+    }
     return Promise.reject(new Error(`no read stubbed for ${path}`));
   };
   // A DELETE has no body, so its options come second; every other write's third.
@@ -37,7 +48,7 @@ const net = vi.hoisted(() => {
         writes.push({ method, path, body, ifMatch: options?.ifMatch, resolve, reject }),
       );
     };
-  return { reads, writes, read, hold };
+  return { reads, writes, log, read, hold };
 });
 
 vi.mock("../../app/api", () => ({
@@ -89,8 +100,10 @@ function Probe() {
 
 const tick = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
+let queryClient: QueryClient;
+
 async function mount() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
     root.render(
       createElement(QueryClientProvider, { client: queryClient }, createElement(Probe)),
@@ -108,6 +121,7 @@ beforeEach(() => {
   held.vm = undefined;
   net.reads.clear();
   net.writes.length = 0;
+  net.log.length = 0;
   net.reads.set("/v1/me", me);
   net.reads.set("/v1/users", { items: [me.user], next_cursor: null } satisfies UserPageView);
   net.reads.set("/v1/tasks?status=open", { items: [alpha, beta], next_cursor: null } satisfies TaskPageView);
@@ -200,4 +214,133 @@ it("quick-creates a task from its title alone, with no due date", async () => {
   expect(net.writes[0]!.body).toEqual({ title: "Call the bank", notes: "" });
   expect(vm().title).toBe("");
   await act(async () => void net.writes[0]!.resolve(taskOf("t3", "Call the bank")));
+});
+
+// The realtime side as the provider wires it, over the same query cache.
+function hintsOver(client: QueryClient) {
+  return createTaskHints({
+    readTask: fetchTask,
+    isGone: (cause) => cause instanceof ApiError && cause.status === 404,
+    stamp: () => taskStamp(client),
+    place: (task, since) => placeTask(client, task, { since }),
+    remove: (id, since) => removeTask(client, id, { since }),
+    refreshLists: () => refreshTaskLists(client),
+  });
+}
+
+function pushAbout(kind: string, id: string) {
+  return parseEnvelope(
+    JSON.stringify({
+      type: "event",
+      sent_at: null,
+      topic: "entity_changed",
+      payload: { kind, target_id: id, seq: 9, actor_id: "u1" },
+    }),
+  )!;
+}
+
+const windowPasses = () =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, HINT_WINDOW_MS + 20));
+  });
+
+const listReads = () => net.log.filter((path) => path.startsWith("/v1/tasks?"));
+
+it("ticks with one PATCH, reads that one task on its push, and reads no list", async () => {
+  await mount();
+  net.log.length = 0;
+  const hints = hintsOver(queryClient);
+  await act(async () => void vm().complete(alpha));
+  await tick();
+  const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
+  await act(async () => void net.writes[0]!.resolve(completed));
+  await tick();
+  // The answer is in the done list before any push arrives.
+  expect(vm().done.map((r) => r.task.id)).toEqual(["t1"]);
+  expect(vm().done[0]!.task.version).toBe(2);
+  // The write's own push comes back, and reads the task once.
+  net.reads.set("/v1/tasks/t1", completed);
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1"), hints);
+  await windowPasses();
+  expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual(["PATCH /v1/tasks/t1"]);
+  expect(net.log).toEqual(["/v1/tasks/t1"]);
+  expect(listReads()).toEqual([]);
+  expect(vm().done.map((r) => r.task.id)).toEqual(["t1"]);
+  hints.stop();
+});
+
+it("writes create, edit, reopen, move, and delete answers into the lists without reading one", async () => {
+  await mount();
+  net.log.length = 0;
+  await act(async () => vm().setTitle("Gamma"));
+  await act(async () => void vm().add());
+  await tick();
+  await act(async () => void net.writes[0]!.resolve({ ...taskOf("t3", "Gamma"), position: -1 }));
+  await tick();
+  expect(vm().open.map((r) => r.task.id)).toEqual(["t3", "t1", "t2"]);
+
+  await act(async () => void vm().save(beta, { version: 1, title: "Beta edited", notes: "", assigneeId: null }));
+  await tick();
+  await act(async () => void net.writes[1]!.resolve({ ...beta, title: "Beta edited", version: 2 }));
+  await tick();
+  expect(vm().open.find((r) => r.task.id === "t2")!.row.title).toBe("Beta edited");
+
+  await act(async () => void vm().drop("t3", "t2", "after"));
+  await tick();
+  await act(async () => void net.writes[2]!.resolve({ ...taskOf("t3", "Gamma"), position: 1, version: 2 }));
+  await tick();
+  expect(vm().open.map((r) => r.task.id)).toEqual(["t1", "t2", "t3"]);
+
+  const doneBeta: TaskView = { ...beta, title: "Beta edited", status: "done", version: 3, updated_at: "2026-09-20T10:06:00Z" };
+  queryClient.setQueryData(["task", "done", "team"], { pages: [{ items: [doneBeta], next_cursor: null }], pageParams: [null] });
+  queryClient.setQueryData(["task", "open", "team"], {
+    pages: [{ items: [alpha, { ...taskOf("t3", "Gamma"), position: 1, version: 2 }], next_cursor: null }],
+    pageParams: [null],
+  });
+  await act(async () => void vm().reopen(doneBeta));
+  await tick();
+  expect(vm().done).toEqual([]);
+  await act(async () => void net.writes[3]!.resolve({ ...doneBeta, status: "open", position: -2, version: 4 }));
+  await tick();
+  expect(vm().open.map((r) => r.task.id)).toEqual(["t2", "t1", "t3"]);
+
+  await act(async () => void vm().destroy(alpha));
+  await tick();
+  expect(vm().open.map((r) => r.task.id)).toEqual(["t2", "t3"]);
+  await act(async () => void net.writes[4]!.resolve({ ...alpha, deleted_at: "2026-09-20T10:07:00Z", version: 2 }));
+  await tick();
+  expect(vm().open.map((r) => r.task.id)).toEqual(["t2", "t3"]);
+
+  expect(net.writes.map((w) => w.method)).toEqual(["POST", "PATCH", "POST", "PATCH", "DELETE"]);
+  expect(net.log).toEqual([]);
+});
+
+it("updates from someone else's push with one read of that task, and drops a task that answers 404", async () => {
+  await mount();
+  net.log.length = 0;
+  const hints = hintsOver(queryClient);
+  net.reads.set("/v1/tasks/t2", { ...beta, title: "Beta, from the other tab", version: 2 });
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t2"), hints);
+  await windowPasses();
+  expect(vm().open.map((r) => r.row.title)).toEqual(["Alpha", "Beta, from the other tab"]);
+  expect(net.log).toEqual(["/v1/tasks/t2"]);
+
+  net.reads.set("/v1/tasks/t1", new ApiError(404, "not_found", "task t1 not found", "req-2"));
+  routeEnvelope(queryClient, pushAbout("tasks.task.deleted", "t1"), hints);
+  await windowPasses();
+  expect(vm().open.map((r) => r.task.id)).toEqual(["t2"]);
+  expect(listReads()).toEqual([]);
+  hints.stop();
+});
+
+it("reads the lists once for a burst of pushes, not task by task", async () => {
+  await mount();
+  net.log.length = 0;
+  const hints = hintsOver(queryClient);
+  for (let i = 0; i < 50; i += 1) routeEnvelope(queryClient, pushAbout("tasks.task.created", `n${i}`), hints);
+  await windowPasses();
+  expect(net.log.filter((path) => path.startsWith("/v1/tasks/"))).toEqual([]);
+  // One read of each list the page shows.
+  expect(listReads().map((path) => path.split("&")[0])).toEqual(["/v1/tasks?status=open", "/v1/tasks?status=done"]);
+  hints.stop();
 });

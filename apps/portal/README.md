@@ -59,6 +59,25 @@ Zustand, one realtime channel.
   convention does not reach on its own (a membership, read through
   `me` and the person's list of places; a user, read through `me` as
   well as its own list) is named in the router's table instead.
+- The task lists are written, not read again. A write answers with the
+  task as the server wrote it, and that answer goes into every cached
+  list, in every scope, at once (`src/queries/taskCache.ts`). A live
+  push about a task names only its id, so the page reads that one task
+  (`GET /v1/tasks/{id}`) and places it the same way; a 404 takes it
+  out. Where it goes is one pure function (`src/queries/taskPlacement.ts`):
+  the open list by position then id, the done list newest first, the
+  `mine` scope by the server's rule, archived and deleted tasks in
+  neither. A list is the window the page loaded, and its last row is
+  the one the next page's cursor names: a task that sorts past it is
+  left out, and a change the window cannot answer (a removal that
+  leaves a window with more behind it short, the last row moving)
+  reads that one list again. A task placed into a full window stays
+  held past what the page shows, and shows on Show more. An answer
+  older than one already placed is dropped, by the task's version.
+  Pushes are gathered until 100 ms pass without one, and for 500 ms at
+  most (`src/realtime/taskHints.ts`): a task pushed twice is read once,
+  and past twenty tasks in one window (an import, a move that renumbers
+  the open list) the lists are read once instead. The other features still invalidate on a push.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
@@ -87,7 +106,10 @@ Zustand, one realtime channel.
   reads the stream's last page and routes what was produced since the
   page began reading; it refreshes every query only when that page cannot
   tell, so a page load reads each query once. Envelopes (`envelopes.ts`)
-  route into the query cache (`router.ts`), never into components. The
+  route into the query cache (`router.ts`), never into components. A
+  record read back from the stream (a replay, the first catch-up) is
+  routed once per entity, so a task record there reads the task lists
+  whole, as every other entity's queries are. The
   ping interval comes from
   `deployment/realtime-timeouts.json`.
 - A person signs in through WorkOS AuthKit, which the API fronts. `/login`

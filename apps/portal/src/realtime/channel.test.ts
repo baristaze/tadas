@@ -53,9 +53,10 @@ const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", us
 /** The stream in storage, as pages after a seq. */
 type Pages = (after: number) => EventView[];
 
-function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number) {
+function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number, split = false) {
   const sockets: FakeSocket[] = [];
   const routed: Envelope[] = [];
+  const replayed: Envelope[] = [];
   const fetches: number[] = [];
   const requestTicket = vi.fn(() => Promise.resolve("tkt"));
   const onUnauthenticated = vi.fn();
@@ -76,11 +77,12 @@ function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number) 
     route: (envelope) => {
       routed.push(envelope);
     },
+    routeReplayed: split ? (envelope) => void replayed.push(envelope) : undefined,
     refreshAll,
     connection: useConnectionStore,
     pageSize,
   });
-  return { channel, sockets, routed, fetches, requestTicket, onUnauthenticated, refreshAll };
+  return { channel, sockets, routed, replayed, fetches, requestTicket, onUnauthenticated, refreshAll };
 }
 
 // Lets the ticket request and the inbox settle without moving the clock.
@@ -283,6 +285,27 @@ describe("stream cursor", () => {
     // invalidates every query the entity is read from, so routing all three
     // would refetch the same lists three times over.
     expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([7, 8]);
+  });
+
+  it("routes a live push as live, and a record read back from the stream as replayed", async () => {
+    // A live task push reads that one task; a replay routes only the last
+    // record of each entity, so the lists it touches are read whole.
+    const stream = [event(6), event(7), event(8)];
+    const h = harness((after) => stream.filter((e) => e.seq > after), 200, undefined, true);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.receive(push(6));
+    await flush();
+    h.sockets[0]!.receive(push(8));
+    await flush();
+    // Push 8 found 7 missing: the replay of 7 and 8 routed the last of them.
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([6]);
+    expect(h.replayed.map(seqOf)).toEqual([8]);
+    expect(channel.cursor()).toBe(8);
   });
 
   it("routes a replay page once per entity, however many records it carries", async () => {
