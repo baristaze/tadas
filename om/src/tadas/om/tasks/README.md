@@ -103,6 +103,11 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   caller saw. If the stored task has moved on, the write is refused
   and nothing is merged; the caller reads again. An edit that raced a
   delete finds the task gone and cannot bring it back.
+- **A change says which version it wrote.** The announcement of a
+  task's change names the task and the version the change set, never a
+  field. A screen that already shows that version, the one whose own
+  write it was, has nothing to read (ADR 0061). A reminder and the
+  daily archive name no version, and every screen reads the task.
 - **Some fields are never the caller's.** An edit changes the title,
   the notes, the assignee, and the status. Who made the task, whether
   it is deleted, its place in the open list, and its version stay as
