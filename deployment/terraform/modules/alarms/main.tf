@@ -2,8 +2,9 @@
 # to: the edge (5xx ratio, unhealthy targets, p95 latency), one per read
 # that has a latency of its own to keep (GET /v1/billing), the database
 # (CPU, free storage), the queues (a backlog and a dead letter, per
-# inbound queue), and the runtime (a service running fewer tasks than it
-# wants, one per service). The thresholds are inputs with defaults here, at the
+# inbound queue), the worker's sweep (a pass longer than its interval), and
+# the runtime (a service running fewer tasks than it wants, one per
+# service). The thresholds are inputs with defaults here, at the
 # leaf, because a threshold is a number and not shape; an environment that
 # wants another number passes it through the environment module, which
 # exposes none of them yet.
@@ -266,6 +267,45 @@ resource "aws_cloudwatch_metric_alarm" "queue_dead_letter" {
   alarm_actions       = [aws_sns_topic.alarms.arn]
   ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = local.tags
+}
+
+# The sweep. A pass stops taking tenants at its budget and resumes on the
+# next, so its length stays near the budget however much there is to trim.
+# The worker writes each pass's duration as a field of one log line, and a
+# metric filter on its log group turns those lines into a metric of raw
+# values. A pass longer than the threshold means the budget is not holding:
+# one step is slow on its own, and the next pass waits behind it.
+
+resource "aws_cloudwatch_log_metric_filter" "sweep_duration" {
+  name           = "${local.prefix}-sweep-duration"
+  log_group_name = var.maintenance_log_group_name
+  pattern        = "{ $.sweep.duration_ms = * }"
+
+  metric_transformation {
+    name      = "tadas_sweep_duration_ms"
+    namespace = "Tadas"
+    value     = "$.sweep.duration_ms"
+    unit      = "Milliseconds"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "sweep_duration" {
+  alarm_name          = "${local.prefix}-sweep-duration"
+  alarm_description   = "A sweep pass took longer than ${var.sweep_duration_seconds}s in each of ${var.evaluation_periods} periods of ${var.period_seconds}s, as the worker timed it: a step is slower than the pass's budget."
+  namespace           = "Tadas"
+  metric_name         = "tadas_sweep_duration_ms"
+  statistic           = "Maximum"
+  period              = var.period_seconds
+  evaluation_periods  = var.evaluation_periods
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.sweep_duration_seconds * 1000
+  # A worker that is not running writes no line; the runtime alarm says so.
+  treat_missing_data = "notBreaching"
+  alarm_actions      = [aws_sns_topic.alarms.arn]
+  ok_actions         = [aws_sns_topic.alarms.arn]
+  tags               = local.tags
+
+  depends_on = [aws_cloudwatch_log_metric_filter.sweep_duration]
 }
 
 # The runtime: one alarm per service, on the gap between what it wants and

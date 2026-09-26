@@ -190,6 +190,23 @@
         "yAxis": { "left": { "min": 0, "label": "seconds" } },
         "metrics": ${queue_ages}
       }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 24,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Sweep pass duration, the longest per minute",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "period": 60,
+        "stat": "Maximum",
+        "yAxis": { "left": { "min": 0, "label": "milliseconds" } },
+        "metrics": [["Tadas", "tadas_sweep_duration_ms", { "label": "sweep pass" }]]
+      }
     }
   ]
 }

@@ -12,6 +12,7 @@ output "alarm_names" {
       aws_cloudwatch_metric_alarm.http_p95_latency.alarm_name,
       aws_cloudwatch_metric_alarm.database_cpu.alarm_name,
       aws_cloudwatch_metric_alarm.database_free_storage.alarm_name,
+      aws_cloudwatch_metric_alarm.sweep_duration.alarm_name,
     ],
     [for alarm in aws_cloudwatch_metric_alarm.read_latency : alarm.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.queue_backlog : alarm.alarm_name],

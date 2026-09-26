@@ -33,6 +33,11 @@ variable "api_log_group_name" {
   type        = string
 }
 
+variable "maintenance_log_group_name" {
+  description = "The worker's log group; each sweep pass's duration is read from its line there."
+  type        = string
+}
+
 variable "queue_names" {
   description = "The inbound queues, prefix included; each gets a backlog alarm, and its -dead twin a dead-letter alarm."
   type        = list(string)
@@ -98,4 +103,10 @@ variable "queue_oldest_message_seconds" {
   description = "How long the oldest message on an inbound queue may wait before the backlog alarm fires. Ten minutes: past the five receives of a sixty-second visibility a failing message has before it is dead-lettered, which the dead-letter alarm reports."
   type        = number
   default     = 600
+}
+
+variable "sweep_duration_seconds" {
+  description = "How long one sweep pass may take before the sweep alarm fires. Thirty seconds: the interval between passes, and past the pass's own budget of twenty."
+  type        = number
+  default     = 30
 }
