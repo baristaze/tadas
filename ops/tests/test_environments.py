@@ -2,6 +2,7 @@
 the process environment over both."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from tadas.ops.environments import (
     CLOUD_REGION,
     LOCAL_API_URL,
     LOCAL_ERROR_TRACKER_TOKEN,
+    LOCAL_OPERATORS,
     load_environment,
     parse_env_file,
     write_value,
@@ -117,3 +119,17 @@ def test_a_token_is_written_in_place_and_the_file_stays_owner_only(tmp_path: Pat
     assert fresh.stat().st_mode & 0o777 == 0o600
     with pytest.raises(ValueError, match="not a key"):
         write_value(file, "TADAS_OPERATOR_PASSWORD", "secret")
+
+
+def test_the_seed_grants_the_local_operators_this_package_mints_for() -> None:
+    """`make seed` puts the read operator and the provisioner on the local
+    allowlist by address, and `tadas-ops token --env local` mints for the same
+    two: one list, read here from the recipe."""
+    recipe = (REPOSITORY / "Makefile").read_text().split("\nseed:", 1)[1].split("\n\n", 1)[0]
+    granted = re.findall(r"--permission (read|write) \\\n\s+--email (\S+)", recipe)
+    assert granted == [
+        ("read", LOCAL_OPERATORS["operator"]),
+        ("write", LOCAL_OPERATORS["provisioner"]),
+    ]
+    assert "tadas-ops token --env local --identity operator" in recipe
+    assert "tadas-ops token --env local --identity provisioner" in recipe

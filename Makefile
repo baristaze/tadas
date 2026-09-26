@@ -147,7 +147,13 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 # The admin owns the second org and joins the first as an admin: one person
 # with two memberships, each under a different role. The first org is a
 # team of three, so the seed grants it Team; the second stays on Free.
-seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as; a no-op once they exist
+# Then the two local operators, the platform's own identities of
+# tadas.ops.environments.LOCAL_OPERATORS: a read operator and the
+# provisioner, which writes. Their tokens go into the owner-only
+# ~/.config/tadas/ops/local.env beside the local stack's addresses, when that
+# file is absent; `uv run tadas-ops token --env local --identity
+# operator|provisioner` mints a fresh one into it, since each lasts an hour.
+seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as, and the two local operators; a no-op once they exist
 	uv run --package tadas-api tadas-api bootstrap --if-absent --plan team \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
 		--email "$(SEED_EMAIL)"
@@ -158,6 +164,16 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 		--email "$(SEED_ADMIN_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" --role admin \
 		--name "$(SEED_ADMIN_NAME)" --email "$(SEED_ADMIN_EMAIL)"
+	uv run --package tadas-api tadas-api grant-operator --permission read \
+		--email operator@platform.tadas.invalid
+	uv run --package tadas-api tadas-api grant-operator --permission write \
+		--email provisioner@platform.tadas.invalid
+	@if [ -e "$$HOME/.config/tadas/ops/local.env" ]; then \
+		echo "~/.config/tadas/ops/local.env is there already; \`uv run tadas-ops token --env local --identity operator|provisioner\` writes a fresh token into it"; \
+	else \
+		uv run --package tadas-ops tadas-ops token --env local --identity operator && \
+		uv run --package tadas-ops tadas-ops token --env local --identity provisioner; \
+	fi
 
 # Needs `make up` (the seeded owner and member, the API on 8000, the portal on
 # 55173). Empties the task list, then records docs/media/realtime-demo.gif:

@@ -1,13 +1,15 @@
 """`tadas-ops token`: a token goes into the env file and nowhere else. The
 operator's is minted only in a person's own terminal, after a sign-in through
 the identity provider and the second factor; the provisioner's is copied from
-the secret the grant job wrote, in a cloud environment. The operator lists
+the secret the grant job wrote, in a cloud environment. On the local stack
+each is the local operator's the seed made, minted by the grant command. The operator lists
 their own live tokens and ends one by its id. A requeue mints a `write` token
 for its one call, keeps it nowhere, and signs it out after."""
 
 import argparse
 import io
 import json
+import subprocess
 from pathlib import Path
 from uuid import UUID
 
@@ -16,6 +18,7 @@ import pytest
 
 from tadas.client.client import ApiClient
 from tadas.ops import main as ops_main
+from tadas.ops.environments import LOCAL_OPERATORS, parse_env_file
 from tadas.ops.main import device_sign_in, token_command, work_requeue_command
 
 
@@ -193,13 +196,91 @@ async def test_the_operator_token_is_never_minted_without_a_terminal(
     assert code == 2
 
 
-async def test_the_provisioner_token_is_copied_only_in_a_cloud_environment(
+class GrantCommand:
+    """The grant command `tadas-ops` runs on the local stack: records what it
+    was asked and prints a token, as it does on a local database, beside the
+    log lines it writes to stderr."""
+
+    def __init__(self, returncode: int = 0) -> None:
+        self.returncode = returncode
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        self.calls.append(argv)
+        holder = argv[argv.index("--mint-token") + 1]
+        out = f"opr_{holder}_minted\n" if self.returncode == 0 else ""
+        err = "WARNING the local sign-in by address alone is on\n"
+        if self.returncode:
+            err += "tadas.om.exceptions.NotAnOperator: no operator holds that email\n"
+        return subprocess.CompletedProcess(argv, self.returncode, out, err)
+
+
+async def test_the_local_operators_tokens_are_minted_into_a_new_owner_only_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the local stack each token is the local operator's that `make seed`
+    made, minted by the grant command; the file it lands in is made owner-only,
+    in a folder only its owner opens, naming the local stack's addresses, so a
+    skill that sources it reaches the local stack. Nothing is printed of it."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    grant = GrantCommand()
+    monkeypatch.setattr(ops_main.subprocess, "run", grant)
+    for identity in ("operator", "provisioner"):
+        code = await token_command(
+            argparse.Namespace(env="local", identity=identity, profile=None, dev_email=None)
+        )
+        assert code == 0
+    assert [call[call.index("--email") + 1] for call in grant.calls] == [
+        LOCAL_OPERATORS["operator"],
+        LOCAL_OPERATORS["provisioner"],
+    ]
+    assert [call[call.index("--mint-token") + 1] for call in grant.calls] == [
+        "operator",
+        "provisioner",
+    ]
+    file = tmp_path / ".config" / "tadas" / "ops" / "local.env"
+    assert file.stat().st_mode & 0o777 == 0o600
+    assert file.parent.stat().st_mode & 0o777 == 0o700
+    written = parse_env_file(file.read_text())
+    assert written["TADAS_OPERATOR_TOKEN"] == "opr_operator_minted"
+    assert written["TADAS_PROVISIONER_TOKEN"] == "opr_provisioner_minted"
+    assert written["TADAS_API_URL"] == "http://127.0.0.1:8000"
+    for key in ("TADAS_ERROR_TRACKER_URL", "TADAS_PROMETHEUS_URL", "TADAS_JAEGER_URL"):
+        assert written[key].startswith("http://"), key
+    captured = capsys.readouterr()
+    assert "opr_" not in captured.out + captured.err
+    # A fresh token replaces its line and leaves every other one as it was.
+    file.write_text(file.read_text() + "# mine\n")
+    code = await token_command(
+        argparse.Namespace(env="local", identity="operator", profile=None, dev_email=None)
+    )
+    assert code == 0
+    assert file.read_text().endswith("# mine\n")
+    assert file.read_text().count("TADAS_OPERATOR_TOKEN=") == 1
+
+
+async def test_a_local_operator_the_seed_did_not_make_names_the_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(ops_main.subprocess, "run", GrantCommand(returncode=1))
+    with pytest.raises(ValueError, match="make seed") as refused:
+        await token_command(
+            argparse.Namespace(env="local", identity="provisioner", profile=None, dev_email=None)
+        )
+    assert "no operator holds that email" in str(refused.value)
+    assert not (tmp_path / ".config" / "tadas" / "ops" / "local.env").exists()
+
+
+async def test_a_person_signs_in_for_the_operators_token_and_never_the_provisioners(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     env_file(tmp_path, "local")
     monkeypatch.setenv("HOME", str(tmp_path))
     code = await token_command(
-        argparse.Namespace(env="local", identity="provisioner", profile=None)
+        argparse.Namespace(
+            env="local", identity="provisioner", profile=None, dev_email="ops@example.test"
+        )
     )
     assert code == 2
 

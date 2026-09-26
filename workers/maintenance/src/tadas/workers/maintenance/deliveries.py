@@ -13,7 +13,7 @@ import json
 import logging
 from datetime import timedelta
 
-from tadas.infra.observability import OUTCOMES, request_id_var
+from tadas.infra.observability import OUTCOMES, current_traceparent, request_id_var
 from tadas.infra.queues import QueueMessage, Queues, QueuesInterface
 from tadas.integrations.payments import ProviderDelivery
 from tadas.om.base import EMPTY_UUID, Platform, new_id
@@ -84,7 +84,7 @@ class DeliveryConsumer:
 
     async def handle(self, message: QueueMessage) -> str:
         """One delivery, end to end; answers the outcome it counted."""
-        rctx = RequestContext(request_id=new_id(), app=self._app)
+        rctx = RequestContext(request_id=new_id(), app=self._app, traceparent=current_traceparent())
         token = request_id_var.set(str(rctx.request_id))
         try:
             outcome = await self._apply(rctx, message)

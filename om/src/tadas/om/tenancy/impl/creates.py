@@ -24,7 +24,6 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from tadas.infra.observability import current_traceparent
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import Conflict, MembershipLimitReached, ValidationFailed
 from tadas.om.opcontext import OperatorRole, RequestScope, Role
@@ -343,7 +342,7 @@ async def add_member_to(
         payload=user_payload(user),
         actor_id=actor_id,
         request_id=request.request_id,
-        traceparent=current_traceparent(),
+        traceparent=request.traceparent,
         app=request.app.type.value,
     )
     rows = (row, *riders)
