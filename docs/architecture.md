@@ -118,7 +118,8 @@ context on keeps the stage the callee needs.
   `expires_at`; invitations by `updated_at`, and redeemed install states
   by `redeemed_at`; idempotency records, delivery marks, and Slack posts
   by `created_at`; the pending markers by `attempt_id`; pending uploads
-  by `(status, created_at)` and settled orchestrations by `(status,
+  by `created_at` over the pending ones, whose status the purge names as
+  the same literal, and settled orchestrations by `(status,
   updated_at)`; events by `produced_at`; and the outbox's dead letters
   `(failed_at)` over the failed ones, beside the `(done_at, id)` the done
   ones walk ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)). The seeding

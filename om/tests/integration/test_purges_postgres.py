@@ -191,7 +191,7 @@ async def test_every_purge_across_tenants_reads_an_index_led_by_its_retention(
         lambda: MediaStoragePostgresImpl(sessions).read_purgeable(cut, cut, 1000),
     )
     assert served(files, "ix_files_deleted_at"), files
-    assert served(files, "ix_files_status_created_at"), files
+    assert served(files, "ix_files_created_at_pending"), files
     users, memberships, keys, tenancy_sessions, tickets, invitations = await across(
         DatabaseRole.CORE,
         lambda: TenancyStoragePostgresImpl(sessions).purge_deleted(cut, cut, 1000),

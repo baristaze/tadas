@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, literal_column, or_, select
 
 from tadas.om.base import EMPTY_UUID
 from tadas.om.media.rules import usage_from_totals
@@ -61,7 +61,9 @@ class MediaStoragePostgresImpl(PgStorageBase, MediaStorageInterface):
     ) -> list[tuple[UUID, File]]:
         # Mirrors media.rules.is_purgeable in SQL. No order: the batch is any
         # `limit` of the rows the two indexes hold, so a backlog is never
-        # sorted to take a batch of it.
+        # sorted to take a batch of it. The pending uploads are named by the
+        # partial index's own predicate, a literal, never a bound status: a
+        # prepared statement's generic plan proves it and reads the index.
         stmt = (
             select(Files)
             .where(
@@ -69,7 +71,7 @@ class MediaStoragePostgresImpl(PgStorageBase, MediaStorageInterface):
                     Files.deleted_at < deleted_before,
                     and_(
                         Files.deleted_at.is_(None),
-                        Files.status == FileStatus.PENDING.value,
+                        Files.status == literal_column(f"'{FileStatus.PENDING.value}'"),
                         Files.created_at < pending_before,
                     ),
                 ),
