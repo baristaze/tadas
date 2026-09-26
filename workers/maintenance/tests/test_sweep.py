@@ -1,5 +1,5 @@
-"""The sweep's pass: the requeue of expired leases, once a pass across
-tenants and again while its batch comes back full, its budget and
+"""The sweep's pass: the requeue of expired leases and the outbox relay, once
+a pass across tenants and again while a batch comes back full, its budget and
 where the next pass resumes, a purge called again while its batch comes back
 full, a deleted tenant marked purged once nothing of it is left and left out
 after, the tenant's expiry read once per pass, and the pass's duration on its
@@ -374,3 +374,28 @@ async def test_a_full_requeue_batch_is_requeued_again_while_the_budget_lasts(
     loop = sweeping(container, spent, {}, fast_options(requeue_batch=2, sweep_budget=timedelta(0)))
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     assert spent.calls == ["requeue", "contexts"], "past the budget, one batch a pass"
+
+
+async def test_the_relay_runs_again_while_its_batch_comes_back_full(tmp_path: Path) -> None:
+    """A backlog of pending rows, after a crash or an outage of the bus,
+    drains at the pace of the budget and not of one batch a pass. A batch
+    that came back short, a row failing in it among the reasons, ends it."""
+    container = build_container(tmp_path)
+    outbox = quiet_outbox(relayed=(2, 2, 1, 2))
+    loop = sweeping(
+        container, listed(service_contexts(0)), {}, fast_options(outbox_batch=2), outbox
+    )
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert outbox.relays == 3
+
+    spent = quiet_outbox(relayed=(2,))
+    loop = sweeping(
+        container,
+        listed(service_contexts(0)),
+        {},
+        fast_options(outbox_batch=2, sweep_budget=timedelta(0)),
+        spent,
+    )
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert spent.relays == 2, "past the budget, one batch a pass"

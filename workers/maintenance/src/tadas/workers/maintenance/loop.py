@@ -3,9 +3,10 @@ on the lane while a slot is free, run each item as a task that names the
 request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
-effort, sweep on a timer (the expired leases across tenants, then every
-namespace's purge and the standing chores per tenant, then the outbox and
-done outbox rows, within a time budget), and drain first on stop."""
+effort, sweep on a timer (the expired leases and the outbox relay across
+tenants, then every namespace's purge and the standing chores per tenant,
+then the purges of done outbox rows and settled work items, within a time
+budget), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -61,9 +62,10 @@ class LoopOptions(Platform):
     heartbeat_interval: timedelta = timedelta(seconds=10)
     sweep_interval: timedelta = timedelta(seconds=30)
     poll_interval: timedelta = timedelta(seconds=5)
-    outbox_batch: int = 100  # pending rows relayed per sweep
-    # Expired leases one requeue statement moves, across tenants; it is
-    # called again while its batch comes back full and the budget lasts.
+    # Pending rows one relay call claims, and expired leases one requeue
+    # statement moves, across tenants. Each is called again while its batch
+    # comes back full and the budget lasts.
+    outbox_batch: int = 100
     requeue_batch: int = 100
     # Done rows are purged after this. It outlives the database backup retention
     # (`backup_retention_days` in the database module), so a role restored to an
@@ -399,16 +401,18 @@ class WorkerLoop:
             await asyncio.sleep(self._options.sweep_interval.total_seconds())
 
     async def _sweep_once(self) -> None:
-        """First the expired leases go back to the queue, across tenants.
-        Then one service context per tenant, the system scope first and
-        deleted tenants included (their purges run there), and every step
-        under each; then the cross-tenant steps of the outbox and the queue.
-        Every step is idempotent and wrapped, so a failing tenant or step
-        never stops the rest.
+        """First the cross-tenant steps that bound recovery: the expired
+        leases go back to the queue, and the outbox rows a crash or an outage
+        left are relayed. Then one service context per tenant, the system
+        scope first and deleted tenants included (their purges run there),
+        and every step under each; then the cross-tenant purges of the outbox
+        and the queue. Every step is idempotent and wrapped, so a failing
+        tenant or step never stops the rest.
 
-        The pass has a budget. The requeue runs on every pass, again while
-        its batch comes back full and the budget lasts, so a crashed
-        worker's item waits one pass at most. The pass takes no new tenant once the
+        The pass has a budget. The requeue and the relay run on every pass,
+        each again while its batch comes back full and the budget lasts, so
+        a crashed worker's item waits one pass at most and a backlog drains
+        at the pace the budget allows. The pass takes no new tenant once the
         budget is spent, but always takes one, and the next pass starts at
         the tenant this one stopped at, so every tenant is reached in turn
         however many there are. A tenant it takes runs every step at least
@@ -428,6 +432,17 @@ class WorkerLoop:
         except Exception:
             log.exception("sweep: requeue_stale failed")
         try:
+            # Whatever a crash left between the core write and its push. A
+            # batch with a row that failed is not full, so a destination that
+            # is down is not asked again in this pass.
+            await self._while_full(
+                lambda: self._outbox.relay_pending(self._options.outbox_batch),
+                self._options.outbox_batch,
+                deadline,
+            )
+        except Exception:
+            log.exception("sweep: outbox relay failed")
+        try:
             contexts = await self._work.maintenance_contexts(rctx)
         except Exception:
             log.exception("sweep: maintenance_contexts failed")
@@ -441,11 +456,6 @@ class WorkerLoop:
                 break
             await self._sweep_tenant(ctx, deadline)
             swept += 1
-        try:
-            # Whatever a crash left between the core write and its push.
-            await self._outbox.relay_pending(self._options.outbox_batch)
-        except Exception:
-            log.exception("sweep: outbox relay failed")
         try:
             await self._while_full(
                 lambda: self._outbox.purge_done(
