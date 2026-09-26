@@ -1795,15 +1795,17 @@ page; this section says what exists.
   `local` the Prometheus and Jaeger URLs of the `devx` profile. Every
   skill verifies the profile it holds with `sts get-caller-identity`
   before it reads, and refuses a wider one.
-- **Skills.** The nine of "Operational Skills", under `.claude/skills/`,
-  copied from the guideline's templates with the product's name:
+- **Skills.** The nine of "Operational Skills", under `.claude/skills/`:
   `ops-investigate`, `ops-watch`, `ops-root-cause`, `ops-infra-as-code`,
   `ops-cloud-deployment-create`, `ops-cloud-deployment-nuke`,
   `ops-simulate-traffic`, `stress-test-create-or-update`,
-  `stress-test-run`. Every one that reads or drives an environment
-  takes `--env local|staging|production`, and `local` reads the
-  compose stack's twins, so each is exercised with no cloud; create
-  and nuke take `staging` or `production` only, and
+  `stress-test-run`. Each starts from the guideline's template with the
+  product's name in, and grows with the product: it names Tadas's own
+  tools, documents, and steps, so it is fuller than its template, and
+  the skill here is the one that runs. Every one that reads or drives
+  an environment takes `--env local|staging|production`, and `local`
+  reads the compose stack's twins, so each is exercised with no cloud;
+  create and nuke take `staging` or `production` only, and
   `stress-test-create-or-update` writes a file and touches none. The
   eight that hold a credential read
   `.claude/skills/_shared/ops-preamble.md` first, where the profiles,
