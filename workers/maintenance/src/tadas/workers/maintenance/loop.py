@@ -30,6 +30,7 @@ from tadas.infra.observability import (
     WORK_FAILED_RECENTLY,
     WORK_OLDEST_READY_SECONDS,
     caused_by_request_id_var,
+    failure_level,
     links_to,
     request_id_var,
     traceparent_of,
@@ -257,8 +258,10 @@ class WorkerLoop:
                 self._options.worker_id,
                 self._options.lease,
             )
-        except Exception:
-            log.exception("claim failed")
+        except Exception as error:
+            # A queue that did not answer in time is a warning: the next poll
+            # claims again, and the storage outcome counts it.
+            log.log(failure_level(error), "claim failed", exc_info=error)
             OUTCOMES.labels(subsystem="worker", outcome="claim_error").inc()
             return False
         if claimed is None:

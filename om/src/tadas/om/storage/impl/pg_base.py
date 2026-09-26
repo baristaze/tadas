@@ -1,7 +1,8 @@
 """The Postgres base every namespace storage shares: per-statement role
-routing, the funnel that names the scope of every transaction, and the write
-primitives: an upsert that checks the tenant and lands the core row's outbox
-rows in the same commit, and an insert that refuses an existing id."""
+routing, the funnel that names the scope of every transaction and translates a
+database that did not answer in time, and the write primitives: an upsert that
+checks the tenant and lands the core row's outbox rows in the same commit, and
+an insert that refuses an existing id."""
 
 import logging
 import re
@@ -13,14 +14,17 @@ from uuid import UUID
 import asyncpg
 from sqlalchemy import ColumnElement, CursorResult, Delete, Result, Table, delete, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.util import find_tables
 
+from tadas.infra.observability import OUTCOMES
 from tadas.om.base import EMPTY_UUID, Identifiable
 from tadas.om.exceptions import (
     CrossRoleStatement,
     RowDeleted,
     TenantMismatch,
+    Unavailable,
     UniqueKeyTaken,
 )
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
@@ -86,6 +90,47 @@ def violated_constraint(error: IntegrityError) -> str | None:
             return name
         cause = cause.__cause__
     return None
+
+
+QUERY_CANCELED = "57014"
+"""Postgres's SQLSTATE for a statement it cancelled: here, one that ran past
+the `statement_timeout` every connection of a pool opens with."""
+
+
+def cancelled(error: DBAPIError) -> bool:
+    """Whether Postgres cancelled the statement. The asyncpg adapter wraps the
+    driver's error, which carries the SQLSTATE, as the cause of the one
+    SQLAlchemy raises."""
+    cause: BaseException | None = error.orig
+    while cause is not None:
+        if getattr(cause, "sqlstate", None) == QUERY_CANCELED:
+            return True
+        cause = cause.__cause__
+    return False
+
+
+def not_in_time(error: Exception, role: DatabaseRole, login: str) -> Unavailable | None:
+    """The refusal of a call the database did not serve in time, counted; None
+    for any other failure, which the funnel leaves as it is.
+
+    Two bounds end such a call, and both are the pool's. The checkout bound: no
+    connection came free in time (SQLAlchemy's `TimeoutError`), or a new one
+    did not open in time (the driver's connect timeout, the builtin
+    `TimeoutError`). And the statement deadline, past which Postgres cancels
+    the statement. Neither says anything wrong with the call: the same call may
+    well be served a moment later. So each is `Unavailable`, 503
+    `unavailable`, the shape of a dependency that cannot answer right now,
+    and never a driver error that a caller would have to know to read."""
+    if isinstance(error, PoolTimeoutError | TimeoutError):
+        outcome = "checkout_timeout"
+        what = f"no connection to the {role.value} role ({login} login) within the checkout bound"
+    elif isinstance(error, DBAPIError) and cancelled(error):
+        outcome = "statement_timeout"
+        what = f"a statement on the {role.value} role ({login} login) passed its deadline"
+    else:
+        return None
+    OUTCOMES.labels(subsystem="storage", outcome=outcome).inc()
+    return Unavailable(f"the database did not answer in time: {what}")
 
 
 def role_of(target: Any) -> DatabaseRole:
@@ -338,12 +383,24 @@ class PgStorageBase:
         they land before anything else, and that message is the one that may
         be sent twice (`scoped_session`). A commit or a rollback ends that
         transaction and takes them with it, which is why a method that runs a
-        second transaction opens a second session."""
+        second transaction opens a second session.
+
+        It is also where the driver's failures to answer in time are
+        translated, once for every role and both logins: a checkout past its
+        bound and a statement past its deadline leave here as `Unavailable`
+        (`not_in_time`), never as the driver's own error."""
         role = role_of(target)
-        logins = self._sessions.system if org_id == EMPTY_UUID else self._sessions
+        system = org_id == EMPTY_UUID
+        logins = self._sessions.system if system else self._sessions
         factory = logins[role]
-        async with await scoped_session(factory, org_id, user_id, identity_id) as session:
-            yield session
+        try:
+            async with await scoped_session(factory, org_id, user_id, identity_id) as session:
+                yield session
+        except Exception as error:
+            refusal = not_in_time(error, role, "system" if system else "runtime")
+            if refusal is None:
+                raise
+            raise refusal from error
 
     async def _upsert(
         self,

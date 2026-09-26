@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from pydantic import ValidationError
 
+from tadas.infra.observability import failure_level
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
 from tadas.om.exceptions import PlatformException
@@ -78,14 +79,15 @@ async def settle(task: asyncio.Task[None]) -> None:
     logged and goes no further: `settle` runs in the teardown, and a second
     exception raised from there would skip the unsubscribes and the close
     frame that follow it, leaving the socket's handler in the dispatcher for
-    the life of the process."""
+    the life of the process. A failure is logged at the level its shape
+    calls for: a dependency that did not answer in time is a warning."""
     task.cancel()
     try:
         await task
     except asyncio.CancelledError, WebSocketDisconnect, OSError:
         return
     except Exception as error:
-        log.error("%s ended with %r", task.get_name(), error)
+        log.log(failure_level(error), "%s ended with %r", task.get_name(), error)
 
 
 async def close_quietly(websocket: WebSocket, code: int = 1000, reason: str | None = None) -> None:
@@ -213,9 +215,14 @@ async def channel(
     # the life of the process, one more on every reconnect through an outage.
     try:
         head = await realtime.head(ctx)
-    except Exception:
+    except Exception as error:
         detach()
-        log.exception("the stream head could not be read for user %s", ctx.user_id)
+        log.log(
+            failure_level(error),
+            "the stream head could not be read for user %s",
+            ctx.user_id,
+            exc_info=error,
+        )
         await close_quietly(websocket, code=CLOSE_INTERNAL_ERROR, reason=INTERNAL_ERROR)
         return
     drainer = asyncio.create_task(buffer.drain(websocket), name=f"send-buffer-{ctx.user_id}")
@@ -253,7 +260,7 @@ async def channel(
                 if not task.done() or task.cancelled():
                     continue
                 if (failure := task.exception()) is not None:
-                    log.error("%s failed", task.get_name(), exc_info=failure)
+                    log.log(failure_level(failure), "%s failed", task.get_name(), exc_info=failure)
                     code, reason = CLOSE_INTERNAL_ERROR, INTERNAL_ERROR
                     break
     finally:

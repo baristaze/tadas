@@ -21,6 +21,8 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
+from tadas.infra.exceptions import InfraUnavailable
+
 request_id_var: ContextVar[str | None] = ContextVar("tadas_request_id", default=None)
 """Set at the entry point that builds the context, so log lines get it for free.
 
@@ -204,6 +206,18 @@ def configure_error_reporting(
         **ERROR_REPORTING_PRIVACY,
     )
     sentry_sdk.set_tag("service", service_name)
+
+
+def failure_level(error: BaseException) -> int:
+    """The level a boundary logs a failure at. The unavailable shape says "not
+    right now": a dependency did not answer in time, and the caller comes
+    back. That is a warning, which the tracker does not take for an event;
+    the counters are what watch it. Any other failure is an error, which the
+    tracker reports. The shape is read by its code, which both exception
+    roots carry, never by its class."""
+    if getattr(error, "code", None) == InfraUnavailable.code:
+        return logging.WARNING
+    return logging.ERROR
 
 
 def span_exporter(endpoint: str, timeout: timedelta) -> OTLPSpanExporter:

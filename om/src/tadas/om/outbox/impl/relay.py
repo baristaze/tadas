@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from tadas.infra.observability import OUTCOMES
+from tadas.infra.observability import OUTCOMES, failure_level
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
 from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.events.storage import EventStorageInterface
@@ -122,15 +122,17 @@ class OutboxRelayImpl(OutboxRelayInterface):
             return True
         try:
             unpublished = await self._deliver_all(org_id, rows)
-        except Exception:
+        except Exception as error:
             # The rows are durable; the sweep relays what is left. The request
             # that wrote them has already succeeded and is not failed for a bus
-            # hiccup.
-            log.exception(
+            # hiccup. A dependency that did not answer in time is a warning.
+            log.log(
+                failure_level(error),
                 "outbox relay of %d rows from %s (%s) failed; the sweep retries",
                 len(rows),
                 rows[0].id,
                 rows[0].kind,
+                exc_info=error,
             )
             OUTCOMES.labels(subsystem="outbox", outcome="relay_failed").inc()
             return False

@@ -23,6 +23,7 @@ from tadas.infra.exceptions import BackendFailed
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.exceptions import Unavailable
 from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
@@ -418,6 +419,73 @@ def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
     assert closed.value.code == 1011
     assert closed.value.reason == "internal_error"
     assert socket_handlers(container) == 0, "the socket's subscription outlived it"
+
+
+class KeptLines(logging.Handler):
+    """The lines one logger writes, kept on that logger itself: the app's
+    boot replaces the root's handlers, and a capture there can lose them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_a_socket_the_database_did_not_answer_in_time_logs_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hello's head read, then a ping's, meet a database that did not
+    answer in time. Each socket closes with 1011 as on any failure of its
+    handler, and the client reconnects; every line it writes is a warning,
+    which the error tracker does not take for an event."""
+    container = build_container(tmp_path, realtime_head_max_age_seconds=0)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        )
+    )
+    service = type(container.services.get_realtime_service())
+    working = service.head
+    reads = {"left": 0}
+
+    async def head(self: object, ctx: object) -> int:
+        if reads["left"] == 0:
+            raise Unavailable(
+                "the database did not answer in time: a statement passed its deadline"
+            )
+        reads["left"] -= 1
+        return await working(self, ctx)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service, "head", head)
+    kept = KeptLines()
+    socket_log = logging.getLogger("tadas.services.api.realtime.socket")
+    socket_log.addHandler(kept)
+    closes: list[tuple[int, str | None]] = []
+    try:
+        with TestClient(create_app(container)) as tc:
+            headers = sign_in(tc, OWNER["email"], org.id)
+            # The hello cannot read the head.
+            with pytest.raises(WebSocketDisconnect) as closed:
+                with open_socket(tc, headers) as ws:
+                    ws.receive_json()
+            closes.append((closed.value.code, closed.value.reason))
+            # The hello reads it, and the ping after it cannot.
+            reads["left"] = 1
+            with open_socket(tc, headers) as ws:
+                assert ws.receive_json()["type"] == "hello"
+                ws.send_json({"op": "ping"})
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    ws.receive_json()
+            closes.append((closed.value.code, closed.value.reason))
+    finally:
+        socket_log.removeHandler(kept)
+    assert closes == [(1011, "internal_error"), (1011, "internal_error")]
+    messages = [r.getMessage() for r in kept.records]
+    assert any("the stream head could not be read" in m for m in messages), messages
+    assert any(m.startswith("commands-") for m in messages), messages
+    assert {r.levelno for r in kept.records} == {logging.WARNING}
 
 
 RECHECK = 0.2
