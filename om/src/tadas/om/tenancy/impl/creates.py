@@ -35,6 +35,7 @@ from tadas.om.tenancy.rules import (
     email_digest,
     fold_email,
     is_platform_email,
+    operator_permissions_of,
     personal_org_name,
     slug_from_name,
 )
@@ -44,7 +45,6 @@ from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org, OrgKind
-from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.user import User
 
 Admission = Callable[[], Awaitable[tuple[OutboxRow, ...]]]

@@ -101,7 +101,9 @@ from tadas.om.tenancy.rules import (
     is_platform_email,
     left_without_owner,
     matching_totp_step,
+    operator_permissions_of,
     past_retention,
+    permissions_of,
     pkce_challenge,
     role_at_most,
     sign_in_delay,
@@ -133,7 +135,6 @@ from tadas.om.tenancy.types.page import (
     OrgMembershipPage,
     UserPage,
 )
-from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
 from tadas.om.tenancy.types.user import User

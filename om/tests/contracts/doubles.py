@@ -25,8 +25,8 @@ from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallation
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy.rules import permissions_of
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.user import User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")

@@ -75,7 +75,8 @@ context on keeps the stage the callee needs.
   sessions, api keys, socket tickets; sign-in through the identity
   provider, tenant-scoped session tokens, role-capped api keys, the
   operator allowlist, and the service contexts workers run under. Permissions are a function of role, one table in
-  `tenancy.types.role`; the ladder beside it ranks the person roles
+  the namespace's rules module, `tenancy.rules`, since a table a decision
+  reads is a rule; the ladder beside it ranks the person roles
   (viewer, member, admin, owner) and a unit test holds it to the table, so
   a role at most another holds a subset of its permissions. The service
   role is no rung: `role_at_most` answers False on either side of it, and
@@ -701,9 +702,8 @@ context on keeps the stage the callee needs.
   replays it for the server. A work row is delivered once enqueued:
   the queue is its truth and the workers poll, so its wake-up is a hint
   ([ADR 0062](adr/0062-a-dropped-publish-leaves-its-outbox-row-pending.md);
-  a deviation from STO-20 that
-  [ADR 0067](adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md)
-  records).
+  the guideline's STO-20 holds the same,
+  [ADR 0079](adr/0079-what-0-37-0-asks.md)).
   The relay reaches the work manager through a provider the business
   root binds, because the work manager needs the tenancy manager, which
   needs the relay; the graph the root hands back is still whole.

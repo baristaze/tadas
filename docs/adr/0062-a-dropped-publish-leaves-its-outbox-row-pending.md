@@ -4,10 +4,12 @@
 for an entity change: Topics lets `publish` answer whether the bus took
 the event (ASY-09), and Database Roles marks a row done only once the
 bus took its publish (STO-20). The exception for ASY-09 leaves
-`pyproject.toml`, and `arch-check` passes without it. What this record
-decides for a work row departs from STO-20, which holds a request for
-work to the same rule; [ADR 0067](0067-what-0-36-0-asks-and-what-stays-a-choice.md)
-records that deviation.
+`pyproject.toml`, and `arch-check` passes without it. Follows it since
+v0.37.0 for a work row too: STO-20 marks a work row done once its item
+is queued, as this record decides
+([ADR 0079](0079-what-0-37-0-asks.md)). At v0.36.0 it was a deviation,
+which [ADR 0067](0067-what-0-36-0-asks-and-what-stays-a-choice.md)
+records.
 
 ## Context
 

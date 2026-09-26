@@ -1,8 +1,8 @@
 # Architecture
 
 This project follows the Software Design and Architecture Guidelines:
-<https://github.com/baristaze/swe_guidelines/blob/v0.36.0/architecture.md>
-(pinned at release `v0.36.0`; the pin moves with the releases this
+<https://github.com/baristaze/swe_guidelines/blob/v0.37.0/architecture.md>
+(pinned at release `v0.37.0`; the pin moves with the releases this
 project adopts, one pull request per release).
 
 The guideline is the source of truth for how this system is shaped.
@@ -45,4 +45,4 @@ adopts every technology the guideline names.
 | [0040](../docs/adr/0040-the-event-stream-has-a-floor.md) | NET-22, Realtime at the Edge; Exceptions | The stream is gapless above a per-org floor the trim moves in its own transaction, not from seq 1. A read below the floor is `410 stream_truncated`, a status with no shape in the guideline's list, and it names the head; both clients read afresh and go on from there. The trim ships off and turns on one release later. |
 | [0041](../docs/adr/0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md) | STO-32, The Storage Layer, Database Roles; CTX-34, The Work Queue | A person's account is a hard delete in one commit, outside the sweep: the identity, every user it is, their memberships, credentials, and sign-in delay, by a named cross-tenant write on the system scope. The personal org goes through the org deletion and the tenant purge that exist, with no retention; the providers (WorkOS, Stripe, Slack) go after, through the queue, and an unreachable one parks the work. The person's open tasks in each team org go unassigned on the service role, whatever role they held. |
 | [0043](../docs/adr/0043-a-unique-rule-on-org-id-alone-sits-beside-the-purge-index.md) | STO-14, The Storage Layer, Defining ORM Classes | Superseded (2026-09-26): v0.35.0 stops STO-14 flagging a unique `org_id` index beside a compound index that `org_id` leads. `core.slack_installations` keeps both indexes, and the exception is gone. The record stays for the interval it covers. |
-| [0067](../docs/adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md) | STO-20, The Storage Layer, Database Roles; OPS-11, Operational Skills; CTX-27, Stages | A `work.<kind>` outbox row is done once its item is in the queue, whatever became of its `work_available` wake: a worker's 5-second poll finds the item before the sweep would relay the row again, and the enqueue it reruns publishes nothing. The two optional audits also count, on a database of their own, what they read. The socket's recheck interval is `realtime_recheck_seconds`, not `session_recheck_interval`. |
+| [0067](../docs/adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md) | OPS-11, Operational Skills; CTX-27, Stages | The two optional audits also count, on a database of their own, what they read. The socket's recheck interval is `realtime_recheck_seconds`, not `session_recheck_interval`. The record's first decision, a `work.<kind>` outbox row done once its item is queued, follows STO-20 since v0.37.0 ([ADR 0079](../docs/adr/0079-what-0-37-0-asks.md)). |

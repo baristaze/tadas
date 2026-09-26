@@ -7,14 +7,15 @@ import itertools
 import pytest
 
 from tadas.om.opcontext import OperatorPermission, OperatorRole, Role
-from tadas.om.tenancy.rules import capped_role, role_at_most
-from tadas.om.tenancy.types.role import (
+from tadas.om.tenancy.rules import (
     OPERATOR_ROLE_PERMISSIONS,
     PERSON_ROLES,
     ROLE_PERMISSIONS,
     ROLE_RANK,
+    capped_role,
     operator_permissions_of,
     permissions_of,
+    role_at_most,
 )
 
 
