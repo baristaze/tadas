@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Index
+from sqlalchemy import Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import (
@@ -22,6 +22,13 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
         Index("ix_tasks_org_id_status_position", "org_id", "status", "position"),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),
         Index("ix_tasks_org_id_status_updated_at_id", "org_id", "status", "updated_at", "id"),
+        # The purge reads the deleted ones by their delete; only they are in it.
+        Index(
+            "ix_tasks_org_id_deleted_at",
+            "org_id",
+            "deleted_at",
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
     )
     title: Mapped[str]
     notes: Mapped[str]

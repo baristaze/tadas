@@ -16,6 +16,8 @@ class IdempotencyRecords(IdentifiableMixin, CreatedMixin, Base):
         # another namespace's statement, which the unique index above cannot
         # serve because it leads with the key the caller sent.
         Index("ix_idempotency_records_org_id_target_id", "org_id", "target_id"),
+        # What the purge reads: the tenant's records by birth.
+        Index("ix_idempotency_records_org_id_created_at", "org_id", "created_at"),
     )
     user_id: Mapped[UUID]
     key: Mapped[str]

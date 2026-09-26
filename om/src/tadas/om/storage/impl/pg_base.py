@@ -5,10 +5,10 @@ rows in the same commit, and an insert that refuses an existing id."""
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Table, text
+from sqlalchemy import ColumnElement, CursorResult, Delete, Result, Table, delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.util import find_tables
@@ -116,6 +116,30 @@ async def set_scope(
         if param in values
     )
     await session.execute(text(f"SELECT {calls}"), values)
+
+
+def delete_batch(table: type[Any], *where: ColumnElement[bool], limit: int) -> Delete:
+    """One batch of a purge: at most `limit` rows that match `where`, chosen
+    and locked in one pass, then deleted. A row another transaction holds is
+    skipped, never waited on, so two sweeps split a backlog between them and
+    no statement grows with the backlog past the deadline its pool carries.
+    Materialized for the reason `claim_pending` gives: the batch is chosen
+    and locked once, never rescanned per row."""
+    batch = (
+        select(table.id)
+        .where(*where)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+        .cte("batch")
+        .prefix_with("MATERIALIZED")
+    )
+    return delete(table).where(table.id.in_(select(batch.c.id)))
+
+
+def deleted(result: Result[Any]) -> int:
+    """The rows a DELETE took, as the driver reports them, so a purge counts
+    what went without carrying every id back to count it."""
+    return cast(CursorResult[Any], result).rowcount
 
 
 class PgStorageBase:

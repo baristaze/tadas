@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Index
+from sqlalchemy import Index, text
 from sqlalchemy.orm import Mapped
 
 from tadas.om.storage.tables.base import Base, CreatedMixin, IdentifiableMixin
@@ -11,8 +11,15 @@ from tadas.om.storage.tables.base import Base, CreatedMixin, IdentifiableMixin
 class OutboxRows(IdentifiableMixin, CreatedMixin, Base):
     __tablename__ = "outbox_rows"
     # The sweep claims pending rows across tenants, oldest first, and purges
-    # settled ones by time; both walk (done_at, id), so org_id keeps its own index.
-    __table_args__ = (Index("ix_outbox_rows_done_at_id", "done_at", "id"),)
+    # done ones by time; both walk (done_at, id), so org_id keeps its own
+    # index. The dead letters are purged by their own time, on a partial
+    # index that holds only them.
+    __table_args__ = (
+        Index("ix_outbox_rows_done_at_id", "done_at", "id"),
+        Index(
+            "ix_outbox_rows_failed_at", "failed_at", postgresql_where=text("failed_at IS NOT NULL")
+        ),
+    )
     kind: Mapped[str]
     target_id: Mapped[UUID]
     payload: Mapped[dict[str, Any]]
