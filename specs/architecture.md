@@ -1,8 +1,8 @@
 # Architecture
 
 This project follows the Software Design and Architecture Guidelines:
-<https://github.com/baristaze/swe_guidelines/blob/v0.35.0/architecture.md>
-(pinned at release `v0.35.0`; the pin moves with the releases this
+<https://github.com/baristaze/swe_guidelines/blob/v0.36.0/architecture.md>
+(pinned at release `v0.36.0`; the pin moves with the releases this
 project adopts, one pull request per release).
 
 The guideline is the source of truth for how this system is shaped.

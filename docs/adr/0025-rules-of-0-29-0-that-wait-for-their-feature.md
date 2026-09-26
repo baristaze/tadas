@@ -13,7 +13,7 @@ writes. Each item left names what closes it.
 
 Guideline v0.29.0 adds rules for features Tadas has only in part, and one
 rule whose default Tadas decided against. Every other rule of 0.29.0 holds
-in the code. `make check` runs `arch-check` at the pinned tag, v0.35.0
+in the code. `make check` runs `arch-check` at the pinned tag, v0.36.0
 today, and the items below still hold at it.
 
 ## Decision
