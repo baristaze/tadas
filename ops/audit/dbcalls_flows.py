@@ -509,17 +509,23 @@ async def sweep(w: Any) -> None:
     await w.measure(
         "sweep", "requeue_stale (nothing stale)", lambda: m.work.requeue_stale(rctx, 100)
     )
-    contexts = await w.measure(
-        "sweep", "maintenance_contexts", lambda: m.work.maintenance_contexts(rctx)
-    )
-    n = len(contexts or [])
+    await w.measure("sweep", "maintenance_contexts", lambda: m.work.maintenance_contexts(rctx))
     await w.measure("sweep", "gauges (the three reads)", lambda: w.loop._gauges())
-    await w.measure(
-        "sweep",
-        f"a whole pass over {n} tenants",
-        lambda: w.loop._sweep_once(),
-        note=f"{n} tenant contexts",
-    )
+    # A pass at two tenant counts, so its cost per tenant is measured, not guessed.
+    tenancy, s = w.container.managers.tenancy, w.state["s"]
+    for more in (0, 20):
+        for i in range(more):
+            await tenancy.bootstrap(
+                seed_request(), f"More {i}", f"more-{s}-{i}", f"more-{s}-{i}@example.test", "M"
+            )
+        contexts = await m.work.maintenance_contexts(rctx)
+        n = len(contexts or [])
+        await w.measure(
+            "sweep",
+            f"a whole pass over {n} tenants",
+            lambda: w.loop._sweep_once(),
+            note=f"{n} tenant contexts",
+        )
 
 
 async def health(w: Any) -> None:

@@ -220,6 +220,7 @@ RUN = {
         },
         {
             "name": "build",
+            "databaseId": 42,
             "startedAt": "2026-09-26T09:08:15Z",
             "completedAt": "2026-09-26T09:09:08Z",
             "steps": [],
@@ -231,11 +232,13 @@ RUN = {
 
 def test_the_jobs_come_in_the_order_they_started_and_the_long_steps_longest_first() -> None:
     lines = steps(RUN, at_least=5)
-    assert lines[0] == "run: 6m40s from creation to its last job's end"
-    assert lines[4] == "| build | +0m14s | 0m53s |"
-    assert lines[5] == "| apply | +1m11s | 5m29s |"
-    long = lines[-2:]
-    assert long == ["| apply | apply | 4m47s |", "| plan | apply | 0m19s |"]
+    assert lines[0] == "run: 6m40s from creation (09:08:01Z) to its last job's end (09:14:41Z)"
+    assert lines[4] == "| build | 42 | 09:08:15Z | 09:09:08Z | +0m14s | 0m53s |"
+    assert lines[5] == "| apply |  | 09:09:12Z | 09:14:41Z | +1m11s | 5m29s |"
+    assert lines[-2:] == [
+        "| apply | apply | 09:09:39Z | 09:14:26Z | 4m47s |",
+        "| plan | apply | 09:09:19Z | 09:09:38Z | 0m19s |",
+    ]
 
 
 def test_the_events_are_the_windows_own_oldest_first() -> None:
@@ -249,7 +252,7 @@ def test_the_events_are_the_windows_own_oldest_first() -> None:
                         "message": "(service api) has reached a steady state.",
                     },
                     {
-                        "createdAt": "2026-09-25T22:22:18+00:00",
+                        "createdAt": "2026-09-25T15:22:18-07:00",
                         "message": "(service api) task failed its health checks",
                     },
                     {"createdAt": "2026-09-25T20:00:00+00:00", "message": "an older deploy"},
@@ -259,6 +262,6 @@ def test_the_events_are_the_windows_own_oldest_first() -> None:
     }
     lines = events(services, when("2026-09-25T22:20:27Z"), when("2026-09-25T22:30:00Z"))
     assert lines[2:] == [
-        "| +1m51s | api | (service api) task failed its health checks |",
-        "| +4m15s | api | (service api) has reached a steady state. |",
+        "| 22:22:18Z | +1m51s | api | (service api) task failed its health checks |",
+        "| 22:24:42Z | +4m15s | api | (service api) has reached a steady state. |",
     ]

@@ -10,7 +10,8 @@ records, files, invitations, API keys, Slack installations, and cleanup
 records, each in the proportions a busy platform has. Every count scales
 linearly with `--scale`, with a floor of one, so `--scale 0.01` is a quick
 run with the same shape. The heavy org's id is fixed, so a statement file
-can name it (see `FIXED`); its members are its users, busiest first by id.
+can name it (see `FIXED`). Its last member (`n` = the member count) is
+assigned no task and created none, so an audit always has an idle member.
 
 It runs as the local superuser on a database `auditdb.py` made, since no
 login the application holds walks past the row-level security policies,
@@ -200,7 +201,7 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             SELECT uuidv7(-(interval '700 days') + g * interval '10 minutes'), {big},
                    now() - interval '700 days' + g * interval '10 minutes',
                        now() - (random() * 300) * interval '1 day',
-                   bu.u[1 + (g * 7) % bu.k], 'Open task ' || g, '', 'open',
+                   bu.u[1 + (g * 7) % greatest(bu.k - 1, 1)], 'Open task ' || g, '', 'open',
                    CASE WHEN random() < 0.7 THEN bu.u[1 + (g * 13) % greatest(bu.k - 1, 1)] END,
                    g::float8, g::numeric, bu.u[1], 1,
                    CASE WHEN random() < 0.3 THEN current_date + (random() * 60)::int END
@@ -214,7 +215,7 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             SELECT uuidv7(-(interval '700 days') + g * interval '9 minutes'), {big},
                    now() - interval '700 days' + g * interval '9 minutes',
                        now() - (random() * 89) * interval '1 day',
-                   bu.u[1 + (g * 7) % bu.k], 'Done task ' || g, '', 'done',
+                   bu.u[1 + (g * 7) % greatest(bu.k - 1, 1)], 'Done task ' || g, '', 'done',
                    CASE WHEN random() < 0.7 THEN bu.u[1 + (g * 13) % greatest(bu.k - 1, 1)] END,
                    g::float8, g::numeric, bu.u[1], 2
             FROM generate_series(1, {c.done_tasks}) g, bu""",
@@ -226,7 +227,7 @@ def statements(c: Counts) -> list[tuple[str, str]]:
                                     "position", rank, updated_by, version, archived_at)
             SELECT uuidv7(-(interval '720 days') + g * interval '15 minutes'), {big},
                    now() - interval '720 days' + g * interval '15 minutes', ts,
-                       bu.u[1 + (g * 7) % bu.k],
+                       bu.u[1 + (g * 7) % greatest(bu.k - 1, 1)],
                    'Archived task ' || g, '', 'done',
                    CASE WHEN random() < 0.7 THEN bu.u[1 + (g * 13) % greatest(bu.k - 1, 1)] END,
                    g::float8, g::numeric, bu.u[1], 3, ts

@@ -4,6 +4,7 @@ dropped by the run that uses it, and never a shared one.
     uv run python ops/audit/auditdb.py create audit_<run>
     uv run python ops/audit/auditdb.py env audit_<run>     # the URLs, as exports
     uv run python ops/audit/auditdb.py drop audit_<run>
+    uv run python ops/audit/auditdb.py list                # every audit database there is
 
 The name must start with `audit_`, and every URL must point at a local
 host: a run can make and drop only a database that is plainly its own. The
@@ -132,11 +133,28 @@ def drop(name: str) -> None:
     print(f"{name}: dropped")
 
 
+async def audit_databases() -> list[str]:
+    engine = create_async_engine(superuser_on("postgres"))
+    try:
+        async with engine.connect() as connection:
+            found = await connection.execute(
+                text("SELECT datname FROM pg_database WHERE datname LIKE 'audit\\_%' ORDER BY 1")
+            )
+            return [row[0] for row in found]
+    finally:
+        await engine.dispose()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="auditdb", description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("command", choices=["create", "drop", "env"])
-    parser.add_argument("name", help="audit_<slug>")
+    parser.add_argument("command", choices=["create", "drop", "env", "list"])
+    parser.add_argument("name", nargs="?", help="audit_<slug>")
     args = parser.parse_args(argv)
+    if args.command == "list":
+        print("\n".join(asyncio.run(audit_databases())) or "no audit database")
+        return 0
+    if args.name is None:
+        parser.error("name the audit database")
     if args.command == "create":
         create(args.name)
     elif args.command == "drop":

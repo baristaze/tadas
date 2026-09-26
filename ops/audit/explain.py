@@ -52,6 +52,7 @@ from pathlib import Path
 
 from auditdb import check_name, superuser_on, urls
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy.pool import NullPool
 
 SYSTEM = "00000000-0000-0000-0000-000000000000"
 HEADER = re.compile(r"^--\s*(name|scope|user|params)\s*:\s*(.*)$")
@@ -132,8 +133,10 @@ async def _scoped(connection: AsyncConnection, statement: Statement) -> None:
 async def plans(name: str, path: Path) -> None:
     statements = parse(await asyncio.to_thread(path.read_text))
     values = urls(check_name(name))
-    runtime = create_async_engine(values["TADAS_DATABASE_URL"])
-    system = create_async_engine(values["TADAS_DATABASE_SYSTEM_URL"])
+    # A connection per statement: a prepared statement lives as long as its
+    # connection, and a rollback does not take it away.
+    runtime = create_async_engine(values["TADAS_DATABASE_URL"], poolclass=NullPool)
+    system = create_async_engine(values["TADAS_DATABASE_SYSTEM_URL"], poolclass=NullPool)
     try:
         for statement in statements:
             engine = system if statement.system else runtime
