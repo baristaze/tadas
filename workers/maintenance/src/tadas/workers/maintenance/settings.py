@@ -37,7 +37,7 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     worker_poll_seconds: int = Field(default=5, gt=0)
     # How many days a living org's events are kept; the sweep trims what is
     # older, a bounded batch per org per pass. 0 keeps every event and never
-    # moves a floor (ADR 0039).
+    # moves a floor (ADR 0040).
     event_retention_days: int = Field(default=0, ge=0)
 
     # Where people open Tadas in this environment: a list answered in Slack
@@ -47,3 +47,6 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # How long a received Slack delivery stays hidden from other consumers
     # while one handles it; one that is not deleted by then comes back.
     slack_inbound_visibility_seconds: int = Field(default=60, gt=0)
+    # A done task unchanged this many days is archived by the daily cleanup.
+    # Illustrative, like the plans' numbers.
+    tasks_archive_after_days: int = Field(default=90, gt=0)

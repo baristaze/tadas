@@ -59,6 +59,14 @@ now=$(date +%s); aws cloudwatch get-metric-data \
   --query 'MetricDataResults[0].Values[:10]'
 ```
 
+The long-running records, the imports and each org's daily cleanup of
+old done tasks, show on Outcomes per second under the subsystem
+`orchestrations`, one outcome per kind and state (`task_cleanup_running`
+when the sweep opens an org's day, `task_cleanup_succeeded`,
+`task_import_parked`, `task_import_failed`). A failure that is a defect
+is also an `ERROR` line in `/tadas/<environment>/maintenance` naming the
+record and its org; reading that one org's rows is `ops-root-cause`.
+
 ## The alarms
 
 Twelve per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from

@@ -15,7 +15,7 @@ class EventsOptions(Platform):
     max_limit: int = 500
     retention: timedelta | None = None
     """How long a living tenant's events are kept. None keeps every one, and
-    the sweep never moves the floor (ADR 0039)."""
+    the sweep never moves the floor (ADR 0040)."""
     trim_batch: int = Field(default=1000, gt=0)
     """The most events one sweep pass trims from one tenant's stream."""
 

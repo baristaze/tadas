@@ -3,8 +3,9 @@ on the lane while a slot is free, run each item as a task that names the
 request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
-effort, sweep on a timer (stale leases and every namespace's purge per tenant, then
-the outbox and done outbox rows), and drain first on stop."""
+effort, sweep on a timer (stale leases, every namespace's purge, and the
+standing chores per tenant, then the outbox and done outbox rows), and drain
+first on stop."""
 
 import asyncio
 import contextlib
@@ -43,6 +44,10 @@ WORK_ITEM_ATTRIBUTE = "tadas.work_item_id"
 PurgeStep = Callable[[OpContext], Awaitable[int]]
 """A manager's `purge_deleted(ctx)`: the one hard delete, per tenant, after retention."""
 
+ChoreStep = Callable[[OpContext], Awaitable[object]]
+"""A standing chore per tenant that is not a purge: opening the next period
+of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
+
 
 class LoopOptions(Platform):
     worker_id: str
@@ -68,6 +73,7 @@ class WorkerLoop:
         outbox: OutboxRelayInterface,
         purges: Mapping[str, PurgeStep],
         handlers: Mapping[WorkKind, WorkHandlerInterface],
+        chores: Mapping[str, ChoreStep] | None = None,
         topics: TopicsInterface,
         liveness: CacheInterface,
         options: LoopOptions,
@@ -75,6 +81,7 @@ class WorkerLoop:
         self._work = work
         self._outbox = outbox
         self._purges = purges
+        self._chores = dict(chores or {})
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -398,6 +405,11 @@ class WorkerLoop:
                         log.info("sweep: purged %d %s rows in org %s", purged, name, ctx.org_id)
                 except Exception:
                     log.exception("sweep: %s purge failed for tenant %s", name, ctx.org_id)
+            for name, chore in self._chores.items():
+                try:
+                    await chore(ctx)
+                except Exception:
+                    log.exception("sweep: %s failed for tenant %s", name, ctx.org_id)
         try:
             # Whatever a crash left between the core write and its push.
             await self._outbox.relay_pending(self._options.outbox_batch)

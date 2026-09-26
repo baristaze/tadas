@@ -162,7 +162,7 @@ class StreamTruncated(EventsException):
     """A read of the stream after a seq below the tenant's floor: the events
     between that seq and the floor are trimmed, so no page can close the gap.
     The caller stops replaying, reads afresh what it shows, and goes on from
-    `head`. Gone, not a conflict: asking again never succeeds (ADR 0039)."""
+    `head`. Gone, not a conflict: asking again never succeeds (ADR 0040)."""
 
     http_status = 410
     code = "stream_truncated"

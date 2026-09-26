@@ -1,18 +1,23 @@
 """Pure rules of the tasks namespace: which tasks a filter shows, where a
-cursor cuts, the arithmetic of the open list's manual order, and when a due
-date's reminder goes out. Values in,
+cursor cuts, the arithmetic of the open list's manual order, when a due
+date's reminder goes out, what an import file and its rows may be, and which
+done tasks the cleanup archives. Values in,
 values out; no clock, no storage, no settings. The manager and both storage
 impls call these; the relational impl spells the visibility, cursor, and
 follows rules in SQL where one statement must decide, and names the rule it
 mirrors."""
 
-from collections.abc import Sequence
+import csv
+import io
+from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from tadas.om.base import Platform
+from tadas.om.exceptions import ValidationFailed
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
-from tadas.om.tasks.types.task import Task, TaskScope
+from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 Place = tuple[float, UUID]
 """Where an open task sits: its position and its id, the pair the open list is
@@ -135,3 +140,163 @@ def earliest_reminder_time(due_on: date) -> datetime:
     the person's zone as it reads when it runs, so an assignee changed or a
     zone moved after the date was set is still met on their morning."""
     return datetime.combine(due_on, REMINDER_HOUR, tzinfo=UTC) - AHEAD_OF_UTC_AT_MOST
+
+
+# The import of tasks from a CSV file, and the cleanup of old done tasks. The
+# numbers are illustrative, like the plans': the shape is what holds.
+
+IMPORT_COLUMNS = ("title", "notes", "due_on", "assignee_email")
+"""The columns an import reads, by header name, in any order; `title` is the
+one it needs. A column it does not know is ignored."""
+
+IMPORT_MAX_ROWS = 5000
+"""The most data rows one import reads. A file with more fails at once and
+creates nothing: a bound, not a guard."""
+
+IMPORT_BATCH = 100
+"""The rows one step reads: one commit creates their tasks and moves the cursor."""
+
+CLEANUP_BATCH = 500
+"""The tasks one cleanup step archives, in one conditional write."""
+
+MAX_TITLE_LENGTH = 500
+
+
+class ImportFileRefused(ValidationFailed):
+    """The file is past a bound of the import; `reason` names which one,
+    as `orchestrations.types.FailReason` spells it."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class ImportRow(Platform):
+    """One data row, as the file holds it; every field a string."""
+
+    number: int  # the first data row is 1
+    title: str = ""
+    notes: str = ""
+    due_on: str = ""
+    assignee_email: str = ""
+
+
+class ImportedTask(Platform):
+    """A row that makes a task: its fields checked and typed."""
+
+    number: int
+    title: str
+    notes: str
+    due_on: date | None
+    assignee_id: UUID | None
+
+
+def parse_import(data: bytes, max_bytes: int, max_rows: int = IMPORT_MAX_ROWS) -> list[ImportRow]:
+    """The file's data rows, or `ImportFileRefused` when the file is past a
+    bound: larger than `max_bytes` (`file_too_large`), not text a CSV reader
+    reads (`not_csv`), without a `title` header (`no_title_column`), or with
+    more than `max_rows` rows (`too_many_rows`). A row that is empty in every
+    column is not a row. The whole file is read every step: it is bounded,
+    and a stateless worker holds nothing between two."""
+    if len(data) > max_bytes:
+        raise ImportFileRefused("file_too_large")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ImportFileRefused("not_csv") from None
+    if "\x00" in text:
+        raise ImportFileRefused("not_csv")
+    try:
+        lines = list(csv.reader(io.StringIO(text, newline=""), strict=True))
+    except csv.Error:
+        raise ImportFileRefused("not_csv") from None
+    if not lines:
+        raise ImportFileRefused("no_title_column")
+    header = [name.strip().lower() for name in lines[0]]
+    if "title" not in header:
+        raise ImportFileRefused("no_title_column")
+    columns = {name: index for index, name in enumerate(header) if name in IMPORT_COLUMNS}
+    rows: list[ImportRow] = []
+    for cells in lines[1:]:
+        if not any(cell.strip() for cell in cells):
+            continue
+        if len(rows) == max_rows:
+            raise ImportFileRefused("too_many_rows")
+        fields = {
+            name: cells[index].strip() if index < len(cells) else ""
+            for name, index in columns.items()
+        }
+        rows.append(ImportRow(number=len(rows) + 1, **fields))
+    return rows
+
+
+def import_refusal(row: ImportRow, members: Mapping[str, UUID]) -> str | None:
+    """Why a row makes no task, or None when it makes one: a title it lacks
+    or one too long, a due date that is not `YYYY-MM-DD`, an assignee who is
+    not a member of the org. `members` maps a member's address, lower-cased,
+    to the member."""
+    if not row.title:
+        return "no title"
+    if len(row.title) > MAX_TITLE_LENGTH:
+        return f"a title is at most {MAX_TITLE_LENGTH} characters"
+    if row.due_on and _date(row.due_on) is None:
+        return f"due_on {row.due_on!r} is not a date (YYYY-MM-DD)"
+    if row.assignee_email and row.assignee_email.lower() not in members:
+        return f"{row.assignee_email} is not a member of this org"
+    return None
+
+
+def imported(row: ImportRow, members: Mapping[str, UUID]) -> ImportedTask:
+    """The task a row makes, once `import_refusal` found nothing wrong."""
+    return ImportedTask(
+        number=row.number,
+        title=row.title,
+        notes=row.notes,
+        due_on=_date(row.due_on) if row.due_on else None,
+        assignee_id=members[row.assignee_email.lower()] if row.assignee_email else None,
+    )
+
+
+def _date(value: str) -> date | None:
+    if len(value) != 10:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def room_for(bound: int | None, active: int) -> int | None:
+    """How many more tasks the plan lets the org open: None when it has no
+    bound, and never below zero (an org over its bound after a downgrade has
+    no room, and keeps what it has)."""
+    return None if bound is None else max(0, bound - active)
+
+
+def cleanup_period(now: datetime) -> str:
+    """The day a cleanup record is for: the UTC date, which with the org and
+    the kind is the record's unique key, and from which its id is derived."""
+    return now.astimezone(UTC).date().isoformat()
+
+
+def import_row_part(number: int) -> str:
+    """What an imported row's task id is derived from beside the import's id
+    (`base.derived_id`): the same row stepped twice presents the same id."""
+    return f"row:{number}"
+
+
+def cleanup_part(period: str) -> str:
+    """What the day's cleanup record id is derived from beside the org's id."""
+    return f"task_cleanup:{period}"
+
+
+def is_archivable(task: Task, before: datetime) -> bool:
+    """A task the cleanup archives: done, not deleted, not archived yet, and
+    unchanged since before `before`. A task reopened, edited, or deleted
+    meanwhile no longer is, and the conditional write leaves it alone."""
+    return (
+        task.status is TaskStatus.DONE
+        and task.deleted_at is None
+        and task.archived_at is None
+        and task.updated_at < before
+    )

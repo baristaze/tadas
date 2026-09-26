@@ -1,11 +1,12 @@
 """The commands. Command mode does one thing and returns (`add`, `ls`, `edit`,
-`done`, `reopen`, `rm`, `mv`, and a task's files: `attach`, `attachments`,
-`download`, `detach`); `listen` stays and prints the team's changes
-as they happen. Every command is a thin call into the client; the API
-decides, the CLI shows. A verb that changes a task reads it first and sends
-the version it read, so a change that raced another is refused (exit 1) and
-never overwrites it. Exit codes: 0 done, 1 the API refused, 2 usage, 3 not
-signed in, 4 the API is unreachable."""
+`done`, `reopen`, `rm`, `mv`, a task's files: `attach`, `attachments`,
+`download`, `detach`, and `import`, which follows its import to the end);
+`listen` stays and prints the team's changes as they happen. Every command
+is a thin call into the client; the API decides, the CLI shows. A verb that
+changes a task reads it first and sends the version it read, so a change
+that raced another is refused (exit 1) and never overwrites it. Exit codes:
+0 done, 1 the API refused (an import that parked or failed among them), 2
+usage, 3 not signed in, 4 the API is unreachable."""
 
 import asyncio
 import json
@@ -24,6 +25,7 @@ import httpx
 import typer
 
 from tadas.apps.cli import config
+from tadas.apps.cli.imports import follow, outcome
 from tadas.apps.cli.listen import listen as run_listener
 from tadas.apps.cli.model import (
     attachment_table,
@@ -664,6 +666,35 @@ def detach(ref: Ref, file_ref: FileRef, as_json: Json = False, api: Api = None) 
             typer.echo(f"detached {short_id(removed.id)}  {removed.name}")
 
     run(go, api)
+
+
+# Imports
+
+
+@app.command("import")
+def import_tasks(
+    path: Annotated[Path, typer.Argument(help="A CSV file of tasks.", exists=True, dir_okay=False)],
+    as_json: Json = False,
+    api: Api = None,
+) -> None:
+    """Import tasks from a CSV file and follow the import to its end. Columns:
+    title (needed), notes, due_on (2026-10-01), assignee_email (a member)."""
+    data = path.read_bytes()
+
+    async def go(client: ApiClient) -> str:
+        started = await client.import_tasks(path.name, data)
+        typer.echo(f"importing {path.name} as {short_id(started.id)}", err=True)
+        stopped = await follow(client, started.id)
+        if as_json:
+            typer.echo(stopped.model_dump_json(indent=2))
+        else:
+            typer.echo(outcome(stopped))
+        return stopped.status.value
+
+    status = run(go, api)
+    if status != "succeeded":
+        # Parked or failed: nothing more was created, and the line says why.
+        raise typer.Exit(EXIT_REFUSED)
 
 
 # Realtime

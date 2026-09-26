@@ -42,6 +42,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "database_statement_timeout_seconds_activity": "one pool for every role until a role moves out",
     "database_statement_timeout_seconds_queue": "one pool for every role until a role moves out",
     "database_statement_timeout_seconds_admin": "one pool for every role until a role moves out",
+    "tasks_archive_after_days": "the product's choice, the same in every environment",
     "buckets_root": "the local buckets backend only",
     "s3_endpoint_url": "the hosted endpoint; only MinIO needs one",
     "s3_presign_endpoint_url": "the hosted endpoint is the browser's too; only MinIO needs one",
@@ -71,7 +72,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_poll_seconds": "the local default is the tuning",
     "slack_timeout_seconds": "the local default is the tuning",
     "slack_inbound_visibility_seconds": "the local default is the tuning",
-    "event_retention_days": "one retention everywhere, set in code (ADR 0039)",
+    "event_retention_days": "one retention everywhere, set in code (ADR 0040)",
 }
 
 
@@ -167,7 +168,7 @@ def test_a_count_or_a_duration_of_zero_is_refused(field: str) -> None:
 
 
 def test_the_event_retention_is_off_until_it_is_set() -> None:
-    """0 keeps every event: the sweep never moves a floor (ADR 0039)."""
+    """0 keeps every event: the sweep never moves a floor (ADR 0040)."""
     base = {"_env_file": None, "environment": "test"}
     assert events_options(MaintenanceSettings.model_validate(base)).retention is None
     kept = MaintenanceSettings.model_validate({**base, "event_retention_days": 90})

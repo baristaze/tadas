@@ -1,7 +1,7 @@
 -- The floor is the highest seq the trim has removed from a tenant's stream,
 -- 0 while it has removed none. Every event above it, up to the head, is
 -- stored. A read that starts below it is refused, because the events it
--- asks for are gone (ADR 0039).
+-- asks for are gone (ADR 0040).
 --
 -- Expand-only. The release before inserts a cursor row naming `org_id` and
 -- `head`, and the default fills the floor.

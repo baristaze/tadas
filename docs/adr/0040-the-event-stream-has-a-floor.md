@@ -1,4 +1,4 @@
-# ADR 0039: The event stream has a floor, and a read below it is gone
+# ADR 0040: The event stream has a floor, and a read below it is gone
 
 **Status**: accepted (2026-09-26)
 

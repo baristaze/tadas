@@ -1,5 +1,5 @@
-"""Task routes: the open and done lists, get, create, a partial update, move,
-delete, and a task's attachments. Each function is one call into the tasks
+"""Task routes: the open, done, and archived lists, get, create, a partial
+update, move, restore, delete, and a task's attachments. Each function is one call into the tasks
 service; the creating ones run under the idempotency record. An attachment's
 bytes, its confirm, and its download are the media routes', by the file's
 id."""
@@ -18,6 +18,7 @@ from tadas.services.api.types.media import AddFileRequest, FilePageView, FileVie
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
     MoveTaskRequest,
+    RestoreTaskRequest,
     TaskPageView,
     TaskView,
     UpdateTaskRequest,
@@ -36,6 +37,19 @@ async def list_tasks(
     limit: int = LIMIT_DEFAULT,
 ) -> TaskPageView:
     return await tasks.get_tasks(ctx, status, scope, cursor, limit)
+
+
+@router.get("/archived", response_model=TaskPageView)
+async def list_archived_tasks(
+    ctx: Ctx,
+    tasks: TasksService,
+    scope: TaskScope = TaskScope.TEAM,
+    cursor: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+) -> TaskPageView:
+    """The done tasks the daily cleanup archived, newest first. An archived
+    task leaves the done list; it is still read by its id and restored."""
+    return await tasks.get_archived_tasks(ctx, scope, cursor, limit)
 
 
 @router.get("/{task_id}", response_model=TaskView)
@@ -60,6 +74,13 @@ async def move_task(
     ctx: Ctx, tasks: TasksService, task_id: UUID, body: MoveTaskRequest
 ) -> TaskView:
     return await tasks.move_task(ctx, task_id, body)
+
+
+@router.post("/{task_id}/restore", response_model=TaskView)
+async def restore_task(
+    ctx: Ctx, tasks: TasksService, task_id: UUID, body: RestoreTaskRequest
+) -> TaskView:
+    return await tasks.restore_task(ctx, task_id, body)
 
 
 @router.delete("/{task_id}", response_model=TaskView)

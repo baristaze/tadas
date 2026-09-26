@@ -15,7 +15,7 @@ else in Python calls `/v1/*`.
   system's trust store. Request bodies are built by the operation methods
   from keyword arguments; the API validates them. A file's bytes go to
   the object store and come from it through the URL the API signed
-  (`attach`, `download`), on a plain `httpx` client with the same
+  (`attach`, `import_tasks`, `download`), on a plain `httpx` client with the same
   timeout and nothing of ours on it, since the form or the link is the
   credential; where the store cannot sign, they go through the API's
   content route instead.

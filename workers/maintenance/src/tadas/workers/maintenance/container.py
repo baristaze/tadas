@@ -14,9 +14,16 @@ from tadas.integrations.slack import SlackInterface
 from tadas.om.root import EventsOptions, Managers, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
+from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 log = logging.getLogger(__name__)
+
+
+def tasks_options(settings: MaintenanceSettings) -> TasksOptions:
+    """What the worker's tasks manager reads that a setting names: the age at
+    which the daily cleanup archives a done task."""
+    return TasksOptions(archive_after=timedelta(days=settings.tasks_archive_after_days))
 
 
 def events_options(settings: MaintenanceSettings) -> EventsOptions:
@@ -67,7 +74,11 @@ class WorkerContainer:
             storage,
             infra,
             build_managers(
-                storage, infra, integrations=integrations, events_options=events_options(settings)
+                storage,
+                infra,
+                integrations=integrations,
+                tasks_options=tasks_options(settings),
+                events_options=events_options(settings),
             ),
             integrations,
         )
@@ -99,7 +110,11 @@ class WorkerContainer:
             storage,
             infra,
             build_managers(
-                storage, infra, integrations=integrations, events_options=events_options(settings)
+                storage,
+                infra,
+                integrations=integrations,
+                tasks_options=tasks_options(settings),
+                events_options=events_options(settings),
             ),
             integrations,
         )
