@@ -1,7 +1,7 @@
 ---
 name: audit-database-calls
 description: "Audit how many database calls each endpoint and each worker flow makes, at its least and at its most: round trips, transactions, and roles, counted at the driver while the real API and worker run in one process over a database of their own. Names what grows a flow, every N+1, every read repeated within a flow, and the fixed cost of a transaction, each with its fix and effort. Never changes anything."
-allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
 ---
 
 # audit-database-calls
@@ -39,7 +39,7 @@ the providers. It holds no cloud credential and reads no environment.
    `~/Downloads/tadas_database_calls_<yyyy-mm-dd>/` and the report
    `~/Downloads/tadas_database_calls_<yyyy-mm-dd>.md`; when either
    exists, both take the next free suffix (`_2`), so a run never
-   overwrites another's. Make the folder (`mkdir -p`). Say which commit
+   overwrites another's; the database takes the same suffix. Make the folder (`mkdir -p`). Say which commit
    the run counted (`git rev-parse HEAD`).
 2. List every route (the routers under
    `services/api/src/tadas/services/api/routers/`, the socket in
@@ -66,19 +66,19 @@ the providers. It holds no cloud credential and reads no environment.
    ```
 
    A flow that fails is named, the rest run, and `run` exits 1; go on to
-   the summary and the drop all the same. Fix a failed flow in the run's
-   flows file and run the file alone on the same database with `--only
-   seed` into a second `--out` (`calls_2.json`), or report it as not
-   measured. The summary's round trips are warm (every statement already
+   the summary and the drop all the same. Fix a failed flow, move it to a
+   flows file of its own (`fixed_flows.py`), and run that file on the
+   same database with `--only seed` into a second `--out`
+   (`calls_2.json`), or report it as not measured. The summary's round trips are warm (every statement already
    prepared); the report uses them and says so, and `calls.json` holds
    each call's `prepares` beside them. Tally `calls.json` with a scratch
    script (`uv run python <script>`), never a file in the repository.
 4. Read each call's `detail` in `calls.json`: one line per transaction,
    with its role, its scope, the storage method that opened it, and its
    statements. From them, per route and flow:
-   - the fixed cost: every transaction pays `BEGIN`, the scope's
-     `set_config`, and `COMMIT` or `ROLLBACK`, so a one-statement read is
-     four round trips;
+   - the fixed cost: every transaction pays `BEGIN`, which carries the
+     scope's `set_config` in the same message, and `COMMIT` or
+     `ROLLBACK`, so a one-statement read is three round trips;
    - the per-request baseline of each credential (session, API key,
      sign-in credential, operator token), and each route's cost above it;
    - what grows it: a count that rises with a list, an id set, the
@@ -96,16 +96,22 @@ the providers. It holds no cloud credential and reads no environment.
      `deployment/realtime-timeouts.json`, and its pong costs nothing
      while the head this process heard is younger than
      `realtime_head_max_age_seconds`, and a head read past it; count the
-     pings an hour that read, for a quiet tenant and for a busy one. Say
-     it per socket per hour and at a thousand open sockets;
+     pings an hour that read, for a quiet tenant (no write for longer
+     than that age) and a busy one (a write within every such age). The
+     head is kept per tenant per process and shared by its sockets there:
+     say it per socket per hour, and at a thousand open sockets with one
+     per tenant per process, the worst case;
    - the fan-out of one change: one write publishes one hint, every open
      tab of every member of the tenant receives it, and each tab reads
      what the hint does not carry. Read what a tab does with a hint in
-     `apps/portal/src/realtime/` (the hints it skips: its own writes, a
-     version it already holds) and measure the read it makes, in a flows
-     file when no built-in flow makes that call. Say the reads caused by
-     one change as reads per hint × members × open tabs, minus the tabs
-     that skip, at an org of 2 and of 200 members with 2 tabs each.
+     `apps/portal/src/realtime/`: which tabs skip it (a tab that already
+     holds the version, such as the one that wrote it; none when the
+     writer is an API key or the worker) and measure the read it makes,
+     in a flows file when no built-in flow makes that call. Say the reads
+     caused by one change as reads per hint × members × open tabs, minus
+     the tabs that skip, at an org of 2 and of 200 members with 2 tabs
+     each. A bulk write publishes many hints at once; say what a tab does
+     with a burst;
 5. Drop the run's database, whatever happened before, and check it is
    gone:
 
@@ -115,7 +121,8 @@ the providers. It holds no cloud credential and reads no environment.
    ```
 
 6. Write the report, and the proposed tickets in it. The skill files
-   none. A fix is proposed in this order, the first that applies:
+   none. Findings rank by their round trips at the sizes the report
+   names. A fix is proposed in this order, the first that applies:
    remove the read, fold it into a read the flow already makes, defer
    it off the request path, and only then run reads in parallel. That
    order is the rule, because concurrent reads on a bounded pool can

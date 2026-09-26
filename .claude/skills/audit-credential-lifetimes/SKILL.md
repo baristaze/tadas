@@ -1,7 +1,7 @@
 ---
 name: audit-credential-lifetimes
 description: "Audit how long each credential keeps working after it should stop: one row per credential kind (session, API key, operator token, sign-in, socket ticket, and any other the code has) and channel (HTTP request, realtime socket, bus control message, worker), with where it is checked, how often, what one check costs, the worst case a revoked credential keeps working, how a change of role or membership reaches it, its rate limit, and whether it fails open or closed when the cache is down. Flags every trust decision carried only by an at-most-once push, and every worst case above a stated bound. Never changes anything."
-allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
 ---
 
 # audit-credential-lifetimes
@@ -39,7 +39,7 @@ no cloud credential, reads no environment, and reads no env file.
    `~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/` and the report
    `~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>.md`; when either
    exists, both take the next free suffix (`_2`), so a run never
-   overwrites another's. Make the folder (`mkdir -p`). Say which commit
+   overwrites another's; the database takes the same suffix. Make the folder (`mkdir -p`). Say which commit
    the run read (`git rev-parse HEAD`).
 2. List the credential kinds. `CredentialKind` in
    `om/src/tadas/om/opcontext.py` names the ones the platform mints; the

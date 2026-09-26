@@ -1,7 +1,7 @@
 ---
 name: audit-provider-calls
 description: "Audit every call to an external provider (WorkOS, Stripe, Slack, the AWS services, any HTTP to a third party), per flow: each route, inbound webhook, worker job, and boot. For each flow, the calls in order, whether they repeat or stand apart, whether they sit on the request path, how often the flow runs, whether the client is reused, the timeout times the retries, and whether the request has an overall deadline. Counts the calls through the provider twins where it can and reads the code where it cannot, then ranks fixes: remove a call, fold calls, move one off the request path, cache it, and run in parallel last. Never changes anything."
-allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
 ---
 
 # audit-provider-calls
@@ -37,7 +37,8 @@ real provider.
    this run did not make. The evidence folder is
    `~/Downloads/tadas_provider_calls_<yyyy-mm-dd>/` and the report
    `~/Downloads/tadas_provider_calls_<yyyy-mm-dd>.md`; when either
-   exists, both take the next free suffix (`_2`). Make the folder
+   exists, both take the next free suffix (`_2`), and the database takes
+   the same suffix. Make the folder
    (`mkdir -p`). Say which commit the run read (`git rev-parse HEAD`).
 2. List the provider clients and how each is built:
    - WorkOS: `integrations/src/tadas/integrations/identity/workos.py`;
@@ -54,21 +55,33 @@ real provider.
      database are the platform's own and not in scope.
    For each client: the timeout and where it is set
    (`integrations/src/tadas/integrations/settings.py`, `aws_clients.py`),
-   the retries the SDK makes on its own and on what (a timeout, a 429, a
-   5xx), and so the worst case of one call: timeout × (retries + 1),
-   plus the backoff between tries. Say whether one client is built per
+   and the timeout the SDK actually sends, which it may override; the
+   retries the SDK makes on its own and on what (a timeout, a 429, a
+   5xx). Both are in the SDK's own source under
+   `.venv/lib/python*/site-packages/<sdk>/` (`workos`, `stripe`,
+   `slack_sdk`, `botocore`); botocore's retry mode is the default
+   (legacy) unless `client_config` sets one. A timeout the settings name
+   and the SDK overrides is a finding. The worst case of one call is
+   timeout × (retries + 1), plus the backoff between tries; where the
+   timeout is per phase (connect, then read), say so and take the sum. Say whether one client is built per
    process and reused, or one per call; and whether the process opens it
    at start (`start()`) or on first use.
 3. List the flows: every route (the routers under
    `services/api/src/tadas/services/api/routers/`), every inbound
-   webhook (`routers/webhooks.py`, `routers/slack.py`), every worker job
+   webhook (Stripe's and Slack's, in `routers/webhooks.py` there), every
+   worker job
    (`WorkKind` in `om/src/tadas/om/work/types/work_item.py`, its handler
    in `workers/maintenance/src/tadas/workers/maintenance/`, and the
    consumers of the queues there), the sweep's steps (`loop.py`,
    `_sweep_once`), and boot (each process's start: `services/api/src/tadas/services/api/app.py`
-   and `main.py`, `token_secrets.py`, the worker's `main.py`, and the
-   infra and integrations roots' `start()`). A flow that makes no
-   provider call is left out of the table and counted in one line.
+   and `main.py`, `token_secrets.py`, the worker's `main.py`, the order
+   each container starts its roots in (`container.py` of the API and of
+   the worker), and the roots' `start()`:
+   `infra/src/tadas/infra/impl/configured.py` and
+   `integrations/src/tadas/integrations/impl/configured.py`). The
+   counter does not reach boot, so boot is read from the code. A flow
+   that makes no provider call is left out of the table and counted in
+   one line.
 4. Count the calls the twins can show. Make the database and run the
    counter; every call records the provider calls it made, in order:
 
@@ -80,16 +93,23 @@ real provider.
    uv run python ops/audit/dbcalls.py providers ~/Downloads/tadas_provider_calls_<yyyy-mm-dd>/calls.json
    ```
 
-   The counter wraps the identity, payments, and Slack twins, so a call
-   is counted where the real client would reach the network. It does
+   Run the built-in flows first, as above without `--flows`, and read
+   `providers`. The counter wraps the identity, payments, and Slack
+   twins and counts one call per method of the provider's interface.
+   The real client may send more than one request for one method (a
+   lookup and a create, a list read page by page): read each method in
+   the real client and say how many requests it sends. The counter does
    not count AWS: locally the infra reaches no provider, so those calls
    are read from the code and marked as read. A flow of step 3 that
    calls a provider and that no built-in flow reaches (a checkout, a
-   Slack install, a webhook, a worker job that calls Stripe) goes in a
-   flows file of the run's own, written as
+   Slack install, a webhook, a worker job that calls Stripe) then goes
+   in a flows file of the run's own, written as
    `.claude/skills/audit-database-calls/references/flows.md` shows
-   (read it before writing one). A flow that fails is named, the rest
-   run, and `run` exits 1; go on to the table and the drop all the same.
+   (read it before writing one), run on the same database with `--only
+   seed` into `calls_2.json`. A flow that fails is named, the rest run,
+   and `run` exits 1; fix it in its own file and run that the same way
+   (`calls_3.json`), or report it as not measured. Keep the counter's
+   output beside `calls.json`.
 5. Drop the run's database, whatever happened before, and check it is
    gone:
 
@@ -108,9 +128,8 @@ real provider.
      before it answers is on it; a job, a sweep step, or work queued for
      after the response is not;
    - how often the flow runs: per request of a route, per sign-in, per
-     delivery, per job, per boot. Where a traffic profile
-     (`ops/src/tadas/ops/profiles.py`) or the flow's own trigger gives a
-     rate, say it;
+     delivery, per job, per boot. Where the flow's trigger gives a rate
+     (an interval, a schedule), say it; otherwise say the trigger;
    - the worst case the calls add to the flow: the sum of each call's
      timeout × (retries + 1) on the path;
    - an overall deadline: whether anything bounds the whole request or
@@ -124,7 +143,9 @@ real provider.
    request path (into a job, or after the response); cache it (with the
    TTL and what invalidates it); and last, run independent calls in
    parallel, which lowers the latency and not the load, and still waits
-   on the slowest. Each finding gets its evidence, its fix, its effort,
+   on the slowest. A missing deadline, or a timeout the SDK overrides,
+   is fixed by bounding it, and is ranked by its worst case beside
+   them. Each finding gets its evidence, its fix, its effort,
    and a proposed ticket. The skill files none.
 8. Write the report.
 
@@ -163,7 +184,7 @@ real provider.
 | Flow | Calls, in order | Repeats or independent | Request path | Runs | Worst case added | Overall deadline | Measured |
 |---|---|---|---|---|---|---|---|
 
-Measured: yes (the twins) or read (code only).
+Measured: yes (the twins), read (code only), or partly (say which calls).
 
 ## Findings, ranked
 
