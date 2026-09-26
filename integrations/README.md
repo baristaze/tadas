@@ -107,8 +107,9 @@ Three impls:
 
 - `SlackWebImpl`, the real client: the app's client id, client secret,
   and signing secret, one aiohttp session opened at start, every call
-  under `TADAS_SLACK_TIMEOUT_SECONDS`. A reply goes only to a URL under
-  `https://hooks.slack.com/`.
+  under `TADAS_SLACK_TIMEOUT_SECONDS`, to the fraction of a second. A
+  call that times out is not tried again. A reply goes only to a URL
+  under `https://hooks.slack.com/`.
 - `SlackTwinImpl`, the twin: Slack's side in memory. It approves an
   install at once for its own workspace, issues tokens that expire and
   refresh tokens that work once, signs requests with Slack's scheme under
