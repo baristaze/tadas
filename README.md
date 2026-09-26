@@ -209,8 +209,9 @@ the roles, the profiles, the signals in both twins, the `tadas-ops`
 binary, the nine operational skills (`ops-investigate`, `ops-watch`,
 `ops-root-cause`, `ops-infra-as-code`, `ops-cloud-deployment-create`,
 `ops-cloud-deployment-nuke`, `ops-simulate-traffic`,
-`stress-test-create-or-update`, `stress-test-run`), the four audits
+`stress-test-create-or-update`, `stress-test-run`), the six audits
 (`audit-retention`, `audit-query-indexes`, `audit-database-calls`,
+`audit-credential-lifetimes`, `audit-provider-calls`,
 `audit-deploy-time`), which read and report and never fix, and
 `tickets-triage`. Each procedure a person follows by hand is a runbook under
 [docs/runbooks/](docs/runbooks/README.md).

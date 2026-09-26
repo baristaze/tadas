@@ -47,9 +47,22 @@ INVESTIGATORS = [*TOKEN_HOLDERS, "ops-infra-as-code", "audit-deploy-time", "audi
 # The skills that run under an account's administrator.
 ADMINISTRATORS = ["ops-cloud-deployment-create", "ops-cloud-deployment-nuke"]
 # The audits: read-only analyses that write a report and propose tickets.
-AUDITS = ["audit-database-calls", "audit-deploy-time", "audit-query-indexes", "audit-retention"]
+AUDITS = [
+    "audit-credential-lifetimes",
+    "audit-database-calls",
+    "audit-deploy-time",
+    "audit-provider-calls",
+    "audit-query-indexes",
+    "audit-retention",
+]
 # The audits that build a database of their own on the local stack.
-DATABASE_AUDITS = ["audit-database-calls", "audit-query-indexes", "audit-retention"]
+DATABASE_AUDITS = [
+    "audit-credential-lifetimes",
+    "audit-database-calls",
+    "audit-provider-calls",
+    "audit-query-indexes",
+    "audit-retention",
+]
 SKILL_DIR = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/([^\s`'\")]+)")
 
 
