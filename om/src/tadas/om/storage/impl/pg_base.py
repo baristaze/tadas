@@ -169,6 +169,24 @@ def delete_batch(table: type[Any], *where: ColumnElement[bool], limit: int) -> D
     return delete(table).where(table.id.in_(select(batch.c.id)))
 
 
+PLAN_WITH_VALUES = text("SET LOCAL plan_cache_mode = force_custom_plan")
+"""The first statement of a purge across tenants, in the purge's own
+transaction. The driver prepares each statement once per connection. After
+five runs Postgres may keep the generic plan, which knows no value. It
+guesses that a third of the table is past the cut, so a scan of the whole
+table that stops at the limit looks cheap. When the first five runs on a
+connection meet a backlog, that plan wins and stays, and every later pass
+reads the whole table with nothing to purge. Planned with its values, each
+statement reads its index.
+
+An order by the retention column would keep the generic plan on the index
+too, but not a backlog's plan: the system scope's policy makes the planner
+count a few rows where there are thousands, so it sorts the whole backlog to
+take one batch. A purge runs a few times a pass, so planning it each time
+costs nothing that shows. `SET LOCAL` ends with the transaction, so no other
+statement on the connection is planned this way."""
+
+
 def deleted(result: Result[Any]) -> int:
     """The rows a DELETE took, as the driver reports them, so a purge counts
     what went without carrying every id back to count it."""

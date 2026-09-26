@@ -14,7 +14,13 @@ from tadas.om.billing.types.delivery import BillingDelivery
 from tadas.om.exceptions import RowDeleted, TenantMismatch, UniqueKeyTaken
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted, violated_constraint
+from tadas.om.storage.impl.pg_base import (
+    PLAN_WITH_VALUES,
+    PgStorageBase,
+    delete_batch,
+    deleted,
+    violated_constraint,
+)
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row, to_values, undeletes
 
 ORG_KEY = "uq_billing_accounts_org_id"
@@ -94,8 +100,10 @@ class BillingStoragePostgresImpl(PgStorageBase, BillingStorageInterface):
 
     async def purge_deliveries(self, before: datetime, limit: int) -> int:
         stmt = delete_batch(BillingDeliveries, BillingDeliveries.created_at < before, limit=limit)
-        # Every tenant's marks past the retention, so the system scope, spelled here.
+        # Every tenant's marks past the retention, so the system scope, spelled
+        # here; planned with its values, so the index serves an idle pass too.
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            await session.execute(PLAN_WITH_VALUES)
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

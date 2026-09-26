@@ -7,7 +7,7 @@ from sqlalchemy.sql import Select
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
-from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
+from tadas.om.storage.impl.pg_base import PLAN_WITH_VALUES, PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_values
 from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.storage.tables.work_items import WorkItems
@@ -182,7 +182,9 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             limit=limit,
         )
         # Every tenant's settled items, so the system scope, spelled here.
+        # Planned with its values, so the index serves an idle pass too.
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            await session.execute(PLAN_WITH_VALUES)
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

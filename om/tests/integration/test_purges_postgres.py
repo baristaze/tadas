@@ -76,11 +76,12 @@ async def watched(
 async def sent(
     engines: list[AsyncEngine], call: Callable[[], Awaitable[object]]
 ) -> list[Statement]:
-    """The statements `call` sends, but for the scope each transaction opens with."""
+    """The statements `call` sends, but for the scope and the plan-cache
+    setting a transaction opens with."""
     captured: list[Statement] = []
 
     def record(conn: Any, cursor: Any, statement: str, parameters: Any, *_: Any) -> None:
-        if "set_config" not in statement:
+        if "set_config" not in statement and "plan_cache_mode" not in statement:
             captured.append((statement, parameters))
 
     for engine in engines:
