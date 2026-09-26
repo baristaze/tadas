@@ -11,7 +11,8 @@ Slack's answers decide the outcome. A rate limit parks the item until the
 time Slack named, spending no attempt. A channel that is gone, archived, or
 that the app is not in, and an install whose token Slack revoked, break the
 installation: it is marked broken, which the portal shows, and the item
-completes, since no retry fixes either. A process with no Slack app
+completes, since no retry fixes either. The bot's join to the channel mends
+a broken channel (`slack_inbound`), and posts resume. A process with no Slack app
 configured says so in the log and posts nothing. Anything else fails the
 item, which retries with a growing delay."""
 

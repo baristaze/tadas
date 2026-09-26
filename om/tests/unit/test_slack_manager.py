@@ -1,7 +1,8 @@
 """The slack manager over the memory roots and Slack's twin: an install is
 bound to the org and the person who started it, works once and only in time,
 keeps the token as the org's own secret and nowhere else, and gives a
-workspace to one org; an uninstall takes the token away; the token renews
+workspace to one org; an uninstall takes the token away; a channel that
+broke the install mends when the bot joins it again; the token renews
 before it expires, one renewal at a time; and a Slack user is matched to a
 member by the address their profile holds."""
 
@@ -155,6 +156,36 @@ async def test_installing_again_keeps_the_channel_and_mends_the_install(world: W
     assert before is not None and after is not None
     assert after.id == before.id and after.channel_id == "C0TEAM"
     assert after.status is SlackInstallationStatus.OK and after.broken_reason is None
+
+
+@pytest.mark.parametrize("reason", ["not_in_channel", "channel_not_found", "is_archived"])
+async def test_the_bots_join_to_its_channel_mends_what_the_channel_broke(
+    world: World, reason: str
+) -> None:
+    owner = await world.org("acme")
+    slack = world.managers.slack
+    await world.install(owner)
+    await slack.bind_channel(owner, "C0TEAM")
+    await slack.mark_broken(owner, reason)
+    assert await slack.bot_joined(owner, "C0ELSEWHERE") is None, "another channel mends nothing"
+    mended = await slack.bot_joined(owner, "C0TEAM")
+    assert mended is not None and mended.channel_id == "C0TEAM"
+    assert mended.status is SlackInstallationStatus.OK and mended.broken_reason is None
+    assert await slack.get_installation(owner) == mended
+    assert await slack.bot_joined(owner, "C0TEAM") is None, "a second join finds it well"
+
+
+async def test_the_bots_join_leaves_a_refused_token_broken(world: World) -> None:
+    owner = await world.org("acme")
+    slack = world.managers.slack
+    assert await slack.bot_joined(owner, "C0TEAM") is None, "no installation"
+    await world.install(owner)
+    await slack.bind_channel(owner, "C0TEAM")
+    await slack.mark_broken(owner, "invalid_refresh_token")
+    assert await slack.bot_joined(owner, "C0TEAM") is None
+    installation = await slack.get_installation(owner)
+    assert installation is not None and installation.status is SlackInstallationStatus.BROKEN
+    assert installation.broken_reason == "invalid_refresh_token", "only a new install mends it"
 
 
 async def test_another_workspace_replaces_the_first_and_the_app_leaves_it(world: World) -> None:
