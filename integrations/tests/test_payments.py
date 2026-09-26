@@ -3,9 +3,9 @@ delivery passes, the ids a delivery names, the twin's refusal outside a
 local environment, the boot's refusal of a key that is not a restricted key
 of the environment's mode, the processes
 reading the runtime key alone, the boot's check of what the key may read,
-the real client's reading of a subscription, and its translation of a
-failure by whose problem it is: the key's, the request's, or the
-processor's."""
+the real client's reading of a subscription, the timeout and the retries
+every call it makes is sent with, and its translation of a failure by whose
+problem it is: the key's, the request's, or the processor's."""
 
 import json
 import logging
@@ -14,6 +14,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import pytest
 import stripe
 
@@ -413,6 +414,41 @@ async def test_the_real_client_names_the_account_and_the_pinned_version() -> Non
         assert options.stripe_version == stripe.api_version
     finally:
         await payments.close()
+
+
+async def test_every_call_is_sent_with_the_timeout_and_a_timeout_is_tried_twice_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK's transport names the timeout from settings on every request,
+    to the fraction, and nothing in the SDK names another over it. Its two
+    retries take a timeout too, so a Stripe that hangs costs three attempts
+    of the timeout, and the call is then unreachable."""
+    monkeypatch.setattr(stripe.HTTPXClient, "_sleep_time_seconds", lambda self, retries: 0.0)
+    sent: list[Any] = []
+
+    def hang(request: httpx.Request) -> httpx.Response:
+        sent.append(request.extensions["timeout"])
+        raise httpx.ReadTimeout("no answer", request=request)
+
+    payments = PaymentsStripeImpl(
+        api_key="rk_test_x",
+        account_id="acct_test",
+        webhook_secret=SECRET,
+        timeout=timedelta(seconds=2.5),
+        check_at_start=False,
+    )
+    await payments.start()
+    transport = payments._http  # the SDK's own, given a transport that records
+    assert transport is not None
+    await transport._client_async.aclose()
+    transport._client_async = httpx.AsyncClient(transport=httpx.MockTransport(hang))
+    try:
+        with pytest.raises(BackendUnreachable):
+            await payments.read_subscription("sub_1")
+    finally:
+        await payments.close()
+    at = 2.5
+    assert sent == [{"connect": at, "read": at, "write": at, "pool": at}] * 3
 
 
 def test_a_subscription_is_read_from_the_item_where_the_period_now_sits() -> None:
