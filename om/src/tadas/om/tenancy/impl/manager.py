@@ -2160,12 +2160,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return org, user, membership
 
     async def _memberships_of(self, identity_id: UUID) -> tuple[OrgMembership, ...]:
-        found: list[OrgMembership] = []
+        """The places a person holds, each the org, the user, and the role, in
+        one read whatever their number. The read asks for one past the most a
+        person may hold, so a list cut short is never taken for the whole:
+        more than that (two adds that raced past the refusal) is
+        `MembershipLimitReached`, as `users_of` answers."""
         most = self._options.max_orgs_per_identity
-        for org_id, user in await users_of(self._storage, identity_id, most):
-            org = await self._storage.read_org(org_id)
-            membership = await self._storage.read_membership_for_user(org_id, user.id)
-            if org is None or org.deleted_at is not None or membership is None:
-                continue
-            found.append(OrgMembership(org=org, user=user, role=membership.role))
+        found = await self._storage.read_memberships_by_identity(identity_id, most + 1)
+        if len(found) > most:
+            raise MembershipLimitReached(
+                f"identity {identity_id} is a member of more than {most} orgs"
+            )
         return tuple(found)
