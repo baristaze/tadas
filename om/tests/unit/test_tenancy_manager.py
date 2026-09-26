@@ -1539,6 +1539,32 @@ async def test_a_socket_ticket_is_redeemed_exactly_once(
         await manager.redeem_ticket(request(), "ses_not-a-ticket")
 
 
+async def test_a_socket_is_resumed_without_recording_a_use(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """The redemption names what the socket needs to ask again: the kind of
+    the credential behind the ticket and the membership. Asking again with
+    `record_use=False` leaves the session's last use where it was."""
+    _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    ctx = await sign_in(manager, "ann@example.test", org.id)
+    principal = await manager.redeem_ticket(request(), (await manager.issue_ticket(ctx)).ticket)
+    membership = await storage.read_membership_for_user(org.id, ctx.user_id)
+    assert membership is not None
+    assert principal.credential_kind is CredentialKind.SESSION_TOKEN
+    assert principal.membership_id == membership.id
+
+    session = await storage.read_session(org.id, ctx.security.credential_id)
+    assert session is not None
+    seen = utcnow() - timedelta(hours=1)
+    await storage.write_session(org.id, session.model_copy(update={"last_seen_at": seen}))
+    again = await manager.resume(
+        request(), org.id, principal.credential_kind, ctx.security.credential_id, record_use=False
+    )
+    assert again.ctx.security == principal.ctx.security
+    session = await storage.read_session(org.id, ctx.security.credential_id)
+    assert session is not None and session.last_seen_at == seen
+
+
 async def test_concurrent_redemptions_admit_one_socket(manager: TenancyManagerImpl) -> None:
     _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
     ctx = await sign_in(manager, "ann@example.test", org.id)
