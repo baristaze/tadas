@@ -72,7 +72,7 @@ const taskOf = (id: string, title: string): TaskView => ({
   notes: "",
   status: "open",
   assignee_id: null,
-  position: 0,
+  rank: "0", position: 0,
   version: 1,
   created_by: "u1",
   deleted_at: null,
@@ -275,7 +275,7 @@ it("writes create, edit, reopen, move, and delete answers into the lists without
   await act(async () => vm().setTitle("Gamma"));
   await act(async () => void vm().add());
   await tick();
-  await act(async () => void net.writes[0]!.resolve({ ...taskOf("t3", "Gamma"), position: -1 }));
+  await act(async () => void net.writes[0]!.resolve({ ...taskOf("t3", "Gamma"), rank: "-1", position: -1 }));
   await tick();
   expect(vm().open.map((r) => r.task.id)).toEqual(["t3", "t1", "t2"]);
 
@@ -287,20 +287,20 @@ it("writes create, edit, reopen, move, and delete answers into the lists without
 
   await act(async () => void vm().drop("t3", "t2", "after"));
   await tick();
-  await act(async () => void net.writes[2]!.resolve({ ...taskOf("t3", "Gamma"), position: 1, version: 2 }));
+  await act(async () => void net.writes[2]!.resolve({ ...taskOf("t3", "Gamma"), rank: "1", position: 1, version: 2 }));
   await tick();
   expect(vm().open.map((r) => r.task.id)).toEqual(["t1", "t2", "t3"]);
 
   const doneBeta: TaskView = { ...beta, title: "Beta edited", status: "done", version: 3, updated_at: "2026-09-20T10:06:00Z" };
   queryClient.setQueryData(["task", "done", "team"], { pages: [{ items: [doneBeta], next_cursor: null }], pageParams: [null] });
   queryClient.setQueryData(["task", "open", "team"], {
-    pages: [{ items: [alpha, { ...taskOf("t3", "Gamma"), position: 1, version: 2 }], next_cursor: null }],
+    pages: [{ items: [alpha, { ...taskOf("t3", "Gamma"), rank: "1", position: 1, version: 2 }], next_cursor: null }],
     pageParams: [null],
   });
   await act(async () => void vm().reopen(doneBeta));
   await tick();
   expect(vm().done).toEqual([]);
-  await act(async () => void net.writes[3]!.resolve({ ...doneBeta, status: "open", position: -2, version: 4 }));
+  await act(async () => void net.writes[3]!.resolve({ ...doneBeta, status: "open", rank: "-2", position: -2, version: 4 }));
   await tick();
   expect(vm().open.map((r) => r.task.id)).toEqual(["t2", "t1", "t3"]);
 

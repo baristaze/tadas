@@ -120,7 +120,7 @@ export function useBulkVm({
       const moved: TaskView =
         request.action === "complete"
           ? { ...task, status: "done", updated_at: now }
-          : { ...task, status: "open", position: Number.NEGATIVE_INFINITY, archived_at: null };
+          : { ...task, status: "open", rank: null, position: Number.NEGATIVE_INFINITY, archived_at: null };
       placeTask(queryClient, moved, { optimistic: true });
     }
     clear();

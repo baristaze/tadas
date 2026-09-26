@@ -100,6 +100,14 @@ path = "om/src/tadas/om/slack/storage/tables/slack.py"
 adr = "docs/adr/0043-a-unique-rule-on-org-id-alone-sits-beside-the-purge-index.md"
 reason = "the org_id index is the partial unique rule of one living installation per org, not a lookup the compound index makes useless"
 
+# The release before writes a task's position and cannot write its rank; a
+# trigger gives such a row the rank its position names, for one release.
+[[tool.arch-check.exception]]
+rule = "STO-05"
+path = "om/migrations/sql/core/202610120000_task_rank.up.sql"
+adr = "docs/adr/0050-a-move-writes-one-row.md"
+reason = "expand scaffolding for the release before, which cannot write the rank; it goes with the position in the contract release"
+
 # The company site is a page, not an app: HTML and CSS on Vite, no script,
 # so no React.
 [[tool.arch-check.exception]]

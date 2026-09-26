@@ -130,6 +130,12 @@ second lane is a second replica told its lane.
     key, so the first sweep of the day opens it and every later one
     opens nothing. No scheduler is involved. It runs whenever its org is
     swept, before any second round of purges, so no budget skips it.
+  - **Respace a long rank** of each org whose open list has one: a rank
+    past 24 digits after the point, which only many moves into one and
+    the same gap make. The run of tasks around it takes short ranks, in
+    the order it had, in one write, each task announced like an edit. An
+    org with no long rank costs one read of an index that holds only
+    such ranks. It runs beside the cleanup, once per org per sweep.
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
 

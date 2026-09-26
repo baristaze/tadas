@@ -13,10 +13,10 @@ served to it. Exposure is by listing, never by folder.
 - [Decisions](docs/adr/): the architecture decision records, one file per decision
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
 - [Tenancy](om/src/tadas/om/tenancy/README.md): orgs (every person's one personal org, and the team orgs they make), identities, users, memberships, sessions, API keys, socket tickets, the role ladder, sign-in through the identity provider (a first sign-in is the sign-up; the device sign-in; the local sign-in), the sign-out that ends the provider's session too, invitations, single sign-on, the switch between orgs, and deleting my account
-- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, the version every write names, and a task's attachments
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the rank a move writes one task by, the sweep's respace, the version every write names, and a task's attachments
 - [Orchestrations](om/src/tadas/om/orchestrations/README.md): long-running records (the import of tasks from a CSV file, the daily cleanup of old done tasks), the step that lands its effect and its cursor in one commit, the park on the plan and its wake, and the bound that fails
 - [Files](om/src/tadas/om/media/README.md): files as references, the bounded upload straight to the store, the confirm, the purpose (an attachment, a dictation, an import), the storage used, and the sweep
-- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, the version every write names, and the due date and its one reminder
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the rank a move writes one task by, the version every write names, and the due date and its one reminder
 - [Slack](om/src/tadas/om/slack/README.md): the app an org installs into its workspace, its bot token kept as the org's own secret and renewed, the install's one-time state, the channel `/tadas connect` binds, and the record of every post
 - [Billing](om/src/tadas/om/billing/README.md): plans, their bounds as levers, the org's account at the payment processor, deliveries applied once, and grants
 - [Events](om/src/tadas/om/events/README.md): the org's diary and its gapless sequence

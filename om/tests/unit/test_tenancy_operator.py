@@ -4,6 +4,7 @@ platform's size, and the creates that share their implementation with the
 seeding commands."""
 
 import logging
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -362,7 +363,7 @@ async def test_a_rerun_of_a_create_returns_the_row_as_stored(
     assert len(await plane.storage.read_users(org.id, None, 10)) == 2
 
 
-def make_task(org_id: UUID, title: str, status: TaskStatus, position: float) -> Task:
+def make_task(org_id: UUID, title: str, status: TaskStatus, rank: int) -> Task:
     now = utcnow()
     return Task(
         id=new_id(),
@@ -372,12 +373,13 @@ def make_task(org_id: UUID, title: str, status: TaskStatus, position: float) -> 
         updated_by=org_id,
         title=title,
         status=status,
-        position=position,
+        rank=Decimal(rank),
+        position=float(rank),
     )
 
 
 async def seed_tasks(plane: Plane, org_id: UUID, count: int, status: TaskStatus) -> list[Task]:
-    tasks = [make_task(org_id, f"{status.value} {i}", status, float(i)) for i in range(count)]
+    tasks = [make_task(org_id, f"{status.value} {i}", status, i) for i in range(count)]
     for task in tasks:
         row = OutboxRow(
             id=new_id(),
@@ -447,7 +449,7 @@ async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
         opened = await plane.operator.get_tasks(reader, org.id, TaskStatus.OPEN, None, limit=3)
         assert [t.id for t in opened.items] == [t.id for t in open_tasks[:3]] and opened.has_more
         last = opened.items[-1]
-        after = OpenTaskCursor(position=last.position, id=last.id)
+        after = OpenTaskCursor(rank=last.rank, id=last.id)
         more = await plane.operator.get_tasks(reader, org.id, TaskStatus.OPEN, after, limit=3)
         assert [t.id for t in more.items] == [open_tasks[3].id] and not more.has_more
         finished = await plane.operator.get_tasks(reader, org.id, TaskStatus.DONE, None, limit=3)

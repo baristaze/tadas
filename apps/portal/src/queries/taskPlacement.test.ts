@@ -3,6 +3,8 @@ import type { TaskPageView, TaskView } from "../api";
 import {
   belongsIn,
   compareDone,
+  compareOpen,
+  compareRank,
   flatten,
   isVisible,
   microsOf,
@@ -22,6 +24,7 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   notes: "",
   status: "open",
   assignee_id: null,
+  rank: "0",
   position: 0,
   created_at: "2026-09-20T10:00:00Z",
   updated_at: "2026-09-20T10:00:00Z",
@@ -34,7 +37,9 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   ...overrides,
 });
 
-const open = (id: string, position: number, overrides: Partial<TaskView> = {}) => task(id, { position, ...overrides });
+// An open task at a rank, with the float the server writes beside it.
+const open = (id: string, rank: number | string, overrides: Partial<TaskView> = {}) =>
+  task(id, { rank: String(rank), position: Number(rank), ...overrides });
 const done = (id: string, minute: number, overrides: Partial<TaskView> = {}) =>
   task(id, { status: "done", updated_at: `2026-09-20T10:${String(minute).padStart(2, "0")}:00Z`, ...overrides });
 
@@ -45,6 +50,28 @@ const ids = (data: TaskPages | undefined) => (data ? flatten(data).map((t) => t.
 const team: PlacementRules = { scope: "team", meId: ME, limits: { open: 200, done: 10 } };
 const mine: PlacementRules = { ...team, scope: "mine" };
 const small: PlacementRules = { ...team, limits: { open: 3, done: 3 } };
+
+describe("the rank", () => {
+  it("compares as a number, never as text or as a float", () => {
+    expect(compareRank("9", "10")).toBeLessThan(0);
+    expect(compareRank("-2", "-10")).toBeGreaterThan(0);
+    expect(compareRank("-1.5", "-1.25")).toBeLessThan(0);
+    expect(compareRank("0.5", "0.50")).toBe(0);
+    expect(compareRank("1.2", "1.15")).toBeGreaterThan(0);
+    expect(compareRank("0.1000000000000000000000001", "0.1000000000000000000000002")).toBeLessThan(0);
+    expect(compareRank("-0.000000000000000000000000001", "0")).toBeLessThan(0);
+  });
+
+  it("orders the open list as the server does: rank, then id", () => {
+    const tasks = [
+      task("d", { rank: "2", position: 2 }),
+      task("b", { rank: "-1.75", position: -1.75 }),
+      task("c", { rank: "-1.75", position: -1.75 }),
+      task("a", { rank: "-10", position: -10 }),
+    ];
+    expect([...tasks].sort(compareOpen).map((t) => t.id)).toEqual(["a", "b", "c", "d"]);
+  });
+});
 
 describe("the server's rules", () => {
   it("shows every task in team, and in mine the ones assigned to me or unassigned and mine", () => {
@@ -79,7 +106,7 @@ describe("placeTask", () => {
     done: pages(page([done("x", 30), done("y", 20)])),
   });
 
-  it("inserts a created task where its position sorts, and leaves done alone", () => {
+  it("inserts a created task where its rank sorts, and leaves done alone", () => {
     const placed = placeTask(lists(), { task: open("n", -1) }, team);
     expect(ids(placed.open.data)).toEqual(["n", "a", "b", "c"]);
     expect(placed.open.outcome).toBe("inserted");
@@ -87,8 +114,22 @@ describe("placeTask", () => {
     expect(ids(placeTask(lists(), { task: open("n", 1.5) }, team).open.data)).toEqual(["a", "b", "n", "c"]);
   });
 
-  it("breaks a tie on position by id, as the server does", () => {
+  it("breaks a tie on rank by id, as the server does", () => {
     expect(ids(placeTask(lists(), { task: open("ab", 0) }, team).open.data)).toEqual(["a", "ab", "b", "c"]);
+  });
+
+  it("places by every digit of the rank, where the floats beside it tie", () => {
+    const close = {
+      open: pages(page([open("a", "0.1000000000000000000000001"), open("c", "0.1000000000000000000000003")])),
+    };
+    const placed = placeTask(close, { task: open("b", "0.1000000000000000000000002") }, team);
+    expect(ids(placed.open.data)).toEqual(["a", "b", "c"]);
+  });
+
+  it("puts a reopen shown before the answer on top, by its position", () => {
+    const shown = task("y", { rank: null, position: Number.NEGATIVE_INFINITY, version: 2 });
+    const placed = placeTask(lists(), { task: shown }, team, { optimistic: true });
+    expect(ids(placed.open.data)).toEqual(["y", "a", "b", "c"]);
   });
 
   it("moves a ticked task from open to the top of done", () => {
@@ -105,7 +146,7 @@ describe("placeTask", () => {
     expect(ids(placed.done.data)).toEqual(["x"]);
   });
 
-  it("reorders an open task whose position moved, and replaces one whose title changed", () => {
+  it("reorders an open task whose rank moved, and replaces one whose title changed", () => {
     const moved = placeTask(lists(), { task: open("a", 1.5, { version: 2 }) }, team);
     expect(ids(moved.open.data)).toEqual(["b", "a", "c"]);
     expect(moved.open.outcome).toBe("reordered");

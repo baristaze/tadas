@@ -92,6 +92,7 @@ class FakeApi:
             "notes": "",
             "status": "open",
             "assignee_id": None,
+            "rank": str(len(self.tasks)),
             "position": float(len(self.tasks)),
             "created_at": NOW,
             "updated_at": NOW,

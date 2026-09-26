@@ -1,5 +1,7 @@
-from collections.abc import Callable, Coroutine
+import asyncio
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -26,6 +28,7 @@ from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
+from tadas.om.tasks.rules import Place, needs_respace, placed
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -206,11 +209,20 @@ async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_versi
     ctx = context(Role.MEMBER)
     first = await manager.create_task(ctx, make_task(ctx, "first"))
     second = await manager.create_task(ctx, make_task(ctx, "second"))
-    assert Task.MANAGER_OWNED_FIELDS == ("position", "version", "reminded_at", "archived_at")
-    forged = first.model_copy(update={"title": "renamed", "position": -1e9, "version": 99})
+    assert Task.MANAGER_OWNED_FIELDS == (
+        "rank",
+        "position",
+        "version",
+        "reminded_at",
+        "archived_at",
+    )
+    forged = first.model_copy(
+        update={"title": "renamed", "rank": Decimal(-(10**9)), "position": -1e9, "version": 99}
+    )
     updated = await manager.update_task(ctx, forged, first.version)
     assert updated.title == "renamed"
-    assert updated.position == first.position and updated.version == first.version + 1
+    assert (updated.rank, updated.position) == (first.rank, first.position)
+    assert updated.version == first.version + 1
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["second", "renamed"]
     stale = second.model_copy(update={"title": "stale"})
     with pytest.raises(PreconditionFailed):
@@ -484,7 +496,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
     # page says another follows instead of hiding the third task.
     page = await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit=1000)
     assert len(page.items) == 2 and page.has_more
-    last = OpenTaskCursor(position=page.items[-1].position, id=page.items[-1].id)
+    last = OpenTaskCursor(rank=page.items[-1].rank, id=page.items[-1].id)
     rest = await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), last, limit=1000)
     assert [t.title for t in rest.items] == ["t0"] and not rest.has_more
 
@@ -508,7 +520,7 @@ async def test_a_client_paging_at_the_clamp_sees_every_task(manager: TasksManage
         seen_open += [t.title for t in page.items]
         if not page.has_more:
             break
-        after = OpenTaskCursor(position=page.items[-1].position, id=page.items[-1].id)
+        after = OpenTaskCursor(rank=page.items[-1].rank, id=page.items[-1].id)
     assert len(seen_open) == 201 and len(set(seen_open)) == 201
     assert seen_open[0] == "open 200" and seen_open[-1] == "open 0"
 
@@ -563,99 +575,195 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     assert [e.seq for e in await events.get_events(ctx, after_seq=0, limit=10)] == [1]
 
 
-async def test_a_gap_closed_at_float_precision_renumbers_the_open_list(
+async def split_one_gap(
+    manager: TasksManagerImpl, ctx: OpContext, moves: int
+) -> tuple[Task, Task, Task, list[str]]:
+    """`moves` moves into one and the same gap: a and c take turns right after
+    b, so every move halves what the one before left. The worst case for a
+    rank, and what made a float run out. Answers b, a, c, and the order the
+    last move asked for."""
+    c = await manager.create_task(ctx, make_task(ctx, "c"))
+    a = await manager.create_task(ctx, make_task(ctx, "a"))
+    b = await manager.create_task(ctx, make_task(ctx, "b"))
+    expected = ["b", "a", "c"]
+    for index in range(moves):
+        moved, expected = (a, ["b", "a", "c"]) if index % 2 == 0 else (c, ["b", "c", "a"])
+        await move(manager, ctx, moved.id, after_id=b.id)
+    return b, a, c, expected
+
+
+async def test_a_move_writes_its_one_row_however_often_a_gap_is_split(
     manager: TasksManagerImpl, events: EventsManagerImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
-    # Fifty-odd moves into the same gap halve it down to nothing: the midpoint
-    # then equals the anchor, and the (position, id) tie-break would put the
-    # moved task before it. The list is renumbered instead, every row that
-    # changed is announced, and the order reads as the move meant it.
+    """A hundred and fifty moves into one gap, twice as many as a float had
+    room for: every move lands where it was asked to, writes the moved task
+    alone, moves no other task's version, and is announced once."""
     ctx = context(Role.MEMBER)
     c = await manager.create_task(ctx, make_task(ctx, "c"))
-    b = await manager.create_task(ctx, make_task(ctx, "b"))
     a = await manager.create_task(ctx, make_task(ctx, "a"))
-    await move(manager, ctx, a.id, after_id=b.id)
-    moved, expected, moves = a, ["b", "a", "c"], 0
-    while [t.position for t in await open_page(manager, ctx)] != [0.0, 1.0, 2.0]:
-        moved, expected = (c, ["b", "c", "a"]) if moved is a else (a, ["b", "a", "c"])
+    b = await manager.create_task(ctx, make_task(ctx, "b"))
+    bystander = await manager.create_task(ctx, make_task(ctx, "bystander"))
+    seen = len(await events.get_events(ctx, after_seq=0, limit=1000))
+    for index in range(150):
+        moved, other, expected = (
+            (a, c, ["bystander", "b", "a", "c"])
+            if index % 2 == 0
+            else (c, a, ["bystander", "b", "c", "a"])
+        )
+        before = {t.id: t.version for t in await open_page(manager, ctx)}
         await move(manager, ctx, moved.id, after_id=b.id)
         assert await open_titles(manager, ctx, TaskScope.TEAM) == expected
-        moves += 1
-        assert moves < 200, "the gap never closed"
-    assert 40 < moves < 120, "a gap of one closes after fifty-odd halvings"
-    # The renumbering is a write per task whose position changed, each announced
-    # and recorded like any update, with nothing left pending in the outbox.
-    # Every one of the three moved to a whole number, so it is the last three.
-    recorded = await events.get_events(ctx, after_seq=0, limit=1000)
-    renumbering = recorded[-3:]
-    assert {e.target_id for e in renumbering} == {a.id, b.id, c.id}
-    assert all(e.kind == "tasks.task.updated" for e in renumbering)
+        after = {t.id: t.version for t in await open_page(manager, ctx)}
+        assert [task_id for task_id in after if after[task_id] != before[task_id]] == [moved.id]
+        assert after[other.id] == before[other.id]
+        recorded = await events.get_events(ctx, after_seq=0, limit=1000)
+        assert [(e.kind, e.target_id) for e in recorded[seen:]] == [
+            ("tasks.task.updated", moved.id)
+        ]
+        seen = len(recorded)
+    assert (await manager.get_task(ctx, bystander.id)).version == bystander.version
+    assert (await manager.get_task(ctx, b.id)).version == b.version
     assert await claim_all(outbox) == []
-    # Halving starts afresh from whole numbers, so the next moves stay ordered.
-    for _ in range(10):
-        await move(manager, ctx, c.id, after_id=b.id)
-        assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "c", "a"]
-        await move(manager, ctx, a.id, after_id=b.id)
-        assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
+    ranks = [t.rank for t in await open_page(manager, ctx)]
+    assert ranks == sorted(set(ranks))
 
 
-async def test_a_move_after_a_tied_anchor_lands_between_the_two(
+async def test_an_edit_of_an_unrelated_task_meets_no_conflict_from_moves(
     manager: TasksManagerImpl,
 ) -> None:
-    """Two open tasks can hold the same position: two creates that read the
-    same list land on it, and so do two moves after the same last anchor. The
-    list orders a tie by id, so "after x" where x ties with y must not put the
-    task behind y. There is no position between them, so the list renumbers."""
+    """Ann reads a task, and while she edits it Bob makes a hundred moves of
+    other tasks into one gap. Her write names the version she read, and it
+    lands: no move wrote her task."""
+    ann = context(Role.MEMBER)
+    bob = ann.model_copy(update={"user_id": new_id()})  # the same org, another person
+    held = await manager.create_task(ann, make_task(ann, "Ann's"))
+    await split_one_gap(manager, bob, 100)
+    edited = await manager.update_task(
+        ann, held.model_copy(update={"title": "Ann's, edited"}), held.version
+    )
+    assert edited.version == held.version + 1
+
+
+async def test_two_moves_at_once_both_land_and_the_order_stays_whole(
+    manager: TasksManagerImpl,
+) -> None:
+    """Two people move two tasks right after the same one at the same moment.
+    Each move writes its own task on its own version, so both land; the two
+    may share a rank, and the id orders them. A later move after either goes
+    after both, and the list keeps every task once."""
+    ctx = context(Role.MEMBER)
+    last = await manager.create_task(ctx, make_task(ctx, "last"))
+    x = await manager.create_task(ctx, make_task(ctx, "x"))
+    y = await manager.create_task(ctx, make_task(ctx, "y"))
+    anchor = await manager.create_task(ctx, make_task(ctx, "anchor"))
+    moved = await asyncio.gather(
+        manager.move_task(ctx, x.id, anchor.id, x.version),
+        manager.move_task(ctx, y.id, anchor.id, y.version),
+    )
+    assert [t.version for t in moved] == [x.version + 1, y.version + 1]
+    titles = await open_titles(manager, ctx, TaskScope.TEAM)
+    assert titles[0] == "anchor" and titles[-1] == "last" and sorted(titles[1:3]) == ["x", "y"]
+    assert (await manager.get_task(ctx, last.id)).version == last.version
+    w = await manager.create_task(ctx, make_task(ctx, "w"))
+    await move(manager, ctx, w.id, after_id=moved[0].id)
+    after = await open_titles(manager, ctx, TaskScope.TEAM)
+    assert after.index("w") > max(after.index("x"), after.index("y"))
+    assert sorted(after) == ["anchor", "last", "w", "x", "y"]
+
+
+async def test_a_move_after_one_of_two_tasks_that_share_a_rank_goes_after_both(
+    manager: TasksManagerImpl,
+) -> None:
+    """Two creates that read the same top land on the same rank, and the list
+    orders the two by id. There is no rank between them, so a task moved
+    after the first goes after both, never onto their rank."""
     ctx = context(Role.MEMBER)
     x = await manager.create_task(ctx, make_task(ctx, "x"))
     y = await manager.create_task(ctx, make_task(ctx, "y"))
     z = await manager.create_task(ctx, make_task(ctx, "z"))
-    # x and y tie on the position two concurrent creates would both have read;
-    # the list reads them by id, and z sits below both.
     storage = manager._storage  # type: ignore[attr-defined]
 
-    async def place(task: Task, position: float) -> None:
-        moved = task.model_copy(update={"position": position, "version": task.version + 1})
+    async def place(task: Task, rank: int) -> None:
+        moved = task.model_copy(update={**placed(Decimal(rank)), "version": task.version + 1})
         await storage.update_tasks(ctx.org_id, [(moved, task.version, (_row(ctx, moved),))])
 
     for task in (x, y):
-        await place(task, 5.0)
-    await place(z, 6.0)
+        await place(task, 5)
+    await place(z, 6)
     first, second = sorted((x, y), key=lambda t: t.id)
     assert await open_titles(manager, ctx, TaskScope.TEAM) == [first.title, second.title, "z"]
-
     w = await manager.create_task(ctx, make_task(ctx, "w"))  # at the top
-    await move(manager, ctx, w.id, after_id=first.id)
+    moved = await move(manager, ctx, w.id, after_id=first.id)
+    assert Decimal(5) < moved.rank < Decimal(6)
     assert await open_titles(manager, ctx, TaskScope.TEAM) == [
         first.title,
-        "w",
         second.title,
+        "w",
         "z",
     ]
-    # The tie is gone: the renumber gave every open task a position of its own.
-    positions = [t.position for t in await open_page(manager, ctx)]
-    assert positions == sorted(set(positions))
 
 
-async def test_an_anchor_that_leaves_the_list_mid_move_is_a_failed_precondition(
+async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
+    manager: TasksManagerImpl, events: EventsManagerImpl
+) -> None:
+    """Past the bound, the sweep gives the run short ranks again: the same
+    order, one write, each task of the run a version on and announced, the
+    tasks around it untouched. A second pass has nothing to do."""
+    ctx = context(Role.MEMBER)
+    below = await manager.create_task(ctx, make_task(ctx, "below"))
+    b, a, c, expected = await split_one_gap(manager, ctx, 90)
+    top = await manager.create_task(ctx, make_task(ctx, "top"))
+    storage = manager._storage  # type: ignore[attr-defined]
+    assert await storage.read_long_place(ctx.org_id) is not None
+    before = {t.id: t for t in await open_page(manager, ctx)}
+    order = await open_titles(manager, ctx, TaskScope.TEAM)
+    assert order == ["top", *expected, "below"]
+    seen = len(await events.get_events(ctx, after_seq=0, limit=1000))
+
+    respaced = await manager.respace_ranks(ctx)
+
+    assert respaced >= 1
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == order
+    after = {t.id: t for t in await open_page(manager, ctx)}
+    assert not any(needs_respace(t.rank) for t in after.values())
+    changed = [task_id for task_id in after if after[task_id].version != before[task_id].version]
+    assert len(changed) == respaced
+    assert all(after[task_id].version == before[task_id].version + 1 for task_id in changed)
+    assert top.id not in changed and below.id not in changed and b.id not in changed
+    assert all(after[task_id].position == float(after[task_id].rank) for task_id in changed)
+    recorded = await events.get_events(ctx, after_seq=0, limit=1000)
+    assert sorted(e.target_id for e in recorded[seen:]) == sorted(changed)
+    assert await storage.read_long_place(ctx.org_id) is None
+    assert await manager.respace_ranks(ctx) == 0
+    assert {a.id, c.id} & set(changed), "the long ranks were the moved ones"
+
+
+async def test_a_respace_whose_run_was_written_meanwhile_waits_for_the_next_pass(
     manager: TasksManagerImpl,
 ) -> None:
-    """The anchor is read, then the open list is read to renumber around it. A
-    delete or a "mark done" of the anchor in between leaves the renumber with
-    nothing to follow: that is the caller's snapshot gone stale, answered as
-    such, not a StopIteration inside a coroutine that ends as a 500."""
+    """A person edits a task of the run between the sweep's read and its
+    write: the respace lands nothing, and her edit stands. The next pass
+    reads the run again and respaces it."""
     ctx = context(Role.MEMBER)
-    anchor = await manager.create_task(ctx, make_task(ctx, "anchor"))
-    task = await manager.create_task(ctx, make_task(ctx, "task"))
-    every_open = manager._every_open_task  # type: ignore[attr-defined]
+    _, a, c, _ = await split_one_gap(manager, ctx, 90)
+    storage = manager._storage  # type: ignore[attr-defined]
+    read_tasks = storage.read_tasks
 
-    async def without_the_anchor(inner_ctx: OpContext) -> list[Task]:
-        return [t for t in await every_open(inner_ctx) if t.id != anchor.id]
+    async def edited_meanwhile(org_id: UUID, task_ids: Sequence[UUID]) -> dict[UUID, Task]:
+        found = await read_tasks(org_id, task_ids)
+        for task in (a, c):
+            current = await manager.get_task(ctx, task.id)
+            await manager.update_task(
+                ctx, current.model_copy(update={"title": f"{task.title}!"}), current.version
+            )
+        return found
 
-    manager._every_open_task = without_the_anchor  # type: ignore[attr-defined]
-    current = await manager.get_task(ctx, task.id)
-    with pytest.raises(PreconditionFailed):
-        await manager._renumber(ctx, current, anchor, current.version)  # type: ignore[attr-defined]
+    storage.read_tasks = edited_meanwhile
+    assert await manager.respace_ranks(ctx) == 0
+    assert {t.title for t in await open_page(manager, ctx)} >= {"a!", "c!"}
+    storage.read_tasks = read_tasks
+    assert await manager.respace_ranks(ctx) > 0
+    assert await storage.read_long_place(ctx.org_id) is None
 
 
 async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
@@ -720,8 +828,8 @@ async def test_a_placement_reads_one_place_however_long_the_open_list(
     reads: list[tuple[int, int]] = []
 
     async def counted(
-        org_id: UUID, exclude: UUID | None, after: tuple[float, UUID] | None, limit: int
-    ) -> list[tuple[float, UUID]]:
+        org_id: UUID, exclude: UUID | None, after: Place | None, limit: int
+    ) -> list[Place]:
         places = await read(org_id, exclude, after, limit)
         reads.append((limit, len(places)))
         return places

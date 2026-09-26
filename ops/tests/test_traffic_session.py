@@ -435,9 +435,9 @@ async def session_over(api: FakeApi) -> tuple[SessionOutcome, list[str]]:
 
 
 async def test_a_412_on_a_move_reads_the_task_afresh_and_moves_it_on_the_fresh_version() -> None:
-    """Another session's move renumbered the org's open list, so the version
-    this session holds is stale: the API says 412, and the session reads the
-    task and moves it once more. A conflict, counted, and not a failure."""
+    """Another writer changed the task, so the version this session holds is
+    stale: the API says 412, and the session reads the task and moves it once
+    more. A conflict, counted, and not a failure."""
     api = FakeApi(interfere={"POST /v1/tasks/{id}/move": ["bump"]})
     outcome, steps = await session_over(api)
     assert outcome.completed and outcome.failure is None, outcome.failure

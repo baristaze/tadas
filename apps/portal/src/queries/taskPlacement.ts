@@ -3,8 +3,8 @@
 // write, and the single read a push about a task leads to. Values in, values
 // out; the cache module (`taskCache.ts`) reads the lists and writes them back.
 //
-// The cached lists mirror the server's order: open by (position, id), top
-// first; done by (updated_at, id), newest first. `mine` shows a task assigned
+// The cached lists mirror the server's order: open by (rank, id), top first;
+// done by (updated_at, id), newest first. `mine` shows a task assigned
 // to the person, or unassigned and created by them; `team` shows every task
 // (the server's `is_visible`). An archived or a deleted task is in neither.
 //
@@ -39,8 +39,7 @@ export interface PlacementOptions {
   /** An edit made before the server answers: no version check. */
   optimistic?: boolean;
   /** A task already in the list keeps its row (the answer to a drag, whose
-   * order the page already shows, and whose position may be on a renumbered
-   * scale the other rows have not heard of yet). */
+   * order the page already shows). */
   inPlace?: boolean;
 }
 
@@ -72,9 +71,33 @@ export function belongsIn(task: TaskView, status: TaskStatus, rules: PlacementRu
 
 const byId = (a: TaskView, b: TaskView) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-/** The open list's order: position, then id, ascending. */
+/** A rank as the exact decimal it is: its digits as one integer, and how
+ * many of them are after the point. */
+function decimalOf(rank: string): { units: bigint; scale: number } {
+  const negative = rank.startsWith("-");
+  const [whole = "0", fraction = ""] = rank.replace(/^[-+]/, "").split(".");
+  const units = BigInt(`${whole}${fraction}` || "0");
+  return { units: negative ? -units : units, scale: fraction.length };
+}
+
+/** Two ranks compared as numbers, exactly: never as floats, which tie past
+ * sixteen digits, and never as text, which sorts "10" before "9". */
+export function compareRank(a: string, b: string): number {
+  if (a === b) return 0;
+  const x = decimalOf(a);
+  const y = decimalOf(b);
+  const scale = Math.max(x.scale, y.scale);
+  const left = x.units * 10n ** BigInt(scale - x.scale);
+  const right = y.units * 10n ** BigInt(scale - y.scale);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** The open list's order: rank, then id, ascending. A task without a rank
+ * (a reopen shown before the server answers, or an answer from a build that
+ * predates the rank) is placed by its position. */
 export function compareOpen(a: TaskView, b: TaskView): number {
-  return a.position - b.position || byId(a, b);
+  const byPlace = a.rank != null && b.rank != null ? compareRank(a.rank, b.rank) : a.position - b.position;
+  return byPlace || byId(a, b);
 }
 
 /** An instant in microseconds, the precision the server orders by; a

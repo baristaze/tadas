@@ -1,11 +1,18 @@
+import base64
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 from api_support import add_member, sign_in_as
 
 from tadas.om.base import PROVENANCE_FIELDS
+from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import Role
+from tadas.om.tasks.types.filter import OpenTaskCursor
+from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.container import AppContainer
+from tadas.services.api.services.impl.tasks import decode_cursor
 from tadas.services.api.types.tasks import UpdateTaskRequest
 
 
@@ -173,6 +180,46 @@ async def test_move_and_scopes(
     unassigned = await patch(client, owner, back.json(), assignee_id=None)
     assert unassigned["assignee_id"] is None
     assert await titles(client, owner, scope="mine") == ["a", "b", "c"]
+
+
+async def test_a_move_answers_the_rank_written_out_and_moves_no_other_task(
+    client: httpx.AsyncClient, owner: dict[str, str]
+) -> None:
+    """Sixty moves into one gap: the rank on the wire is the decimal in full,
+    never in exponent form and never a float, the order is the one asked
+    for, and the task nobody moved keeps its version."""
+    c = await add(client, owner, "c")
+    a = await add(client, owner, "a")
+    b = await add(client, owner, "b")
+    assert (b["rank"], a["rank"], c["rank"]) == ("-2", "-1", "0")
+    rank = ""
+    for index in range(60):
+        moved = a if index % 2 == 0 else c
+        current = (await client.get(f"/v1/tasks/{moved['id']}", headers=owner)).json()
+        answer = await move(client, owner, current, b["id"])
+        assert answer.status_code == 200, answer.text
+        rank = answer.json()["rank"]
+        assert isinstance(rank, str) and "E" not in rank.upper()
+        assert answer.json()["position"] == float(rank)
+    assert len(rank.split(".")[1]) > 15, "past what a float holds"
+    listed = (await client.get("/v1/tasks", headers=owner)).json()["items"]
+    assert [t["title"] for t in listed] == ["b", "c", "a"], "c moved last, right after b"
+    assert next(t for t in listed if t["title"] == "b")["version"] == b["version"]
+
+
+def test_an_open_cursor_reads_a_rank_and_one_the_release_before_issued() -> None:
+    """The release before wrote the position's float into the cursor; the
+    rank was filled from that float's text, so the cursor reads the same."""
+    task_id = uuid4()
+    for mark in ("-3.0", "1e-05", "0.30000000000000004"):
+        raw = base64.urlsafe_b64encode(f"open|{mark}|{task_id}".encode()).decode().rstrip("=")
+        cursor = decode_cursor(TaskStatus.OPEN, raw)
+        assert isinstance(cursor, OpenTaskCursor)
+        assert cursor.rank == Decimal(mark) and cursor.id == task_id
+    for mark in ("NaN", "Infinity", "one"):
+        raw = base64.urlsafe_b64encode(f"open|{mark}|{task_id}".encode()).decode().rstrip("=")
+        with pytest.raises(ValidationFailed):
+            decode_cursor(TaskStatus.OPEN, raw)
 
 
 async def test_task_errors_use_the_envelope(

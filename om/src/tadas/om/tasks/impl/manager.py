@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from tadas.infra.observability import OUTCOMES
@@ -45,9 +46,11 @@ from tadas.om.tasks.rules import (
     BULK_REPORT_CAP,
     CLEANUP_BATCH,
     IMPORT_BATCH,
+    RESPACE_REACH,
     ImportedTask,
     ImportFileRefused,
-    bulk_positions,
+    Place,
+    bulk_ranks,
     bulk_skip,
     cleanup_part,
     cleanup_period,
@@ -55,14 +58,16 @@ from tadas.om.tasks.rules import (
     import_refusal,
     import_row_part,
     imported,
-    is_between,
     parse_import,
-    position_after,
+    placed,
+    rank_after,
     reminder_person,
     reminder_time,
-    renumbered,
+    respace_run,
+    respaced,
     room_for,
-    top_position,
+    spread,
+    top_rank,
 )
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.bulk import (
@@ -89,8 +94,8 @@ log = logging.getLogger(__name__)
 NEIGHBOURS = 1
 """How many open places a placement reads: the top one for a task placed on
 top, the one after the anchor for a move. The rules decide from that place
-alone (tasks.rules.top_position, position_after, is_between), so the read
-stays one row however long the open list grows."""
+alone (tasks.rules.top_rank, rank_after), so the read stays one row however
+long the open list grows, and the write is the placed task's one row."""
 
 
 class TasksOptions(Platform):
@@ -231,7 +236,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "deleted_at": None,
                 "deleted_by": None,
                 "status": TaskStatus.OPEN,
-                "position": await self._top_position(ctx, exclude=task.id),
+                **placed(await self._top_rank(ctx, exclude=task.id)),
                 "version": 1,
                 "reminded_at": None,
             }
@@ -274,7 +279,7 @@ class TasksManagerImpl(TasksManagerInterface):
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             await self._room_for_one_more(ctx)
-            changes["position"] = await self._top_position(ctx, exclude=task.id)
+            changes.update(placed(await self._top_rank(ctx, exclude=task.id)))
             changes["archived_at"] = None  # an open task is never archived
         rescheduled = task.due_on != current.due_on
         if rescheduled:
@@ -304,22 +309,18 @@ class TasksManagerImpl(TasksManagerInterface):
         if after_id == task_id:
             raise ValidationFailed("a task cannot be placed after itself")
         if after_id is None:
-            position = await self._top_position(ctx, exclude=task_id)
+            rank = await self._top_rank(ctx, exclude=task_id)
         else:
             anchor = await self.get_task(ctx, after_id)
             if anchor.status != TaskStatus.OPEN:
                 raise ValidationFailed("a task can only be placed after an open task")
-            at = (anchor.position, anchor.id)
-            # The one place that follows the anchor is all the rules read.
-            places = await self._storage.read_open_places(
-                ctx.org_id, exclude=task_id, after=at, limit=NEIGHBOURS
-            )
-            position = position_after(at, places)
-            if not is_between(at, position, places):
-                return await self._renumber(ctx, task, anchor, expected_version)
+            following = await self._rank_past(ctx, (anchor.rank, anchor.id), exclude=task_id)
+            rank = rank_after(anchor.rank, following)
+        # One row: there is always a rank between two others, so no other
+        # task is written and no other task's version moves.
         moved = task.model_copy(
             update={
-                "position": position,
+                **placed(rank),
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
                 "version": expected_version + 1,
@@ -369,7 +370,7 @@ class TasksManagerImpl(TasksManagerInterface):
             await self._change_batch(ctx, bulk, [(task.id, task) for task in page])
             if len(page) < BULK_BATCH:
                 break
-            after = OpenTaskCursor(position=page[-1].position, id=page[-1].id)
+            after = OpenTaskCursor(rank=page[-1].rank, id=page[-1].id)
             before = TaskCursor(updated_at=page[-1].updated_at, id=page[-1].id)
         return self._finished(ctx, bulk)
 
@@ -404,12 +405,12 @@ class TasksManagerImpl(TasksManagerInterface):
             return
         now = utcnow()
         changes: dict[str, object] = {"updated_at": now, "updated_by": ctx.user_id}
-        positions: list[float] = []
+        ranks: list[Decimal] = []
         if bulk.action is BulkAction.REOPEN:
             top = await self._storage.read_open_places(
                 ctx.org_id, exclude=None, after=None, limit=NEIGHBOURS
             )
-            positions = bulk_positions(top_position(top), len(chosen))
+            ranks = bulk_ranks(top[0][0] if top else None, len(chosen))
         updates: list[tuple[Task, int, tuple[OutboxRow, ...]]] = []
         for index, task in enumerate(chosen):
             if bulk.action is BulkAction.COMPLETE:
@@ -422,7 +423,7 @@ class TasksManagerImpl(TasksManagerInterface):
                     update={
                         **changes,
                         "status": TaskStatus.OPEN,
-                        "position": positions[index],
+                        **placed(ranks[index]),
                         "archived_at": None,
                         "version": task.version + 1,
                     }
@@ -617,9 +618,9 @@ class TasksManagerImpl(TasksManagerInterface):
         if not made:
             return []
         last = await self._storage.read_last_place(ctx.org_id)
-        bottom = last[0] if last is not None else -1.0
+        ranks = spread(last[0] if last is not None else None, None, len(made))
         tasks: list[tuple[Task, tuple[OutboxRow, ...]]] = []
-        for offset, row in enumerate(made, start=1):
+        for rank, row in zip(ranks, made, strict=True):
             task = Task(
                 id=derived_id(record.id, record.created_at, import_row_part(row.number)),
                 created_at=now,
@@ -631,7 +632,8 @@ class TasksManagerImpl(TasksManagerInterface):
                 notes=row.notes,
                 assignee_id=row.assignee_id,
                 due_on=row.due_on,
-                position=bottom + offset,
+                rank=rank,
+                position=float(rank),  # the mirror `placed` writes
             )
             rows = (
                 outbox_row(ctx, "tasks.task.created", task.id, {}),
@@ -801,6 +803,49 @@ class TasksManagerImpl(TasksManagerInterface):
             await self._relay.relay(ctx.org_id, row)
         return reminded
 
+    async def respace_ranks(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        long = await self._storage.read_long_place(ctx.org_id)
+        if long is None:
+            return 0
+        above = await self._storage.read_open_places_before(ctx.org_id, long, RESPACE_REACH)
+        below = await self._storage.read_open_places(
+            ctx.org_id, exclude=None, after=long, limit=RESPACE_REACH
+        )
+        run = respace_run(long, above, below, RESPACE_REACH)
+        if run.low is not None and run.high is not None and not run.low < run.high:
+            # Every place the reach read shares one rank: nothing fits between.
+            log.warning("respace: no room around task %s in org %s", long[1], ctx.org_id)
+            return 0
+        found = await self._storage.read_tasks(ctx.org_id, [task_id for _, task_id in run.places])
+        now = utcnow()
+        updates: list[tuple[Task, int, tuple[OutboxRow, ...]]] = []
+        for (rank, task_id), new_rank in zip(run.places, respaced(run), strict=True):
+            task = found.get(task_id)
+            if (
+                task is None
+                or task.deleted_at is not None
+                or task.status != TaskStatus.OPEN
+                or task.rank != rank
+            ):
+                return 0  # the run moved since it was read; the next pass reads it again
+            written = task.model_copy(
+                update={
+                    **placed(new_rank),
+                    "updated_at": now,
+                    "updated_by": ctx.user_id,
+                    "version": task.version + 1,
+                }
+            )
+            rows = (outbox_row(ctx, "tasks.task.updated", task.id, {}),)
+            updates.append((written, task.version, rows))
+        try:
+            await self._storage.update_tasks(ctx.org_id, updates)
+        except PreconditionFailed:
+            return 0  # a task of the run was written meanwhile; the next pass reads again
+        await self._relay_all(ctx, [row for _, _, rows in updates for row in rows])
+        return len(updates)
+
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         batch = self._options.purge_batch
@@ -862,62 +907,28 @@ class TasksManagerImpl(TasksManagerInterface):
         if criterion.user_id != ctx.user_id:
             raise ValidationFailed("a task list is scoped to the caller")
 
-    async def _top_position(self, ctx: OpContext, exclude: UUID) -> float:
+    async def _top_rank(self, ctx: OpContext, exclude: UUID) -> Decimal:
         # The top place is all the rule reads.
         top = await self._storage.read_open_places(
             ctx.org_id, exclude=exclude, after=None, limit=NEIGHBOURS
         )
-        return top_position(top)
+        return top_rank(top)
 
-    async def _renumber(self, ctx: OpContext, task: Task, anchor: Task, version: int) -> Task:
-        """The gap after the anchor has closed at float precision, so the open
-        list is renumbered with the task in its place: one write, conditioned
-        on every row's version, and one outbox row per task whose position
-        changed, since a client sorts by what it hears."""
-        ordered = [t for t in await self._every_open_task(ctx) if t.id != task.id]
-        # The anchor was read before this list was; a concurrent delete or
-        # "mark done" of it between the two reads leaves the move with nothing
-        # to follow. That is the caller's snapshot gone stale, the same answer
-        # every other refused write here gives, not a crash inside the renumber.
-        at = next((index for index, t in enumerate(ordered) if t.id == anchor.id), None)
-        if at is None:
-            raise PreconditionFailed(f"task {anchor.id} left the open list while {task.id} moved")
-        ordered.insert(at + 1, task.model_copy(update={"version": version}))
-        now = utcnow()
-        updates: list[tuple[Task, int, tuple[OutboxRow, ...]]] = []
-        moved = task
-        for current, position in zip(ordered, renumbered(len(ordered)), strict=True):
-            if current.id != task.id and current.position == position:
-                continue
-            placed = current.model_copy(
-                update={
-                    "position": position,
-                    "updated_at": now,
-                    "updated_by": ctx.user_id,
-                    "version": current.version + 1,
-                }
-            )
-            rows = (outbox_row(ctx, "tasks.task.updated", placed.id, {}),)
-            updates.append((placed, current.version, rows))
-            if current.id == task.id:
-                moved = placed
-        await self._storage.update_tasks(ctx.org_id, updates)
-        await self._relay_all(ctx, [row for _, _, rows in updates for row in rows])
-        return moved
-
-    async def _every_open_task(self, ctx: OpContext) -> list[Task]:
-        """Every open task of the org, top first, a page at a time."""
-        criterion = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
-        tasks: list[Task] = []
-        after: OpenTaskCursor | None = None
+    async def _rank_past(self, ctx: OpContext, anchor: Place, exclude: UUID) -> Decimal | None:
+        """The smallest open rank strictly past the anchor's, the moved task
+        aside; None when the anchor is last. One place is read at a time; a
+        place that shares the anchor's rank, which two writers placing at
+        once can leave, is stepped over."""
+        after = anchor
         while True:
-            page = await self._storage.read_open_tasks(
-                ctx.org_id, criterion, after, self._options.max_limit
+            places = await self._storage.read_open_places(
+                ctx.org_id, exclude=exclude, after=after, limit=NEIGHBOURS
             )
-            tasks.extend(page)
-            if len(page) < self._options.max_limit:
-                return tasks
-            after = OpenTaskCursor(position=page[-1].position, id=page[-1].id)
+            if not places:
+                return None
+            if places[0][0] > anchor[0]:
+                return places[0][0]
+            after = places[0]
 
     async def _verify(self, ctx: OpContext, task: Task, current: Task | None = None) -> None:
         """What a caller may not write. The assignee is checked when the

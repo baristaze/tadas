@@ -10,11 +10,11 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.tasks.rules import (
     Place,
-    follows,
     is_after,
     is_archivable,
     is_before,
     is_visible,
+    needs_respace,
 )
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -49,7 +49,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
             for t in self._live(org_id, TaskStatus.OPEN)
             if is_visible(t, criterion) and (after is None or is_after(t, after))
         ]
-        return sorted(tasks, key=lambda t: (t.position, t.id))[:limit]
+        return sorted(tasks, key=lambda t: (t.rank, t.id))[:limit]
 
     async def read_recent_open_tasks(
         self, org_id: UUID, criterion: TaskFilter, limit: int
@@ -100,7 +100,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         return sorted(tasks, key=lambda t: (t.updated_at, t.id), reverse=True)[:limit]
 
     async def read_last_place(self, org_id: UUID) -> Place | None:
-        places = [(t.position, t.id) for t in self._live(org_id, TaskStatus.OPEN)]
+        places = [(t.rank, t.id) for t in self._live(org_id, TaskStatus.OPEN)]
         return max(places) if places else None
 
     async def read_archivable(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
@@ -165,10 +165,18 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     async def read_open_places(
         self, org_id: UUID, exclude: UUID | None, after: Place | None, limit: int
     ) -> list[Place]:
+        places = [(t.rank, t.id) for t in self._live(org_id, TaskStatus.OPEN) if t.id != exclude]
+        return sorted(p for p in places if after is None or p > after)[:limit]
+
+    async def read_open_places_before(self, org_id: UUID, before: Place, limit: int) -> list[Place]:
+        places = [(t.rank, t.id) for t in self._live(org_id, TaskStatus.OPEN)]
+        return sorted((p for p in places if p < before), reverse=True)[:limit]
+
+    async def read_long_place(self, org_id: UUID) -> Place | None:
         places = [
-            (t.position, t.id) for t in self._live(org_id, TaskStatus.OPEN) if t.id != exclude
+            (t.rank, t.id) for t in self._live(org_id, TaskStatus.OPEN) if needs_respace(t.rank)
         ]
-        return sorted(p for p in places if after is None or follows(p, after))[:limit]
+        return min(places) if places else None
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         return self._get(self._tasks, org_id, task_id)
