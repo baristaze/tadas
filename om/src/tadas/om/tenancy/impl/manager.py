@@ -143,6 +143,9 @@ IDENTITY_CREDENTIALS = (
 """The credentials that prove an identity: the person's own sign-in, a
 session exchanged from it, and an operator token, which reaches the operator
 plane and nothing else. An api key is an agent's and proves none."""
+SIGN_IN_USED = "this sign-in was used already; sign in again"
+"""The refusal of a sign-in presented after its exchange: a sign-in makes one
+session, so a retry, a second choice, or a replay starts a new sign-in."""
 
 
 class TenancyOptions(Platform):
@@ -762,10 +765,36 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if ictx.credential_kind is CredentialKind.SESSION_TOKEN:
             await self._switch(ictx, presented, org_id, session, now)
         else:
-            await self._storage.write_session(org_id, session)
+            await self._exchange_sign_in(ictx, presented, org_id, session, now)
         return IssuedSession(
             token=token, expires_at=session.expires_at, org=org, user=user, role=membership.role
         )
+
+    async def _exchange_sign_in(
+        self,
+        ictx: IdentityContext,
+        found: tuple[UUID, Session],
+        org_id: UUID,
+        session: Session,
+        now: datetime,
+    ) -> None:
+        """The exchange of a sign-in: it ends in the write that lands the
+        session, so one sign-in makes one session. A second exchange of it,
+        a replay or a retry, is refused, and the person signs in again. A
+        sign-in has no socket and no tenant, so nothing is announced."""
+        _, presented = found
+        self._check_session(presented, CredentialKind.LOGIN)
+        ended = presented.model_copy(
+            update={"revoked_at": now, "updated_at": now, "updated_by": ictx.identity_id}
+        )
+        try:
+            await self._storage.exchange_sign_in(org_id, session, ended)
+        except NotFound:
+            raise InvalidCredential("the sign-in behind the exchange is gone") from None
+        except UniqueKeyTaken:
+            raise  # a key of the new session, not the sign-in presented
+        except Conflict:
+            raise CredentialExpired(SIGN_IN_USED) from None
 
     async def _switch(
         self,
@@ -1718,7 +1747,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if session.credential_kind is not kind:
             raise InvalidCredential("credential kind does not match its prefix")
         if session.revoked_at is not None:
-            raise CredentialExpired("session revoked")
+            # A sign-in ends only by its exchange, so an ended one was used.
+            raise CredentialExpired(
+                SIGN_IN_USED if kind is CredentialKind.LOGIN else "session revoked"
+            )
         now = utcnow()
         if session.expires_at <= now:
             raise CredentialExpired("session expired")

@@ -107,6 +107,10 @@ async def verify_second_factor(
     return await tenancy.verify_second_factor(identity, body)
 
 
+# A sign-in is exchanged once: the exchange ends it in the write that makes
+# the session, so the sign-in is the exchange's key and the route carries no
+# Idempotency-Key. A retry after a lost answer is refused and the person signs
+# in again (ADR 0037). Presented with a session, it is a switch.
 @router.post("/auth/sessions", response_model=IssuedSessionView)
 async def exchange_session(
     identity: Identity, tenancy: TenancyService, body: ExchangeSessionRequest

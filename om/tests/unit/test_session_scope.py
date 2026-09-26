@@ -49,6 +49,19 @@ SYSTEM_SCOPE_HELPERS: frozenset[tuple[str, str]] = frozenset(
 """The two functions that pass the system scope and are not interface methods,
 each with its reason above. Nothing else may, and a new entry is a decision."""
 
+SYSTEM_SCOPE_WRITES: frozenset[tuple[str, str]] = frozenset(
+    {
+        # The exchange of a sign-in. It takes the tenant the session lands in,
+        # so it is no tenant-less method, but the sign-in it ends is a row of
+        # the system scope, which only the system scope writes. The one
+        # transaction opens there and sets the tenant before its insert
+        # (ADR 0037).
+        ("TenancyStorageInterface", "exchange_sign_in"),
+    }
+)
+"""Tenant methods that also open the system scope, each with its reason above.
+A new entry is a decision too."""
+
 
 def impl_modules() -> list[Path]:
     found = sorted(OM_ROOT.glob("*/storage/impl/postgres.py"))
@@ -112,10 +125,14 @@ def test_the_system_scope_reaches_the_funnel_only_where_it_is_named() -> None:
     assert helpers == SYSTEM_SCOPE_HELPERS, (
         f"named but no longer passing the system scope: {SYSTEM_SCOPE_HELPERS - helpers}"
     )
+    writes = {(IMPL_INTERFACES.get(c), m) for c, m in found} & SYSTEM_SCOPE_WRITES
+    assert writes == SYSTEM_SCOPE_WRITES, (
+        f"named but no longer passing the system scope: {SYSTEM_SCOPE_WRITES - writes}"
+    )
     for class_name, method in sorted(found - SYSTEM_SCOPE_HELPERS):
         interface = IMPL_INTERFACES.get(class_name)
         assert interface is not None, f"{class_name}.{method} is in no interface"
-        assert (interface, method) in STORAGE_EXCEPTIONS, (
+        assert (interface, method) in STORAGE_EXCEPTIONS | SYSTEM_SCOPE_WRITES, (
             f"({interface}, {method}) reads across tenants and is not an enumerated exception"
         )
 

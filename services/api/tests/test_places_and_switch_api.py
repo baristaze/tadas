@@ -1,6 +1,7 @@
 """The memberships of the signed-in person, the switch between tenants, and
 a team org of one's own, over the whole API in-process."""
 
+import asyncio
 from uuid import UUID
 
 import httpx
@@ -96,21 +97,67 @@ async def test_a_switch_ends_the_session_it_was_presented_with(
     assert (await client.get("/v1/me", headers=bearer(switched))).status_code == 401
 
 
+async def test_a_sign_in_is_exchanged_once(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    acme, beta = await two_orgs(client, container)
+    login = (await client.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})).json()
+    session = await enter(client, login["token"], acme)
+    # Again with the same sign-in, for the same org or another: 401, and no
+    # second session. A retry after a lost answer meets the same refusal.
+    for org_id in (acme, beta):
+        again = await client.post(
+            "/v1/auth/sessions", json={"org_id": org_id}, headers=bearer(login["token"])
+        )
+        assert again.status_code == 401, again.text
+        assert "sign in again" in again.json()["error"]["message"]
+    places = await client.get("/v1/auth/memberships", headers=bearer(login["token"]))
+    assert places.status_code == 401, places.text
+    live = await client.get("/v1/sessions", headers=bearer(session))
+    assert live.status_code == 200, live.text
+    assert len(live.json()) == 1
+    # The session it made is the one the person holds; a switch is its own exchange.
+    switched = await enter(client, session, beta)
+    assert (await client.get("/v1/me", headers=bearer(switched))).json()["org"]["id"] == beta
+
+
+async def test_exchanges_of_one_sign_in_at_once_make_one_session(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    """Three clicks on the picker, delivered together: one session, and two 401s."""
+    acme, _ = await two_orgs(client, container)
+    login = (await client.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})).json()
+    answers = await asyncio.gather(
+        *(
+            client.post("/v1/auth/sessions", json={"org_id": acme}, headers=bearer(login["token"]))
+            for _ in range(3)
+        )
+    )
+    assert sorted(answer.status_code for answer in answers) == [200, 401, 401]
+    won = next(answer for answer in answers if answer.status_code == 200)
+    live = await client.get("/v1/sessions", headers=bearer(won.json()["token"]))
+    assert len(live.json()) == 1
+
+
 async def test_a_session_never_admits_an_operator(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
     """A portal session proves the identity, and the identity is on the
     operator allowlist; the operator plane still refuses a tenant's
-    credential, even one exchanged from a sign-in with a second factor."""
+    credential, even one exchanged from a sign-in with a second factor. The
+    exchange ends that sign-in, so the plane refuses it after too: an
+    operator who enters a tenant signs in again for the plane."""
     admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    admitted = await client.get("/v1/admin/orgs", headers=admin)
+    assert admitted.status_code == 200, admitted.text
     orgs = await client.get("/v1/auth/memberships", headers=admin)
     ops = next(m["org"]["id"] for m in orgs.json()["items"] if m["org"]["kind"] == "team")
     session = await client.post("/v1/auth/sessions", headers=admin, json={"org_id": ops})
     assert session.status_code == 200, session.text
     refused = await client.get("/v1/admin/orgs", headers=bearer(session.json()["token"]))
     assert refused.status_code == 401, refused.text
-    admitted = await client.get("/v1/admin/orgs", headers=admin)
-    assert admitted.status_code == 200, admitted.text
+    used = await client.get("/v1/admin/orgs", headers=admin)
+    assert used.status_code == 401, used.text
 
 
 # A team org of one's own.

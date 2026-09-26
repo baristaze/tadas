@@ -205,7 +205,12 @@ class TenancyManagerInterface(ABC):
     async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
         """Platform-internal: exchanges the verified identity for a tenant-scoped
         session token; NotAuthorized when the identity is not a member of
-        `org_id`. An identity proven by a session is a switch: that session
+        `org_id`, and the credential presented still stands. A sign-in is
+        exchanged once: it ends in the same write that lands the session, so
+        one sign-in makes one session. A second exchange of it, a retry after
+        a lost answer among them, is refused with CredentialExpired, and the
+        person signs in again; of two exchanges at once, one lands. An
+        identity proven by a session is a switch: that session
         ends in the same write that lands the new one, announced as any
         revocation is, so its socket closes and a tab never holds two live
         sessions. A session another write already ended is refused with

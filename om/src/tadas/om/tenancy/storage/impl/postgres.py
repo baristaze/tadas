@@ -577,6 +577,29 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 taken = violated_constraint(error) or "a unique key"
                 raise UniqueKeyTaken(f"sessions {session.id}: {taken} is taken") from error
 
+    async def exchange_sign_in(self, org_id: UUID, session: Session, ended: Session) -> None:
+        # One transaction on the system login, which the sign-in's row needs:
+        # the sign-in is ended under the system scope, then the scope is set
+        # to the new session's tenant for its insert, so the insert is fenced
+        # by the tenant it lands in. The row lock makes a second exchange of
+        # the same sign-in wait and then find it ended.
+        async with self._session_for(Sessions, org_id=EMPTY_UUID) as db:
+            row = await db.get(Sessions, ended.id, with_for_update=True)
+            if row is None or row.org_id != EMPTY_UUID:
+                raise NotFound(f"session {ended.id} is not a sign-in")
+            if row.revoked_at is not None:
+                raise Conflict(f"sign-in {ended.id} was exchanged already")
+            apply_row(row, ended)
+            try:
+                await db.flush()
+                await set_scope(db, org_id, None, None)
+                db.add(to_row(session, Sessions, org_id=org_id))
+                await db.commit()
+            except IntegrityError as error:
+                await db.rollback()
+                taken = violated_constraint(error) or "a unique key"
+                raise UniqueKeyTaken(f"sessions {session.id}: {taken} is taken") from error
+
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
     ) -> list[ApiKey]:

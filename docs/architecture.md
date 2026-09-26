@@ -203,7 +203,12 @@ context on keeps the stage the callee needs.
   (`/v1/auth/sign-in`, `/callback`, `/device`, `/device/token`,
   `/dev-sign-in`, `/second-factor`) share the login rate limit per
   client address and carry no Idempotency-Key (the marker is kept per
-  tenant and principal, and none exists yet). An exchange
+  tenant and principal, and none exists yet). The exchange of a
+  login ends it: `exchange_sign_in` revokes the login and lands the
+  session in one transaction, on the system login since the login is a
+  system-scope row, the insert under the new session's tenant; a second
+  exchange of it is `CredentialExpired` (401), and the exchange takes no
+  Idempotency-Key, since the login is its key (ADR 0037). An exchange
   presented with a session is a switch: `replace_session` revokes it and
   lands the new one in one transaction, each statement under its own
   tenant's scope, with the revocation's outbox row, so the old socket

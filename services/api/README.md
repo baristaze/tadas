@@ -20,7 +20,7 @@ change. A name the image does not host refuses the boot.
   finish a device sign-in for the command line (`/v1/auth/device`,
   `/v1/auth/device/token`). Confirm an operator's second factor on a
   sign-in (`/v1/auth/second-factor`). List my places; exchange the
-  login, or switch a session, for a session in one org; sign out
+  login, once, or switch a session, for a session in one org; sign out
   (`/v1/auth/memberships`, `/v1/auth/sessions`, `/v1/auth/logout`).
   The sign-out takes an optional `return_to`, one of this
   environment's `TADAS_SIGN_OUT_RETURN_URIS`, and answers the session
