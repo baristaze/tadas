@@ -26,7 +26,7 @@ from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.opcontext import CredentialKind, OpContext, RequestContext, Role, build_context
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.tasks.rules import RANK_SCALE_BOUND, placed
+from tadas.om.tasks.rules import RANK_SCALE_BOUND
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy.rules import permissions_of
@@ -909,7 +909,7 @@ async def test_a_tenant_with_no_chore_due_costs_the_pass_no_read_of_its_tasks(
     stretched = Decimal("0." + "0" * RANK_SCALE_BOUND + "1")
     await storage.update_task(
         long.org_id,
-        spaced.model_copy(update={**placed(stretched), "version": spaced.version + 1}),
+        spaced.model_copy(update={"rank": stretched, "version": spaced.version + 1}),
         spaced.version,
         (),
     )

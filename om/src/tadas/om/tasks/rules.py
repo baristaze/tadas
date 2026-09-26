@@ -173,13 +173,6 @@ def respaced(run: Run) -> list[Decimal]:
     return spread(run.low, run.high, len(run.places))
 
 
-def placed(rank: Decimal) -> dict[str, object]:
-    """The fields a placement writes: the rank, and the position beside it,
-    the rank as the float the release before orders by. The position goes
-    with that release (ADR 0050)."""
-    return {"rank": rank, "position": float(rank)}
-
-
 def is_visible(task: Task, criterion: TaskFilter) -> bool:
     """`team` shows every task; `mine` shows a task assigned to the person, or
     unassigned and created by them."""
