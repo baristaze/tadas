@@ -241,16 +241,21 @@ Zustand, one realtime channel.
 
 ```bash
 pnpm install
-pnpm --filter @tadas/portal dev     # http://localhost:5173, API at VITE_API_URL
+pnpm --filter @tadas/portal dev     # http://localhost:5173; /v1 forwards to the API on 127.0.0.1:8000
 pnpm --filter @tadas/portal test
 ```
 
+The page calls the API on its own origin, locally as in the cloud. The dev
+server forwards `/v1`, the realtime socket included, to the API on
+`127.0.0.1:8000`; `TADAS_PORTAL_API_TARGET` points it at another. So no
+request the page makes is cross-origin, and no browser sends a preflight.
+
 `make stack-up` from the repository root also serves a production build
 in a container at http://localhost:55173, from
-`deployment/docker/portal.Dockerfile`. The API address is compiled into
-that bundle (build argument `VITE_API_URL`, default
-`http://127.0.0.1:8000`), so a change to it needs a rebuild, which
-`make stack-up` does. After `make seed`, sign in at `/login/dev` as
+`deployment/docker/portal.Dockerfile`. Its nginx forwards `/v1` to the
+`api` container the same way. `VITE_API_URL` is compiled into that bundle
+and is empty, the page's own origin; a value there names another API and
+needs a rebuild, which `make stack-up` does. After `make seed`, sign in at `/login/dev` as
 `owner@example.test` (owner) or `bob@example.test` (member), by address
 alone; `/login` signs a person in through WorkOS, once the API holds the
 Tadas App application's API key. See the root README for every local URL.
@@ -258,10 +263,12 @@ Tadas App application's API key. See the root README for every local URL.
 ## Configuration
 
 `src/app/config.ts` loads `/config.json` before anything renders. In the
-cloud that file exists, written per environment by Terraform (`apiUrl` is the
-environment's API, e.g. `https://api.tadas.fyi`), so one build serves every
-environment. Locally there is none, and `VITE_API_URL`,
-`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. The DSN is
+cloud that file exists, written per environment by Terraform, so one build
+serves every environment. Its `apiUrl` is empty, which means the page's own
+origin: the portal's CloudFront distribution serves the API's `/v1/*` paths
+from the API's load balancer. Locally there is none, and `VITE_API_URL`
+(empty, the page's origin, by default), `VITE_SENTRY_DSN`, and
+`VITE_SENTRY_ENVIRONMENT` apply instead. The DSN is
 the product's one tracker project in every environment; the environment the
 page sends on each event is what separates them. The file may
 also name `requestTimeoutMs`, the deadline the transport client puts on every

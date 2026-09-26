@@ -1,8 +1,11 @@
 // The settings a build does not carry. In the cloud the portal's host serves
-// /config.json, written per environment (the API is e.g. https://api.tadas.fyi),
-// so one build runs anywhere.
+// /config.json, written per environment, so one build runs anywhere. Its
+// apiUrl is empty: the portal's own origin serves the API's paths, so every
+// call is same-origin and no browser sends a preflight.
 // Locally there is none (the dev server and nginx answer with index.html),
-// and the Vite build variables apply instead.
+// and the Vite build variables apply instead; with none of those either, the
+// API is the page's origin there too, since the dev server and the portal
+// container forward /v1 to it.
 import { DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_BASE_DELAY_MS } from "../api";
 
 export interface RuntimeConfig {
@@ -28,7 +31,6 @@ export interface BuildEnv {
   VITE_DEV_SIGN_IN?: string;
 }
 
-const LOCAL_API = "http://127.0.0.1:8000";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,7 +51,7 @@ function delayOrDefault(value: unknown): number {
 }
 
 /** Pure: the fetched config if it is one, else the build variables. An empty
- * apiUrl means the API shares the page's origin. */
+ * apiUrl, in either, means the API shares the page's origin. */
 export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): RuntimeConfig {
   if (isRecord(fetched) && typeof fetched.apiUrl === "string") {
     return {
@@ -63,7 +65,7 @@ export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): 
     };
   }
   return {
-    apiUrl: env.VITE_API_URL || LOCAL_API,
+    apiUrl: env.VITE_API_URL || origin,
     sentryDsn: env.VITE_SENTRY_DSN ?? "",
     environment: env.VITE_SENTRY_ENVIRONMENT ?? "local",
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,

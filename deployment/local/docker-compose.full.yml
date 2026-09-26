@@ -84,14 +84,16 @@ services:
       valkey:
         condition: service_healthy
 
-  # The browser loads the portal from the host and calls the API and GlitchTip
-  # on host ports, so both build arguments are host addresses, not service names.
+  # The browser loads the portal from the host and calls the API on the
+  # portal's own origin: the container forwards /v1 to the api service. It
+  # reaches GlitchTip on a host port, so that build argument is a host
+  # address, not a service name.
   portal:
     build:
       context: ../..
       dockerfile: deployment/docker/portal.Dockerfile
       args:
-        VITE_API_URL: http://127.0.0.1:8000
+        VITE_API_URL: ""
         VITE_SENTRY_DSN: http://0123456789abcdef0123456789abcdef@localhost:${TADAS_GLITCHTIP_PORT:-58000}/1
     ports:
       - "127.0.0.1:55173:8080"

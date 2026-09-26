@@ -46,10 +46,10 @@ size:
 | Item | About a month | Why it is there |
 |------|---------------|-----------------|
 | NAT gateway, and the data through it | $35 | The tasks live in private subnets and reach the registry and AWS APIs through it |
-| Load balancer | $18 | The API's public edge, with its certificate |
+| Load balancer | $18 | The API's public edge, with its certificate; the portal's CDN reaches it too, for the page's calls |
 | Three public IPv4 addresses | $11 | The NAT's address and one per zone for the load balancer |
 | Telemetry: Container Insights, the app's metrics, logs, seven alarms, the dashboard | $10 | What an operator reads; this line grows with traffic |
-| Secrets, queues, buckets, the portal's and the site's CDN, traces | $2 | At demo traffic most of it is inside the free allowances |
+| Secrets, queues, buckets, the portal's and the site's CDN, traces | $2 | At demo traffic most of it is inside the free allowances; the portal's API calls through its CDN are requests and bytes out like any other |
 
 The telemetry line is the least certain. Each series the app exports
 to CloudWatch costs $0.30 a month. The latency histogram is labelled
