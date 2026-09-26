@@ -10,6 +10,7 @@ nothing is retried.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
@@ -73,14 +74,19 @@ async def terminate(migration_settings: MigrationSettings, pids: set[int]) -> No
 
 
 async def test_a_call_on_a_connection_the_server_closed_is_served(
-    funnel: PgStorageBase, migration_settings: MigrationSettings, org_id: UUID
+    funnel: PgStorageBase,
+    migration_settings: MigrationSettings,
+    org_id: UUID,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     before = await backend_pid(funnel, org_id)
 
     await terminate(migration_settings, {before})
 
-    after = await backend_pid(funnel, org_id)
+    with caplog.at_level(logging.WARNING, logger="tadas.om.storage.impl.pg_base"):
+        after = await backend_pid(funnel, org_id)
     assert after != before
+    assert "beginning again on a fresh one" in caplog.text
 
 
 async def test_calls_on_a_pool_whose_every_connection_was_closed_are_served(

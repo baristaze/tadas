@@ -3,6 +3,7 @@ routing, the funnel that names the scope of every transaction, and the write
 primitives: an upsert that checks the tenant and lands the core row's outbox
 rows in the same commit, and an insert that refuses an existing id."""
 
+import logging
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -27,6 +28,8 @@ from tadas.om.storage.scopes import IDENTITY_SETTING, ORG_SETTING, USER_SETTING
 from tadas.om.storage.utils.translation import apply_row, to_row, undeletes
 
 SessionFactory = async_sessionmaker[AsyncSession]
+
+log = logging.getLogger(__name__)
 
 
 class LoginSessions(Mapping[DatabaseRole, SessionFactory]):
@@ -139,6 +142,7 @@ async def scoped_session(
             await session.close()
             if attempt == 2 or not error.connection_invalidated:
                 raise
+            log.warning("the scope found its connection closed; beginning again on a fresh one")
         except BaseException:
             await session.close()
             raise
