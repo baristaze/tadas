@@ -123,7 +123,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # orgs "acme" and "fabrikam" with the three people of the table above (the SEED_* knobs in .env)
+make seed         # orgs "acme" and "fabrikam" with the three people of the table above (the SEED_* knobs in .env), and the two local operators, whose tokens go into ~/.config/tadas/ops/local.env when it is absent
 ```
 
 ## Run

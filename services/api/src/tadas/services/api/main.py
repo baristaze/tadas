@@ -35,6 +35,12 @@ from tadas.services.api.token_secrets import TOKEN_HOLDERS, put_token, token_sec
 
 log = logging.getLogger(__name__)
 
+LOCAL_TOKEN_HOLDER = "operator"
+"""The local read operator, whose `read` token `make seed` and `tadas-ops
+token --env local` mint and print on a local database. It has no secret in a
+cloud: there an operator's token is their own, minted after a sign-in with a
+code."""
+
 
 def server_options(settings: ApiSettings) -> dict[str, Any]:
     """What uvicorn is told beyond the address. Forwarded headers are honored
@@ -163,10 +169,14 @@ async def granted(container: AppContainer, settings: ApiSettings, args: argparse
     tenancy = container.managers.tenancy
     rctx = command_request(settings)
     if args.mint_token:
-        # The smoke test reads and never writes, whatever the entry grants;
-        # the provisioner's token carries the entry's permission.
+        # The smoke test and the local read operator read and never write,
+        # whatever the entry grants; the provisioner's token carries the
+        # entry's permission.
         holder: str = args.mint_token
-        role = OperatorRole.READ if holder == "smoke" else None
+        if holder == LOCAL_TOKEN_HOLDER and settings.is_cloud_environment:
+            log.error("the %s token is minted on a local database only", holder)
+            return 2
+        role = OperatorRole.READ if holder in ("smoke", LOCAL_TOKEN_HOLDER) else None
         expires_in = None if args.expires_in is None else timedelta(seconds=args.expires_in)
         issued = await tenancy.grant_operator_token(rctx, args.email, expires_in, role)
         if settings.is_cloud_environment:
@@ -291,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     p_grant = sub.add_parser(
         "grant-operator",
         help="put an identity on the operator allowlist, disable its entry, or mint the "
-        "provisioner's or the smoke identity's operator token",
+        "provisioner's, the smoke identity's, or the local read operator's operator token",
     )
     what = p_grant.add_mutually_exclusive_group(required=True)
     what.add_argument(
@@ -302,9 +312,10 @@ def main(argv: list[str] | None = None) -> int:
     what.add_argument("--disable", action="store_true", help="with --email: disable the entry")
     what.add_argument(
         "--mint-token",
-        choices=TOKEN_HOLDERS,
+        choices=(*TOKEN_HOLDERS, LOCAL_TOKEN_HOLDER),
         help="mint the identity's operator token into the secret store "
-        "(tadas-<env>-<holder>-token); printed only on a local database",
+        "(tadas-<env>-<holder>-token); printed only on a local database, and the "
+        "local read operator's (operator) only there",
     )
     p_grant.add_argument(
         "--email",

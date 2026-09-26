@@ -12,6 +12,7 @@ import asyncio
 import getpass
 import json
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -30,8 +31,10 @@ from tadas.infra.aws_clients import client_config
 from tadas.integrations.payments.catalog import CatalogStripeImpl
 from tadas.ops.environments import (
     CLOUD_ENVIRONMENTS,
+    LOCAL_OPERATORS,
     Environment,
     load_environment,
+    local_addresses,
     ops_file,
     repository_root,
     write_value,
@@ -451,17 +454,72 @@ def in_a_persons_terminal(args: argparse.Namespace, env: Environment) -> bool:
     return True
 
 
+TOKEN_KEYS = {"operator": "TADAS_OPERATOR_TOKEN", "provisioner": "TADAS_PROVISIONER_TOKEN"}
+
+
+def mint_local_token(identity: str) -> str:
+    """The token of one of the two local operators `make seed` puts on the
+    allowlist, minted by the grant command on the local database, which is
+    the one place it prints a token. Captured here and never echoed."""
+    root = repository_root()
+    if root is None:
+        raise ValueError("run this from the tadas checkout; it mints through tadas-api")
+    answer = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--package",
+            "tadas-api",
+            "tadas-api",
+            "grant-operator",
+            "--mint-token",
+            identity,
+            "--email",
+            LOCAL_OPERATORS[identity],
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    minted = [line for line in answer.stdout.splitlines() if line.startswith("opr_")]
+    if answer.returncode != 0 or len(minted) != 1:
+        said = (answer.stderr.strip().splitlines() or ["no answer"])[-1]
+        raise ValueError(
+            f"the local {identity}'s token was not minted ({said}); `make seed` puts "
+            f"{LOCAL_OPERATORS[identity]} on the local allowlist"
+        )
+    return minted[0]
+
+
+def write_local_token(env: Environment, identity: str, token: str) -> Path:
+    """The token into `local.env`, which is made owner-only, naming the local
+    stack's addresses, when it is missing; every other line is kept."""
+    file = ops_file(env.name)
+    if not file.exists():
+        for key, value in local_addresses(env).items():
+            write_value(file, key, value)
+    write_value(file, TOKEN_KEYS[identity], token)
+    return file
+
+
 async def token_command(
     args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None = None
 ) -> int:
     """Writes an operator token into the environment's file without printing
     it: the operator's, minted after a sign-in with the second factor, or the
-    provisioner's, copied from the secret the grant job wrote. With `--list`
-    or `--revoke`, reads or ends the operator's own tokens instead."""
+    provisioner's, copied from the secret the grant job wrote. On the local
+    stack either is the local operator's that `make seed` made, minted by the
+    grant command, unless `--dev-email` names a person who signs in. With
+    `--list` or `--revoke`, reads or ends the operator's own tokens instead."""
     if getattr(args, "list", False) or getattr(args, "revoke", None) is not None:
         return await own_tokens_command(args, transport)
     env = load_environment(args.env)
     file = ops_file(env.name)
+    if env.name not in CLOUD_ENVIRONMENTS and getattr(args, "dev_email", None) is None:
+        file = write_local_token(env, args.identity, mint_local_token(args.identity))
+        print(f"wrote {TOKEN_KEYS[args.identity]} into {file}; it expires within the hour")
+        return OK
     if args.identity == "operator":
         if not in_a_persons_terminal(args, env):
             return USAGE
@@ -475,11 +533,7 @@ async def token_command(
         )
         return OK
     if env.name not in CLOUD_ENVIRONMENTS:
-        print(
-            "the local provisioner token is set in the local env file or the process "
-            "environment as TADAS_PROVISIONER_TOKEN",
-            file=sys.stderr,
-        )
+        print("--dev-email signs in a person, who mints an operator's token", file=sys.stderr)
         return USAGE
     write_value(file, "TADAS_PROVISIONER_TOKEN", await read_provisioner_token(env, args.profile))
     print(f"wrote TADAS_PROVISIONER_TOKEN into {file}; it expires within the hour")
@@ -702,8 +756,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_token.add_argument(
         "--dev-email",
-        help="operator on --env local only: sign in by the local sign-in with this address "
-        "instead of through the identity provider",
+        help="operator on --env local only: sign in by the local sign-in with this address, "
+        "instead of minting the local read operator's token",
     )
 
     p_work = sub.add_parser("work", help="the work queue, as an operator moves it")

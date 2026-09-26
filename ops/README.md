@@ -61,7 +61,9 @@ cloud.
   mints a `read` token through `POST /v1/admin/me/tokens`, which ends
   the second, and writes the token into the file without printing it.
   It prints the token's id, which is no secret. On the local stack,
-  `--dev-email <address>` signs in by the local sign-in instead. `--identity provisioner` copies the token the
+  `--dev-email <address>` signs a person in by the local sign-in;
+  without it, the token is the local read operator's (below).
+  `--identity provisioner` copies the token the
   `grant-operator.yml` workflow wrote into the secret
   `tadas-<env>-provisioner-token`, under the person's own sign-in
   (`--profile`; staging's sign-in profile by default, and in production
@@ -69,6 +71,16 @@ cloud.
   sign-in reads no secret). Never under an investigate profile: that
   role is denied every secret value, so no agent fills this line. A
   command whose token was refused names this one.
+- `make seed` puts two local operators on the local allowlist, the
+  platform's own identities `operator@platform.tadas.invalid` (`read`)
+  and `provisioner@platform.tadas.invalid` (`write`), and writes their
+  tokens into `~/.config/tadas/ops/local.env` when that file is absent,
+  owner-only in a folder only its owner opens, beside the local stack's
+  API, GlitchTip, Prometheus, and Jaeger. So every skill runs against
+  the local stack with nothing set by hand. A token lasts an hour:
+  `uv run tadas-ops token --env local --identity operator|provisioner`
+  mints a fresh one into the file through `tadas-api grant-operator
+  --mint-token`, which prints a token only against a local database.
 - `tadas-ops token --env <env> --list` lists the person's own live
   operator tokens under the file's token: the id, the permission, and
   when each was made and ends. `--revoke <id>` ends one of them now,
@@ -150,7 +162,7 @@ person's sign-in.
 | `stress --scenario ops/stress/<name>.yaml [--duration S]` | The same generator at a profile with a duration, a ramp, and a target the working requests' p95 is held to; reads the signals back after the run. `--duration` shortens the run and moves no target. `.github/workflows/stress.yml` keeps the wiring for a run against staging, which staging refuses while its people have no sign-in without a browser. |
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
 | `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
-| `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it; prints the id of an operator's. |
+| `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it; prints the id of an operator's. On `local` with no `--dev-email` it is the local operator's that `make seed` made, minted by `tadas-api grant-operator`, and a missing `local.env` is made owner-only with the local stack's addresses. |
 | `token --env <e> --list` / `--revoke <id>` | Lists your own live operator tokens, or ends one by its id, under the env file's operator token. Exits 1 for an id that is none of your live tokens. |
 | `work requeue --env <e> --org <org id> <item id> [--dev-email a]` | Sends one failed work item back to the queue, available now, with its attempts reset; the org's diary names who did. It is a write, so it is a person's step: it signs the person in with the second factor, as `token` does, mints a `write` token for this one call, keeps it nowhere, and signs it out once the call is made. A mint the plane refuses signs the sign-in out too. An item that is not failed is refused, and the command exits 1 with the reason. [The operate runbook](../docs/runbooks/operate.md) says how to find one. |
 | `workos-bootstrap --environment staging\|production [--apply]` | Proves the key is the Tadas App application's, then reconciles that application with `deployment/workos/environments.yaml`; see below. [The runbook](../docs/runbooks/providers/workos.md) has the dashboard steps around it. |
