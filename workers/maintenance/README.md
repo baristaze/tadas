@@ -85,10 +85,10 @@ second lane is a second replica told its lane.
     revoked keys, expired sessions and tickets, closed invitations,
     finished idempotency records, the payment processor's delivery
     marks, Slack's old install states and posts, settled work items, and
-    orchestrations that succeeded or failed thirty days ago. With
-    `TADAS_EVENT_RETENTION_DAYS` set, the oldest events of a living org
-    go too, a batch at a time, and its floor moves with them in the same
-    transaction; 0, the default, keeps every event (ADR 0040). Under an
+    orchestrations that succeeded or failed thirty days ago. Events of a
+    living org older than `TADAS_EVENT_RETENTION_DAYS` (90 by default) go
+    too, a batch at a time, and its floor moves with them in the same
+    transaction; 0 keeps every event (ADR 0040). Under an
     org deleted longer ago than the retention, every row goes, its event
     stream included, and the org row stays as the record. Each namespace
     purges its own rows and asks tenancy the one question, whether the

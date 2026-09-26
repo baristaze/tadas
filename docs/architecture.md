@@ -609,7 +609,8 @@ context on keeps the stage the callee needs.
   before the number is spent, over both impls, as Postgres rolls the
   number back with the insert it refused, so a write this tenant cannot
   make never moves its cursor. No update, and two deletes. The trim takes
-  the oldest events of a living tenant past the event retention, a
+  the oldest events of a living tenant past the event retention (90
+  days by default, `TADAS_EVENT_RETENTION_DAYS`), a
   bounded batch from the bottom, and moves the cursor row's `floor` to
   the last of them in the same transaction, so the stream is whole
   above the floor; `get_events` after a seq below the floor is refused as

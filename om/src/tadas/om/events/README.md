@@ -30,8 +30,8 @@ is one of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Trim the oldest events.** With an event retention set, the sweep
   deletes, a batch at a time, the events at the bottom of an org's
   stream that are older than it, and moves the floor to the last of
-  them. It stops at the first younger event. The retention is off by
-  default, which keeps every event.
+  them. It stops at the first younger event. The worker keeps 90 days by
+  default; with no retention set, every event is kept.
 - **Drop an expired tenant's stream.** Once a deleted org is past the
   retention, the sweep drops its events and its cursor, as every
   namespace drops that tenant's rows.
