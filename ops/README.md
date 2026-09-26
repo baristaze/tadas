@@ -124,14 +124,15 @@ queue and the outbox: the oldest ready item's age, the items failed in
 the last fifteen minutes, and the oldest pending row's age. A test holds
 the shared titles equal between the two definitions.
 
-**The alarms.** Sixteen per environment, to one topic, `tadas-<env>-alarms`,
+**The alarms.** Seventeen per environment, to one topic, `tadas-<env>-alarms`,
 with an email subscription: the load balancer's 5xx ratio, unhealthy
 targets, database CPU, database free storage, running tasks below
 desired for the API and the worker, the load balancer's p95 latency,
 the p95 of `GET /v1/billing` on its own, a sweep pass longer than its
 interval, for each inbound queue (`webhooks`, `slack`) a backlog and a
 message in its dead-letter queue, and for the work queue and the outbox
-in Postgres a backlog, a work item failed for good, and the relay's lag.
+in Postgres a backlog, a work item failed for good, the relay's lag, and
+an outbox row failed for good.
 The numbers are the team's; the shape is not.
 
 **Cost.** A budget per account with alerts at 50, 80, and 100 percent

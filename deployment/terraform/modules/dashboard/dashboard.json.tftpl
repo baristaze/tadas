@@ -212,7 +212,7 @@
       "type": "metric",
       "x": 0,
       "y": 30,
-      "width": 8,
+      "width": 6,
       "height": 6,
       "properties": {
         "title": "Work queue oldest ready item age",
@@ -227,9 +227,9 @@
     },
     {
       "type": "metric",
-      "x": 8,
+      "x": 6,
       "y": 30,
-      "width": 8,
+      "width": 6,
       "height": 6,
       "properties": {
         "title": "Work items failed in the last fifteen minutes",
@@ -244,9 +244,9 @@
     },
     {
       "type": "metric",
-      "x": 16,
+      "x": 12,
       "y": 30,
-      "width": 8,
+      "width": 6,
       "height": 6,
       "properties": {
         "title": "Outbox oldest pending row age",
@@ -257,6 +257,23 @@
         "stat": "Maximum",
         "yAxis": { "left": { "min": 0, "label": "seconds" } },
         "metrics": [["Tadas", "tadas_outbox_oldest_pending_seconds", { "label": "oldest pending" }]]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 18,
+      "y": 30,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "title": "Outbox rows failed in the last fifteen minutes",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "period": 60,
+        "stat": "Maximum",
+        "yAxis": { "left": { "min": 0, "label": "rows" } },
+        "metrics": [["Tadas", "tadas_outbox_failed_recently", { "label": "failed" }]]
       }
     }
   ]

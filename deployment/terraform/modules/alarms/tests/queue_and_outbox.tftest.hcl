@@ -39,6 +39,7 @@ run "each_alarm_reads_a_field_of_the_sweep_line" {
         aws_cloudwatch_metric_alarm.work_backlog,
         aws_cloudwatch_metric_alarm.work_dead_letter,
         aws_cloudwatch_metric_alarm.outbox_lag,
+        aws_cloudwatch_metric_alarm.outbox_dead_letter,
       ] : alarm.metric_name
       ]) == toset([
       for filter in aws_cloudwatch_log_metric_filter.sweep_gauge : filter.metric_transformation[0].name
@@ -52,6 +53,7 @@ run "each_alarm_reads_a_field_of_the_sweep_line" {
         aws_cloudwatch_metric_alarm.work_backlog,
         aws_cloudwatch_metric_alarm.work_dead_letter,
         aws_cloudwatch_metric_alarm.outbox_lag,
+        aws_cloudwatch_metric_alarm.outbox_dead_letter,
       ] :
       alarm.namespace == "Tadas" && alarm.statistic == "Maximum"
       && alarm.treat_missing_data == "ignore"
@@ -92,8 +94,18 @@ run "the_thresholds_are_the_defaults" {
   }
 
   assert {
-    condition     = length(output.alarm_names) == 16
-    error_message = "The environment declares sixteen alarms, the work backlog, the work dead letter, and the outbox lag among them."
+    condition = (
+      aws_cloudwatch_metric_alarm.outbox_dead_letter.threshold == 1
+      && aws_cloudwatch_metric_alarm.outbox_dead_letter.comparison_operator == "GreaterThanOrEqualToThreshold"
+      && aws_cloudwatch_metric_alarm.outbox_dead_letter.evaluation_periods == 1
+      && aws_cloudwatch_metric_alarm.outbox_dead_letter.alarm_name == "tadas-test-outbox-dead-letter"
+    )
+    error_message = "The outbox dead-letter alarm fires on one row failed for good, in one period."
+  }
+
+  assert {
+    condition     = length(output.alarm_names) == 17
+    error_message = "The environment declares seventeen alarms, the work backlog, the work dead letter, the outbox lag, and the outbox dead letter among them."
   }
 }
 

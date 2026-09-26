@@ -49,7 +49,9 @@ push come. This is one of the seven kinds of thing
 - **Watched.** Each sweep reads how long ago the oldest row neither
   relayed nor failed landed, across every org, and an alarm fires past
   five minutes: the relay is stuck. A bus that drops every push trips
-  it as a failing event store does.
+  it as a failing event store does. A row failed for good is no longer
+  pending, so the sweep also counts the rows failed in the last fifteen
+  minutes, and a second alarm fires on one.
 
 ## The rules
 
