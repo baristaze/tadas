@@ -175,7 +175,10 @@ change. A name the image does not host refuses the boot.
   security boundary.
 - **The client address behind a load balancer.** The forwarded address
   is trusted only from the peers the settings name, never from
-  everyone, so a caller cannot pick its own address.
+  everyone, so a caller cannot pick its own address. Through the
+  portal's CDN edge it is one hop further in, and only a request that
+  carries the edge's secret (`TADAS_EDGE_SECRET`, in `X-Tadas-Edge`)
+  gets that hop; the header never reaches a route.
 - **A socket is bounded twice.** It closes at the expiry of the
   credential behind its ticket whatever the client does, and it
   closes at once when that credential is revoked. Both close with

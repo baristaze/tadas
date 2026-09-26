@@ -1,6 +1,8 @@
 """Behind a load balancer every request arrives from its address; the login
 rate limit keys on the client only when the proxy is trusted to say who the
-client is, and never on a header an untrusted peer sent."""
+client is, and never on a header an untrusted peer sent. Through the portal's
+CDN edge, one hop further in, the edge's secret is what makes the address the
+edge appended the client's, and nothing else does."""
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -17,12 +19,15 @@ from pydantic import ValidationError
 from tadas.infra.cache import CacheScope
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
+from tadas.services.api.gateway.edge import EdgeClientMiddleware
 from tadas.services.api.main import server_options
 from tadas.services.api.settings import ApiSettings
 
 PROXY = "10.10.3.7"
 OUTSIDER = "198.51.100.7"
 CLIENT = "203.0.113.9"
+EDGE = "130.176.1.10"
+EDGE_SECRET = "0123456789abcdef0123456789abcdef"
 
 
 @dataclass
@@ -33,8 +38,12 @@ class Served:
     app: Any
     keys: list[str] = field(default_factory=list)
 
-    async def login_from(self, peer: str, forwarded: str | None) -> httpx.Response:
+    async def login_from(
+        self, peer: str, forwarded: str | None, edge: str | None = None
+    ) -> httpx.Response:
         headers = {"X-Forwarded-For": forwarded} if forwarded else {}
+        if edge is not None:
+            headers["X-Tadas-Edge"] = edge
         transport = ASGITransport(app=self.app, client=(peer, 40000), raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             return await client.post(
@@ -44,11 +53,9 @@ class Served:
             )
 
 
-@pytest.fixture
-async def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Served]:
-    settings = ApiSettings.model_validate(
-        {"environment": "test", "trusted_proxies": ["10.10.0.0/16"]}
-    )
+async def serve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: ApiSettings
+) -> AsyncIterator[Served]:
     roots = build_container(tmp_path)
     container = AppContainer.for_tests(roots.storage, roots.infra, settings)
     app = create_app(container)
@@ -65,6 +72,24 @@ async def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
     monkeypatch.setattr(cache, "increment", spy)
     async with app.router.lifespan_context(app):
         yield served
+
+
+@pytest.fixture
+async def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Served]:
+    settings = ApiSettings.model_validate(
+        {"environment": "test", "trusted_proxies": ["10.10.0.0/16"]}
+    )
+    async for s in serve(tmp_path, monkeypatch, settings):
+        yield s
+
+
+@pytest.fixture
+async def behind_edge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Served]:
+    settings = ApiSettings.model_validate(
+        {"environment": "test", "trusted_proxies": ["10.10.0.0/16"], "edge_secret": EDGE_SECRET}
+    )
+    async for s in serve(tmp_path, monkeypatch, settings):
+        yield s
 
 
 async def test_a_trusted_proxy_names_the_client(served: Served) -> None:
@@ -102,3 +127,76 @@ def test_addresses_and_blocks_are_trusted_proxies() -> None:
         {"_env_file": None, "environment": "test", "trusted_proxies": proxies}
     )
     assert server_options(settings)["forwarded_allow_ips"] == proxies
+
+
+async def test_the_edge_secret_names_the_viewer_the_edge_appended(behind_edge: Served) -> None:
+    """The edge appends the viewer, the load balancer appends the edge."""
+    assert (
+        await behind_edge.login_from(PROXY, f"{CLIENT}, {EDGE}", EDGE_SECRET)
+    ).status_code == 503
+    assert behind_edge.keys == [f"login:addr:{CLIENT}"]
+
+
+async def test_through_the_edge_a_viewer_cannot_choose_its_address(behind_edge: Served) -> None:
+    """What the viewer sent sits left of what the edge appended."""
+    forwarded = f"{OUTSIDER}, {CLIENT}, {EDGE}"
+    assert (await behind_edge.login_from(PROXY, forwarded, EDGE_SECRET)).status_code == 503
+    assert behind_edge.keys == [f"login:addr:{CLIENT}"]
+
+
+@pytest.mark.parametrize("presented", [None, "", "not-the-secret", EDGE_SECRET + "x"])
+async def test_without_the_secret_the_edge_is_the_client(
+    behind_edge: Served, presented: str | None
+) -> None:
+    """Another distribution appends an address too, and its owner writes the
+    header before it: without this edge's secret the hop is not trusted."""
+    forwarded = f"{OUTSIDER}, {EDGE}"
+    assert (await behind_edge.login_from(PROXY, forwarded, presented)).status_code == 503
+    assert behind_edge.keys == [f"login:addr:{EDGE}"]
+
+
+async def test_the_secret_from_an_untrusted_peer_moves_nothing_past_it(behind_edge: Served) -> None:
+    """A caller that reaches the process around the load balancer is its own
+    client whatever it sends."""
+    forwarded = f"{CLIENT}, {EDGE}"
+    assert (await behind_edge.login_from(OUTSIDER, forwarded, EDGE_SECRET)).status_code == 503
+    assert behind_edge.keys == [f"login:addr:{OUTSIDER}"]
+
+
+def test_an_edge_secret_needs_a_trusted_proxy_and_its_length() -> None:
+    with pytest.raises(ValidationError, match="trusted_proxies"):
+        ApiSettings.model_validate(
+            {"_env_file": None, "environment": "test", "edge_secret": EDGE_SECRET}
+        )
+    with pytest.raises(ValidationError, match="32"):
+        ApiSettings.model_validate(
+            {
+                "_env_file": None,
+                "environment": "test",
+                "trusted_proxies": ["10.10.0.0/16"],
+                "edge_secret": "short",
+            }
+        )
+
+
+async def test_the_edge_secret_never_reaches_the_app() -> None:
+    """Removed from the scope with or without a match, so nothing further in
+    reads, logs, or echoes it."""
+    seen: list[Any] = []
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        seen.append((dict(scope["headers"]), scope["client"]))
+
+    middleware = EdgeClientMiddleware(app, EDGE_SECRET, ["10.10.0.0/16"])
+    for presented in (EDGE_SECRET, "wrong"):
+        scope = {
+            "type": "websocket",
+            "client": (EDGE, 0),
+            "headers": [
+                (b"x-forwarded-for", f"{CLIENT}, {EDGE}".encode()),
+                (b"x-tadas-edge", presented.encode()),
+            ],
+        }
+        await middleware(scope, None, None)  # type: ignore[arg-type]
+    assert [b"x-tadas-edge" in headers for headers, _ in seen] == [False, False]
+    assert [client for _, client in seen] == [(CLIENT, 0), (EDGE, 0)]
