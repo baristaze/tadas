@@ -487,11 +487,19 @@ async def test_a_user_is_deleted_by_the_subject_and_a_gone_one_is_done() -> None
     await gone.delete_user("user_01ABC")  # deleted already: a rerun is one deletion
 
 
-async def test_a_deletion_workos_cannot_take_now_is_unavailable_and_a_refusal_is_not() -> None:
-    down, _ = provider(lambda r: httpx.Response(503, json={"message": "down"}))
-    with pytest.raises(ProviderUnavailable):
-        await down.delete_user("user_01ABC")
-    refused, _ = provider(lambda r: httpx.Response(403, json={"message": "forbidden"}))
-    with pytest.raises(ProviderRefused) as raised:
-        await refused.delete_user("user_01ABC")
+@pytest.mark.parametrize("status", [503, 401, 403])
+async def test_a_deletion_workos_cannot_take_now_or_from_this_key_is_unavailable(
+    status: int,
+) -> None:
+    """A server error, and a refusal of the process's own key, which a person
+    fixes: the work that asked waits for either."""
+    made, _ = provider(lambda r: httpx.Response(status, json={"message": "no"}))
+    with pytest.raises(ProviderUnavailable) as raised:
+        await made.delete_user("user_01ABC")
     assert API_KEY not in str(raised.value)
+
+
+async def test_a_deletion_workos_refuses_as_a_request_is_refused() -> None:
+    refused, _ = provider(lambda r: httpx.Response(400, json={"message": "bad id"}))
+    with pytest.raises(ProviderRefused):
+        await refused.delete_user("not-an-id")

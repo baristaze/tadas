@@ -46,6 +46,8 @@ import httpx
 from workos import AsyncWorkOSClient
 from workos._errors import (
     APIError,
+    AuthenticationError,
+    AuthorizationError,
     BadRequestError,
     NotFoundError,
     RateLimitExceededError,
@@ -366,6 +368,13 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             await self._workos.user_management.delete_user(user_id)
         except NotFoundError:
             return  # deleted already: a rerun is one deletion
+        except (AuthenticationError, AuthorizationError) as error:
+            # The process's credential, not the call: revoked, or without the
+            # permission. It is a 503 until a person fixes the key, as an
+            # `invalid_client` is.
+            raise ProviderUnavailable(
+                f"deleting the user: WorkOS refused TADAS_WORKOS_API_KEY ({error.status_code})"
+            ) from None
         except (WorkOSError, httpx.HTTPError) as error:
             _translate(error, "deleting the user")
 

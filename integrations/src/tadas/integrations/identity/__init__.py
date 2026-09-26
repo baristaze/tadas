@@ -207,8 +207,10 @@ class IdentityProviderInterface(ABC):
         for good, so a sign-in through the provider meets nobody it knows.
         A user it no longer holds is deleted already, and that is no error:
         a rerun is one deletion.
-        ProviderUnavailable when the provider cannot be reached or answers
-        with a server error; ProviderRefused when it refuses the call."""
+        ProviderUnavailable when the provider cannot be reached, answers with
+        a server error, or refuses the process's own key (revoked, or
+        without the permission), which a person fixes; ProviderRefused when
+        it refuses the call itself."""
         ...
 
     @abstractmethod

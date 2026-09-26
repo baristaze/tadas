@@ -99,7 +99,9 @@ class PaymentsInterface(ABC):
         """Ends the subscription now, not at its period's end: the account it
         paid for is gone. No proration and no refund is made. A subscription
         the processor no longer knows, or one canceled already, is done
-        already, and that is no error."""
+        already, and that is no error. A refusal of the process's own key is
+        `ProviderUnavailable`: nothing is wrong with the call, and it goes
+        through once a person fixes the key."""
         ...
 
     @abstractmethod
@@ -108,7 +110,8 @@ class PaymentsInterface(ABC):
         subscription it still has and removes its payment methods. The
         processor keeps the invoices it issued, as the law asks of it. A
         customer it no longer knows is deleted already, and that is no
-        error."""
+        error. A refusal of the process's own key is `ProviderUnavailable`,
+        as on `cancel_subscription`."""
         ...
 
     @abstractmethod

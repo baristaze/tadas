@@ -18,6 +18,7 @@ import stripe
 from tadas.integrations.exceptions import (
     DeliveryRefused,
     PaymentsUnconfigured,
+    ProviderUnavailable,
     UnsafeIntegration,
 )
 from tadas.integrations.impl.configured import payments_for, refuse_unsafe_payments
@@ -544,3 +545,23 @@ async def test_a_customer_the_processor_no_longer_knows_is_deleted_already() -> 
     payments = await _checked(set())
     payments._client = _Ends("canceled", missing=True)  # type: ignore[assignment]
     await payments.delete_customer("cus_1")
+
+
+async def test_a_runtime_key_refused_the_end_of_an_account_is_unavailable_not_refused() -> None:
+    """A key without the permission is the process's to fix: the work waits."""
+    payments = await _checked(set())
+
+    class Refusing(_Ends):
+        def __init__(self) -> None:
+            super().__init__("active")
+
+            class Customers:
+                async def delete_async(self, customer_id: str) -> object:
+                    raise stripe.PermissionError("no", None, code=None)
+
+            self.customers = Customers()
+
+    payments._client = Refusing()  # type: ignore[assignment]
+    with pytest.raises(ProviderUnavailable) as raised:
+        await payments.delete_customer("cus_1")
+    assert "delete customer" in str(raised.value)
