@@ -97,6 +97,7 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # The outbox relay is the documented exception: it runs after a core write
         # or in the sweep, under the tenant the row names, and takes no stage.
         ("OutboxRelayInterface", "relay"),
+        ("OutboxRelayInterface", "relay_all"),
         ("OutboxRelayInterface", "relay_pending"),
         ("OutboxRelayInterface", "purge_done"),
         # And the enqueue the relay makes: it runs on the relay's side of the
@@ -243,7 +244,9 @@ def test_manager_methods_take_a_stage_first_except_the_documented_ones() -> None
             seen.add(key)
             assert key in MANAGER_EXCEPTIONS, f"{key} takes no context stage first"
             doc = getattr(interface, name).__doc__ or ""
-            assert "Platform-internal" in doc or name == "relay", f"{key} lacks its reason"
+            assert "Platform-internal" in doc or name in ("relay", "relay_all"), (
+                f"{key} lacks its reason"
+            )
     assert seen == MANAGER_EXCEPTIONS, f"stale entries: {MANAGER_EXCEPTIONS - seen}"
 
 

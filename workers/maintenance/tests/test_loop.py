@@ -933,7 +933,7 @@ async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
     storage = container.storage.get_event_storage()
     aged = utcnow() - timedelta(days=100)
     for _ in range(5):
-        await storage.append_event(ctx.org_id, aged_event(ctx, aged))
+        await storage.append_events(ctx.org_id, [aged_event(ctx, aged)])
     options = EventsOptions(retention=timedelta(days=90), purge_batch=2)
     monkeypatch.setattr(container.managers.events, "_options", options)
     trims: list[int] = []

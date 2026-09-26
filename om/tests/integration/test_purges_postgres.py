@@ -23,7 +23,7 @@ from contracts.slack_storage import make_post
 from contracts.task_storage import make_task, seed
 from contracts.work_storage import make_item
 from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
@@ -120,8 +120,38 @@ async def test_the_outbox_purge_is_two_statements_each_on_its_own_index(
     assert served(failed, "ix_outbox_rows_failed_at"), failed
 
 
+async def settled_and_leased(sessions: LoginSessions, owner_url: str) -> None:
+    """A queue of one tenant: settled items, most of them changed after the
+    cut the case reads with, so the cut is what picks a batch, and a few
+    live leases. Then ANALYZE under the owner, which the statistics need."""
+    org = new_id()
+    async with sessions[DatabaseRole.QUEUE]() as session:
+        await set_scope(session, org, None, None)
+        await session.execute(
+            text(
+                "INSERT INTO queue.work_items (id, org_id, created_at, updated_at, created_by,"
+                " updated_by, kind, target_id, idempotency_key, request_id, payload, lane,"
+                " status, available_at, lease_expires_at, attempts, max_attempts)"
+                " SELECT gen_random_uuid(), :org, now(),"
+                " now() + (2900 - g) * interval '20 minutes', :org, :org, 'NOOP',"
+                " gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),"
+                " '{}', 'default', CASE WHEN g % 50 = 0 THEN 'claimed' ELSE 'done' END, now(),"
+                " CASE WHEN g % 50 = 0 THEN now() + interval '1 minute' END, 1, 5"
+                " FROM generate_series(1, 3000) g"
+            ),
+            {"org": org},
+        )
+        await session.commit()
+    engine = create_async_engine(owner_url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("ANALYZE queue.work_items"))
+    finally:
+        await engine.dispose()
+
+
 async def test_the_purges_the_new_indexes_serve_read_them(
-    watched: tuple[LoginSessions, list[AsyncEngine]],
+    watched: tuple[LoginSessions, list[AsyncEngine]], migrated: dict[DatabaseRole, str]
 ) -> None:
     sessions = watched[0]
     org = new_id()
@@ -155,6 +185,10 @@ async def test_the_purges_the_new_indexes_serve_read_them(
         lambda: SlackStoragePostgresImpl(sessions).purge(org, now, 1000),
     )
     assert served(slack[-1], "ix_slack_posts_org_id_created_at"), slack[-1]
+    # Two indexes of the queue lead with the status, and on an empty table
+    # they cost the same; the planner's choice is only a real one over rows
+    # and their statistics, so the queue gets both before its plan is read.
+    await settled_and_leased(sessions, migrated[DatabaseRole.QUEUE])
     (work,) = await plans(
         watched,
         DatabaseRole.QUEUE,

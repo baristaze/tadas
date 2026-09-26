@@ -15,7 +15,7 @@ from tadas.om.events.types.event import Event
 from tadas.om.exceptions import TenantMismatch
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
-    {"append_event", "purge_tenant", "read_after", "read_floor", "read_head", "trim"}
+    {"append_events", "purge_tenant", "read_after", "read_floor", "read_head", "trim"}
 )
 """Every method of `EventStorageInterface` that takes a tenant has a case in
 this module that presents another tenant's. `test_storage_exceptions.py` holds
@@ -38,6 +38,12 @@ def make_event(
     )
 
 
+async def append_one(storage: EventStorageInterface, org_id: UUID, event: Event) -> Event:
+    """One event appended: a batch of one."""
+    (appended,) = await storage.append_events(org_id, [event])
+    return appended
+
+
 class EventStorageContract:
     @pytest.fixture
     def storage(self) -> EventStorageInterface:
@@ -48,10 +54,10 @@ class EventStorageContract:
     ) -> None:
         org_a, org_b = new_id(), new_id()
         assert await storage.read_head(org_a) == 0
-        appended = [await storage.append_event(org_a, make_event(org_a)) for _ in range(3)]
+        appended = [await append_one(storage, org_a, make_event(org_a)) for _ in range(3)]
         assert [e.seq for e in appended] == [1, 2, 3]
         assert await storage.read_head(org_a) == 3
-        elsewhere = await storage.append_event(org_b, make_event(org_b))
+        elsewhere = await append_one(storage, org_b, make_event(org_b))
         assert elsewhere.seq == 1
         assert await storage.read_head(org_b) == 1
         first = appended[0]
@@ -81,10 +87,10 @@ class EventStorageContract:
         cut = utcnow()
         assert await storage.count_since(cut) == 0
         org_a, org_b = new_id(), new_id()
-        await storage.append_event(org_a, make_event(org_a))
-        await storage.append_event(org_b, make_event(org_b))
+        await append_one(storage, org_a, make_event(org_a))
+        await append_one(storage, org_b, make_event(org_b))
         earlier = make_event(org_b).model_copy(update={"produced_at": cut - timedelta(hours=25)})
-        await storage.append_event(org_b, earlier)
+        await append_one(storage, org_b, earlier)
         assert await storage.count_since(cut) == 2
         assert await storage.count_since(cut - timedelta(days=2)) == 3
 
@@ -95,8 +101,8 @@ class EventStorageContract:
         gone whole; the other tenant's stays as it was."""
         gone, kept = new_id(), new_id()
         for _ in range(2):
-            await storage.append_event(gone, make_event(gone))
-        stays = await storage.append_event(kept, make_event(kept))
+            await append_one(storage, gone, make_event(gone))
+        stays = await append_one(storage, kept, make_event(kept))
         assert await storage.purge_tenant(gone, 10) == 2
         assert await storage.read_after(gone, 0, 10) == []
         assert await storage.read_head(gone) == 0
@@ -109,7 +115,7 @@ class EventStorageContract:
     ) -> None:
         gone = new_id()
         for _ in range(3):
-            await storage.append_event(gone, make_event(gone))
+            await append_one(storage, gone, make_event(gone))
         assert await storage.purge_tenant(gone, 2) == 2
         assert await storage.read_head(gone) == 3, "the cursor stays while events do"
         assert await storage.purge_tenant(gone, 2) == 1
@@ -123,7 +129,7 @@ class EventStorageContract:
         the tenant is on the event and not beside it. An event that names
         another tenant is appended under the one the caller names."""
         org = new_id()
-        appended = await storage.append_event(org, make_event(new_id()))
+        appended = await append_one(storage, org, make_event(new_id()))
         assert appended.org_id == org
         assert [e.org_id for e in await storage.read_after(org, 0, 10)] == [org]
 
@@ -131,8 +137,8 @@ class EventStorageContract:
         # The outbox relay appends under the row's id; relaying twice appends once.
         org = new_id()
         event = make_event(org)
-        first = await storage.append_event(org, event)
-        again = await storage.append_event(org, event.model_copy(update={"kind": "ignored"}))
+        first = await append_one(storage, org, event)
+        again = await append_one(storage, org, event.model_copy(update={"kind": "ignored"}))
         assert again == first and first.seq == 1
         assert [e.seq for e in await storage.read_after(org, 0, 10)] == [1]
 
@@ -145,9 +151,9 @@ class EventStorageContract:
         stays as it was."""
         org_a, org_b = new_id(), new_id()
         event = make_event(org_a)
-        appended = await storage.append_event(org_a, event)
+        appended = await append_one(storage, org_a, event)
         with pytest.raises(TenantMismatch):
-            await storage.append_event(org_b, event.model_copy(update={"kind": "stolen"}))
+            await append_one(storage, org_b, event.model_copy(update={"kind": "stolen"}))
         assert await storage.read_after(org_a, 0, 10) == [appended]
         assert await storage.read_after(org_b, 0, 10) == []
         # The refusal spends nothing: an id another tenant owns never moves
@@ -161,22 +167,20 @@ class EventStorageContract:
         # duplicate, and the head is the last of them. See contracts/racing.py
         # for what each impl's run of this proves.
         org, n = new_id(), 32
-        run = await race(*(storage.append_event(org, make_event(org)) for _ in range(n)))
+        run = await race(*(append_one(storage, org, make_event(org)) for _ in range(n)))
         appended = run.outcomes
         assert sorted(e.seq for e in appended) == list(range(1, n + 1))
         assert [e.seq for e in await storage.read_after(org, 0, n * 2)] == list(range(1, n + 1))
         assert await storage.read_head(org) == n
         # The cursor the appends left is the one the next append takes from.
-        assert (await storage.append_event(org, make_event(org))).seq == n + 1
+        assert (await append_one(storage, org, make_event(org))).seq == n + 1
 
     async def test_many_appends_keep_one_cursor_per_tenant(
         self, storage: EventStorageInterface
     ) -> None:
         # Two tenants appending at once never see each other's numbers.
         org_a, org_b, n = new_id(), new_id(), 16
-        run = await race(
-            *(storage.append_event(org, make_event(org)) for org in (org_a, org_b) * n)
-        )
+        run = await race(*(append_one(storage, org, make_event(org)) for org in (org_a, org_b) * n))
         appended = run.outcomes
         assert sorted(e.seq for e in appended[0::2]) == list(range(1, n + 1))
         assert sorted(e.seq for e in appended[1::2]) == list(range(1, n + 1))
@@ -188,10 +192,103 @@ class EventStorageContract:
         # back with it: the next event is 2, not 3.
         org = new_id()
         event = make_event(org)
-        await storage.append_event(org, event)
-        await storage.append_event(org, event)
-        assert (await storage.append_event(org, make_event(org))).seq == 2
+        await append_one(storage, org, event)
+        await append_one(storage, org, event)
+        assert (await append_one(storage, org, make_event(org))).seq == 2
         assert await storage.read_head(org) == 2
+
+    async def test_a_batch_takes_contiguous_numbers_in_its_order(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """An import step's relay appends its hundred events in one call: they
+        take the next run of numbers, in the order given, and come back in it."""
+        org = new_id()
+        first = await append_one(storage, org, make_event(org))
+        batch = [make_event(org) for _ in range(5)]
+        appended = await storage.append_events(org, batch)
+        assert [e.id for e in appended] == [e.id for e in batch]
+        assert [e.seq for e in appended] == [2, 3, 4, 5, 6]
+        assert await storage.read_after(org, 0, 10) == [first, *appended]
+        assert await storage.read_head(org) == 6
+        assert await storage.append_events(org, []) == ()
+        assert await storage.read_head(org) == 6
+
+    async def test_a_replayed_batch_appends_only_what_is_new(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """A relay that ran twice presents events already appended beside new
+        ones: the stored ones come back as stored and take no number, and the
+        new ones take the next run, in the order given."""
+        org = new_id()
+        a, b, c, d = (make_event(org) for _ in range(4))
+        stored = await storage.append_events(org, [a, b])
+        again = await storage.append_events(
+            org, [a.model_copy(update={"kind": "ignored"}), c, b, d]
+        )
+        assert again[0] == stored[0] and again[2] == stored[1]
+        assert [e.seq for e in again] == [1, 3, 2, 4]
+        assert [e.seq for e in await storage.read_after(org, 0, 10)] == [1, 2, 3, 4]
+        assert await storage.append_events(org, [b, a]) == (stored[1], stored[0])
+        assert await storage.read_head(org) == 4
+
+    async def test_a_batch_with_another_tenants_id_is_refused_whole(
+        self, storage: EventStorageInterface
+    ) -> None:
+        org_a, org_b = new_id(), new_id()
+        taken = await append_one(storage, org_a, make_event(org_a))
+        batch = [make_event(org_b), make_event(org_b).model_copy(update={"id": taken.id})]
+        with pytest.raises(TenantMismatch):
+            await storage.append_events(org_b, batch)
+        # Nothing of the batch is written and no number is spent.
+        assert await storage.read_after(org_b, 0, 10) == []
+        assert await storage.read_head(org_b) == 0
+        assert await storage.read_after(org_a, 0, 10) == [taken]
+
+    async def test_a_batch_that_names_one_id_twice_is_refused(
+        self, storage: EventStorageInterface
+    ) -> None:
+        org = new_id()
+        event = make_event(org)
+        with pytest.raises(ValueError, match="twice"):
+            await storage.append_events(org, [event, event])
+        assert await storage.read_head(org) == 0
+
+    async def test_batches_and_single_appends_at_once_keep_the_stream_gapless(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """Batches and single appends reach one tenant's cursor at once. Every
+        number from 1 to the head is taken once, and each batch holds one
+        contiguous run in its own order."""
+        org, batches, size, singles = new_id(), 6, 10, 12
+        calls = [
+            storage.append_events(org, [make_event(org) for _ in range(size)])
+            for _ in range(batches)
+        ] + [storage.append_events(org, [make_event(org)]) for _ in range(singles)]
+        run = await race(*calls)
+        total = batches * size + singles
+        assert sorted(e.seq for out in run.outcomes for e in out) == list(range(1, total + 1))
+        for out in run.outcomes[:batches]:
+            seqs = [e.seq for e in out]
+            assert seqs == list(range(seqs[0], seqs[0] + size)), seqs
+        assert [e.seq for e in await storage.read_after(org, 0, total + 1)] == list(
+            range(1, total + 1)
+        )
+        assert await storage.read_head(org) == total
+
+    async def test_one_batch_relayed_twice_at_once_is_appended_once(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """Two relays of the same rows at once, the request's and the sweep's:
+        both leave with the same events and the same numbers, and the stream
+        holds each once."""
+        org = new_id()
+        batch = [make_event(org) for _ in range(5)]
+        run = await race(*(storage.append_events(org, batch) for _ in range(3)))
+        first = run.outcomes[0]
+        assert all(out == first for out in run.outcomes), run.summary()
+        assert [e.seq for e in first] == [1, 2, 3, 4, 5]
+        assert await storage.read_head(org) == 5
+        assert (await append_one(storage, org, make_event(org))).seq == 6
 
     async def append_aged(
         self, storage: EventStorageInterface, org: UUID, *days_ago: int
@@ -199,7 +296,7 @@ class EventStorageContract:
         """One event per age, in stream order, each produced that many days ago."""
         now = utcnow()
         return [
-            await storage.append_event(org, make_event(org, produced_at=now - timedelta(days=d)))
+            await append_one(storage, org, make_event(org, produced_at=now - timedelta(days=d)))
             for d in days_ago
         ]
 
@@ -216,7 +313,7 @@ class EventStorageContract:
         assert await storage.read_after(org, 3, 10) == kept
         assert await storage.read_after(org, 0, 10) == kept
         # The next append continues from the head, never from the floor.
-        assert (await storage.append_event(org, make_event(org))).seq == 6
+        assert (await append_one(storage, org, make_event(org))).seq == 6
 
     async def test_the_trim_takes_one_batch_at_a_time(self, storage: EventStorageInterface) -> None:
         org = new_id()
@@ -290,9 +387,9 @@ class EventStorageContract:
         run = await race(
             storage.trim(org, before, 5),
             storage.trim(org, before, 5),
-            storage.append_event(org, make_event(org)),
+            append_one(storage, org, make_event(org)),
             storage.trim(org, before, 5),
-            storage.append_event(org, make_event(org)),
+            append_one(storage, org, make_event(org)),
         )
         trimmed = sum(o for o in run.outcomes if isinstance(o, int))
         assert trimmed == 12, run.summary()

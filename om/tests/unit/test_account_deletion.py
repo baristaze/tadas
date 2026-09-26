@@ -2,6 +2,7 @@
 them in every org, the work it asks for, and the personal org's own end,
 over the memory storage and the identity provider's twin."""
 
+from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -56,6 +57,10 @@ class SpyRelay(OutboxRelayInterface):
     async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
         self.rows.append(row)
         return await self._relay.relay(org_id, row)
+
+    async def relay_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> bool:
+        self.rows.extend(rows)
+        return await self._relay.relay_all(org_id, rows)
 
     async def relay_pending(self, limit: int) -> int:
         return await self._relay.relay_pending(limit)

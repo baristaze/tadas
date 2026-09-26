@@ -2,6 +2,7 @@
 attempts are spent is a dead letter, failed for good, counted, and named by
 an audit event."""
 
+from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -37,10 +38,10 @@ class PoisonedEvents(EventStorageMemoryImpl):
         super().__init__()
         self.poison_id = poison_id
 
-    async def append_event(self, org_id: UUID, event: Event) -> Event:
-        if event.id == self.poison_id:
+    async def append_events(self, org_id: UUID, events: Sequence[Event]) -> tuple[Event, ...]:
+        if any(event.id == self.poison_id for event in events):
             raise RuntimeError("cannot append this one")
-        return await super().append_event(org_id, event)
+        return await super().append_events(org_id, events)
 
 
 @pytest.fixture

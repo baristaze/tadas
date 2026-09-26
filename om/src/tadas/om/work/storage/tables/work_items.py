@@ -19,7 +19,9 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
         Index("uq_work_items_org_id_idempotency_key", "org_id", "idempotency_key", unique=True),
         # The purge reads settled items across tenants by their last change.
         Index("ix_work_items_status_updated_at", "status", "updated_at"),
-        Index("ix_work_items_lane_status_available_at", "lane", "status", "available_at"),
+        # The claim walks a lane's queued items in the order they became
+        # ready and stops at the first one no other worker holds.
+        Index("ix_work_items_lane_status_available_at_id", "lane", "status", "available_at", "id"),
         # The sweep requeues expired leases across tenants.
         Index("ix_work_items_status_lease_expires_at", "status", "lease_expires_at"),
     )

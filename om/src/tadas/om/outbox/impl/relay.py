@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -49,15 +49,26 @@ class OutboxRelayImpl(OutboxRelayInterface):
         self._options = options or OutboxOptions()
 
     async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
+        return await self.relay_all(org_id, (row,))
+
+    async def relay_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> bool:
+        if not rows:
+            return True
         try:
-            await self._deliver(org_id, row)
+            await self._deliver_all(org_id, rows)
         except Exception:
-            # The row is durable; the sweep relays it again. The request that
-            # wrote it has already succeeded and is not failed for a bus hiccup.
-            log.exception("outbox relay of %s (%s) failed; the sweep retries", row.id, row.kind)
+            # The rows are durable; the sweep relays what is left. The request
+            # that wrote them has already succeeded and is not failed for a bus
+            # hiccup.
+            log.exception(
+                "outbox relay of %d rows from %s (%s) failed; the sweep retries",
+                len(rows),
+                rows[0].id,
+                rows[0].kind,
+            )
             OUTCOMES.labels(subsystem="outbox", outcome="relay_failed").inc()
             return False
-        OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc()
+        OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc(len(rows))
         return True
 
     async def relay_pending(self, limit: int) -> int:
@@ -86,20 +97,36 @@ class OutboxRelayImpl(OutboxRelayInterface):
         return purged
 
     async def _deliver(self, org_id: UUID, row: OutboxRow) -> None:
-        """The row's kind is its destination: an entity change becomes an event and
-        an ENTITY_CHANGED publish, and a row of kind `work.<kind>`, the one a
-        write that also starts work landed beside its entity's row, becomes a
-        row in the queue and a WORK_AVAILABLE publish. Then the row is marked
-        done. Raises on any step, and every step is safe to run again: the
-        event is idempotent on the row's id and so is the enqueue, which
-        presents that id as the item's key."""
-        if asks_for_work(row.kind):
-            await self._enqueue(org_id, row)
-            await self._storage.mark_done(org_id, row.id)
-            return
-        # The event's id is the row's id: the append is idempotent on it, so a
-        # second relay of the same row gets the same event back, same seq.
-        event = Event(
+        await self._deliver_all(org_id, (row,))
+
+    async def _deliver_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> None:
+        """Each row's kind is its destination: an entity change becomes an event
+        and an ENTITY_CHANGED publish, and a row of kind `work.<kind>`, the one
+        a write that also starts work landed beside its entity's row, becomes a
+        row in the queue and a WORK_AVAILABLE publish. The entity changes are
+        appended in one call, then each row is marked done. Raises on any step,
+        and every step is safe to run again: an event is idempotent on its
+        row's id and so is the enqueue, which presents that id as the item's
+        key."""
+        changes = [row for row in rows if not asks_for_work(row.kind)]
+        if changes:
+            # An event's id is its row's id: the append is idempotent on it, so
+            # a second relay of the same rows gets the same events back, same seqs.
+            appended = await self._events.append_events(
+                org_id, [self._event_of(row) for row in changes]
+            )
+            for event in appended:
+                await self._publish(org_id, event)
+            for row in changes:
+                await self._storage.mark_done(org_id, row.id)
+        for row in rows:
+            if asks_for_work(row.kind):
+                await self._enqueue(org_id, row)
+                await self._storage.mark_done(org_id, row.id)
+
+    @staticmethod
+    def _event_of(row: OutboxRow) -> Event:
+        return Event(
             id=row.id,
             org_id=row.org_id,
             kind=row.kind,
@@ -110,9 +137,6 @@ class OutboxRelayImpl(OutboxRelayInterface):
             request_id=row.request_id,
             app=row.app,
         )
-        appended = await self._events.append_event(org_id, event)
-        await self._publish(org_id, appended)
-        await self._storage.mark_done(org_id, row.id)
 
     async def _enqueue(self, org_id: UUID, row: OutboxRow) -> None:
         """The work item the row asks for, enqueued with no context: the relay has
@@ -164,7 +188,8 @@ class OutboxRelayImpl(OutboxRelayInterface):
             app=row.app,
         )
         try:
-            await self._publish(org_id, await self._events.append_event(org_id, audit))
+            (event,) = await self._events.append_events(org_id, [audit])
+            await self._publish(org_id, event)
         except Exception:
             log.exception("the dead letter audit event for %s could not be appended", row.id)
 

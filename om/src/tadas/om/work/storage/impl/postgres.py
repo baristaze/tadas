@@ -91,7 +91,9 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 WorkItems.kind.in_([kind.value for kind in kinds]),
                 WorkItems.available_at <= now,
             )
-            .order_by(WorkItems.id)
+            # The item ready longest goes first, by the claim's index, so a
+            # claim reads the first free row and not the whole ready backlog.
+            .order_by(WorkItems.available_at, WorkItems.id)
             .limit(1)
             .with_for_update(skip_locked=True)
             .scalar_subquery()

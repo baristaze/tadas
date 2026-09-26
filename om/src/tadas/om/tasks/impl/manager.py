@@ -430,14 +430,17 @@ class TasksManagerImpl(TasksManagerInterface):
             rows = (outbox_row(ctx, "tasks.task.updated", task.id, {}),)
             updates.append((changed, task.version, rows))
         landed = await self._storage.update_tasks_if_current(ctx.org_id, updates)
+        landed_rows: list[OutboxRow] = []
         for (changed, _, rows), hit in zip(updates, landed, strict=True):
             if hit:
                 bulk.change(changed.id)
-                await self._relay_all(ctx, rows)
+                landed_rows.extend(rows)
             else:
                 bulk.skip(changed.id, SkipReason.CHANGED)
                 if bulk.room is not None:
                     bulk.room += 1  # the room it held goes to the next batch
+        # The batch's events take one run of numbers under one hold of the cursor.
+        await self._relay_all(ctx, landed_rows)
 
     def _plan_bound(self, bulk: _BulkChange) -> PlanBound:
         """The bound a reopen met, as the refusal of one more reopen names it."""
@@ -588,9 +591,15 @@ class TasksManagerImpl(TasksManagerInterface):
         written = await self._storage.create_tasks_in_step(
             ctx.org_id, tasks, Step(record=after, expected_version=record.version), rows_after
         )
-        for (_, task_rows), landed in zip(tasks, written, strict=True):
-            if landed:
-                await self._relay_all(ctx, task_rows)
+        # The step's tasks relay together: their events take one run of
+        # numbers under one hold of the tenant's cursor, not one hold each.
+        landed_rows = [
+            row
+            for (_, task_rows), landed in zip(tasks, written, strict=True)
+            if landed
+            for row in task_rows
+        ]
+        await self._relay_all(ctx, landed_rows)
         await self._relay_all(ctx, rows_after)
         return after.model_copy(update={"applied": record.applied + sum(written)})
 
@@ -711,17 +720,20 @@ class TasksManagerImpl(TasksManagerInterface):
             Step(record=after, expected_version=record.version),
             rows_after,
         )
-        for (_, task_rows), landed in zip(candidates, archived, strict=True):
-            if landed:
-                await self._relay_all(ctx, task_rows)
+        landed_rows = [
+            row
+            for (_, task_rows), landed in zip(candidates, archived, strict=True)
+            if landed
+            for row in task_rows
+        ]
+        await self._relay_all(ctx, landed_rows)
         await self._relay_all(ctx, rows_after)
         if any(archived):
             log.info("archived %d done tasks in org %s", sum(archived), ctx.org_id)
         return after.model_copy(update={"applied": record.applied + sum(archived)})
 
     async def _relay_all(self, ctx: OpContext, rows: Sequence[OutboxRow]) -> None:
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)
 
     async def count_active_tasks(self, ctx: OpContext) -> int:
         ctx.require(Permission.READ)
@@ -890,9 +902,7 @@ class TasksManagerImpl(TasksManagerInterface):
             if current.id == task.id:
                 moved = placed
         await self._storage.update_tasks(ctx.org_id, updates)
-        for _, _, rows in updates:
-            for row in rows:
-                await self._relay.relay(ctx.org_id, row)
+        await self._relay_all(ctx, [row for _, _, rows in updates for row in rows])
         return moved
 
     async def _every_open_task(self, ctx: OpContext) -> list[Task]:

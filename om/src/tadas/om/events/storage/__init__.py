@@ -1,10 +1,11 @@
 """Storage of the event stream. Append assigns the tenant's next sequence
-number from the tenant's cursor row, inside its own transaction; it is the one
-number storage assigns, because only the database can order commits. The trim
+numbers from the tenant's cursor row, inside its own transaction; they are the
+one number storage assigns, because only the database can order commits. The trim
 is the other atomic method: it deletes from the bottom of the stream and moves
 the tenant's floor in one transaction, so the stream above the floor is whole."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -13,12 +14,18 @@ from tadas.om.events.types.event import Event
 
 class EventStorageInterface(ABC):
     @abstractmethod
-    async def append_event(self, org_id: UUID, event: Event) -> Event:
-        """One transaction: takes the tenant's next seq from its cursor row, writes
-        the event with it, and returns it. Two concurrent appends queue on the
-        cursor and never share a seq or leave a gap behind; an append that rolls
-        back returns its number with it. Idempotent on the id: an event already
-        appended is returned as stored, and the retry consumes no number."""
+    async def append_events(self, org_id: UUID, events: Sequence[Event]) -> tuple[Event, ...]:
+        """One transaction: takes as many of the tenant's next seqs as there are
+        new events from its cursor row, writes the events with them in the
+        order given, and returns every event in that order. One event is a
+        batch of one. The numbers of one call are contiguous, and the events
+        commit together, so a reader never sees a later number before an
+        earlier one. Two concurrent appends queue on the cursor and never share
+        a seq or leave a gap behind; an append that rolls back returns its
+        numbers with it. Idempotent on the id: an event already appended is
+        returned as stored and consumes no number. An id another tenant holds
+        refuses the whole call and spends nothing; a call that names one id
+        twice is refused before anything is written."""
         ...
 
     @abstractmethod
