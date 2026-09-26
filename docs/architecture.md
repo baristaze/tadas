@@ -1819,6 +1819,13 @@ page; this section says what exists.
   `audit-credential-lifetimes` and `audit-provider-calls`, which count
   as well as read
   ([ADR 0067](adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md)).
+  They start from the guideline's templates and grow the same way.
+  Each opens with the one role it needs, the role `ops/README.md`
+  gives it, and `infra/tests/test_ops_skills.py` holds the two equal.
+  The deploy audit and the retention audit need the investigator, for
+  what they read in a cloud environment. The four that run on the
+  local stack alone need none: they hold no operator credential, and
+  the investigator reads no database row.
   An audit of calls proposes a fix in one order: remove a call, fold
   it, defer it, cache it, and only then run calls in parallel. The
   five that measure the code make a database
