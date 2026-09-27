@@ -53,7 +53,7 @@ else in Python calls `/v1/*`.
 from tadas.client.client import ApiClient
 from tadas.client.realtime import Channel
 
-api = ApiClient("http://127.0.0.1:8000", app="cli", app_version="cli@0.1.0", token=token)
+api = ApiClient("http://127.0.0.1:8000", app="cli", app_version="cli@0.7.0", token=token)
 async with api:
     task = await api.create_task("Migrate DB")
     async for change in Channel(api):
