@@ -28,7 +28,14 @@ substitution recorded below the table:
 | Traces and metrics                    | OpenTelemetry, Prometheus client (CloudWatch and X-Ray through an ADOT collector in the cloud; Prometheus, Grafana, and Jaeger locally) |
 | Logging                               | Python `logging`; errors to a Sentry-compatible backend through the Sentry SDK (GlitchTip locally) |
 
-Substitutions. None. Valkey was recorded here as a substitute for Redis
+Substitutions. One, since v0.39.0 tags Client App Architecture, Stack
+`default` (amended 2026-09-29):
+
+| Choice in the guideline | Substitute | Reason | Rules it still satisfies |
+|-------------------------|------------|--------|--------------------------|
+| React and TypeScript on Vite, for every browser app | The company site, `apps/site`: HTML and CSS on Vite, with no script ([ADR 0030](0030-the-company-site-is-html-and-css-not-react.md)) | One page with no state, no API call, and no socket, so nothing to render in a client | Vite builds it to static files behind CloudFront; it reaches no origin but its own; every app that holds state or calls the platform stays React on Vite |
+
+Valkey was recorded here as a substitute for Redis
 (ElastiCache offers no Redis OSS past 7.1; Valkey is its current engine,
 protocol-compatible, and open source) until guideline v0.4.0 named
 Valkey as the cache and the topic bus; from that release on it is an
