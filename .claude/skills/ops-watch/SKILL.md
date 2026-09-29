@@ -81,8 +81,7 @@ A batch makes at most 20 tool calls. Its main path is six: the wait,
 the credential check, one log read per process (`api` and
 `maintenance`), the alarms, and one `get-metric-data` call with a
 query per signal. The bound sits well above that, so a retry of each
-read and the reads of step 6 fit in it; only a batch that loops
-reaches it. Locally there is no credential check, and the Prometheus
+read fits in it; only a batch that loops reaches it. Locally there is no credential check, and the Prometheus
 queries of step 4 run as one command, as do those of step 5. A retry
 counts as a call. A read that would be the 21st call is not made: the
 batch stops there, writes that read as "not read", and the watch goes
@@ -155,7 +154,7 @@ step 2 come before the first batch, and are not counted in it.
    is a whole minute whatever the batch interval: the interval rounded
    down to a multiple of 60 seconds, and never under 60, since
    CloudWatch refuses any other period for a regular-resolution
-   metric. A batch's count is the sum of its datapoints, and its p95
+   metric. A Prometheus range query takes the same `step`. A batch's count is the sum of its datapoints, and its p95
    the highest among them. A burst is a count in the batch, never a
    line per event: the batch's lines over `--cap` are counted by level
    and dropped.
