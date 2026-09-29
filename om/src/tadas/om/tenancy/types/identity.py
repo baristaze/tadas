@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import ClassVar
 
 from tadas.om.base import Identifiable, Trackable
-from tadas.om.opcontext import OperatorRole
+from tadas.om.context import OperatorRole
 
 
 class Identity(Identifiable, Trackable):

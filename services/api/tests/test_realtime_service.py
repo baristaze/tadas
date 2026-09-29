@@ -17,8 +17,8 @@ from api_support import OWNER, add_member, build_container, on_plan, seed_reques
 from tadas.infra.topics import EntityChangedPayload, Topics
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import Role, TenantContext
 from tadas.om.events.types.event import Event
-from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.container import AppContainer
@@ -335,7 +335,7 @@ class Heads:
         events = container.managers.events
         read = events.get_head
 
-        async def counted(ctx: OpContext) -> int:
+        async def counted(ctx: TenantContext) -> int:
             self.reads += 1
             return await read(ctx)
 
@@ -353,7 +353,7 @@ class Heads:
         self._patch.undo()
 
 
-async def owner_socket(container: AppContainer) -> tuple[OpContext, SocketPrincipal]:
+async def owner_socket(container: AppContainer) -> tuple[TenantContext, SocketPrincipal]:
     tenancy = container.managers.tenancy
     _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
     token = await session_of(container, org.id, OWNER["email"])
@@ -361,13 +361,13 @@ async def owner_socket(container: AppContainer) -> tuple[OpContext, SocketPrinci
     return owner, await principal_of(container, token)
 
 
-async def add_task(container: AppContainer, owner: OpContext, title: str) -> None:
+async def add_task(container: AppContainer, owner: TenantContext, title: str) -> None:
     """A write the relay announces on the bus: its event gets the next seq."""
     tasks = container.services.get_tasks_service()
     await tasks.create_task(owner, AddTaskRequest(title=title), new_id())
 
 
-async def append_unheard(container: AppContainer, owner: OpContext) -> None:
+async def append_unheard(container: AppContainer, owner: TenantContext) -> None:
     """An event the bus never carried to this process: its subscription was
     down, or the publish was lost. The head moves; nothing is heard."""
     await container.managers.events.append_event(

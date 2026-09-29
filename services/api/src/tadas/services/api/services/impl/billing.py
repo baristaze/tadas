@@ -7,9 +7,9 @@ from tadas.om.billing import BillingManagerInterface
 from tadas.om.billing.rules import PLAN_LIMITS, PLAN_PRICES, monthly_price_cents
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import Permission, RequestContext, TenantContext
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media import MediaManagerInterface
-from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.services.billing import (
@@ -76,10 +76,10 @@ class BillingServiceImpl(BillingServiceInterface):
         self._media = media
         self._origins = portal_origins
 
-    async def get_billing(self, ctx: OpContext) -> BillingView:
+    async def get_billing(self, ctx: TenantContext) -> BillingView:
         return await self._view(ctx, await self._billing.get_billing(ctx))
 
-    async def start_checkout(self, ctx: OpContext, body: StartCheckoutRequest) -> RedirectView:
+    async def start_checkout(self, ctx: TenantContext, body: StartCheckoutRequest) -> RedirectView:
         back = portal_url(body.return_url, self._origins)
         org = await self._tenancy.get_org(ctx)
         seats = await self._tenancy.count_members(ctx)
@@ -93,18 +93,18 @@ class BillingServiceImpl(BillingServiceInterface):
         )
         return RedirectView(url=start.url)
 
-    async def open_portal(self, ctx: OpContext, body: OpenPortalRequest) -> RedirectView:
+    async def open_portal(self, ctx: TenantContext, body: OpenPortalRequest) -> RedirectView:
         back = portal_url(body.return_url, self._origins)
         update = body.flow == "payment_method_update"
         return RedirectView(url=await self._billing.open_portal(ctx, back, update))
 
-    async def cancel(self, ctx: OpContext) -> BillingView:
+    async def cancel(self, ctx: TenantContext) -> BillingView:
         return await self._view(ctx, await self._billing.cancel(ctx))
 
-    async def resume(self, ctx: OpContext) -> BillingView:
+    async def resume(self, ctx: TenantContext) -> BillingView:
         return await self._view(ctx, await self._billing.resume(ctx))
 
-    async def _view(self, ctx: OpContext, billing: Billing) -> BillingView:
+    async def _view(self, ctx: TenantContext, billing: Billing) -> BillingView:
         account = billing.account
         seats = await self._tenancy.count_members(ctx)
         usage = await self._media.get_usage(ctx)

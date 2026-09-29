@@ -10,7 +10,7 @@ from uuid import UUID
 from pydantic import Field
 
 from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
-from tadas.om.opcontext import Permission
+from tadas.om.context import Permission
 from tadas.om.orchestrations.types.orchestration import ParkReason
 
 

@@ -18,8 +18,8 @@ from tadas.infra.queues import QueueMessage, Queues, QueuesInterface
 from tadas.integrations.payments import ProviderDelivery
 from tadas.om.base import EMPTY_UUID, Platform, new_id
 from tadas.om.billing import BillingManagerInterface
+from tadas.om.context import AppContext, AppType, RequestContext
 from tadas.om.exceptions import InvalidCredential
-from tadas.om.opcontext import AppContext, AppType, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 
 log = logging.getLogger(__name__)

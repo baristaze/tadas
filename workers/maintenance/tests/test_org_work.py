@@ -19,7 +19,7 @@ from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext, OperatorRole, Role
+from tadas.om.context import OperatorRole, Role, TenantContext
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
@@ -33,7 +33,7 @@ def identity_of(container: WorkerContainer) -> IdentityProviderTwinImpl:
     return cast(IdentityProviderTwinImpl, container.identity_provider)
 
 
-async def signed_in_owner(container: WorkerContainer) -> OpContext:
+async def signed_in_owner(container: WorkerContainer) -> TenantContext:
     """Acme's owner, signed in locally: an org is deleted from a session.
     Acme is on Team, so it has room to invite someone."""
     tenancy = container.managers.tenancy
@@ -54,7 +54,7 @@ async def signed_in_owner(container: WorkerContainer) -> OpContext:
     return await tenancy.authenticate(request(), issued.token)
 
 
-async def claim(container: WorkerContainer) -> tuple[OpContext, WorkItem]:
+async def claim(container: WorkerContainer) -> tuple[TenantContext, WorkItem]:
     claimed = await container.managers.work.claim(
         request(), "default", [WorkKind.DELETE_ORG], "test", LEASE
     )

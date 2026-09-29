@@ -27,11 +27,11 @@ from pydantic import BaseModel
 
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import new_id
+from tadas.om.context import OperatorContext, TenantContext
 from tadas.om.exceptions import IdempotencyAttemptLost, IdempotencyInProgress, PlatformException
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import OpContext, OperatorContext
 from tadas.services.api.gateway.admin import OperatorCtx
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.resolve import container_of
@@ -72,7 +72,7 @@ class Marker(Protocol):
 
 
 class TenantMarker:
-    def __init__(self, manager: IdempotencyManagerInterface, ctx: OpContext) -> None:
+    def __init__(self, manager: IdempotencyManagerInterface, ctx: TenantContext) -> None:
         self._manager = manager
         self._ctx = ctx
 

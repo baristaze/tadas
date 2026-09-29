@@ -18,7 +18,7 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.billing.impl.cache import account_changed
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
+from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tenancy.rules import totp_code, totp_step

@@ -5,9 +5,9 @@ from uuid import UUID
 from tadas.om.base import EMPTY_UUID
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.types.account import BillingAccount
+from tadas.om.context import CredentialKind, Role
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage import AttemptFenceInterface
-from tadas.om.opcontext import CredentialKind, Role
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable

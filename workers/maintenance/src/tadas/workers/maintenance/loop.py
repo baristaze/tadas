@@ -37,8 +37,8 @@ from tadas.infra.observability import (
 )
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, Platform, new_id
+from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import LeaseLost, NotFound
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
@@ -53,7 +53,7 @@ REQUEST_ID_ATTRIBUTE = "tadas.request_id"
 CAUSED_BY_ATTRIBUTE = "tadas.caused_by_request_id"
 WORK_ITEM_ATTRIBUTE = "tadas.work_item_id"
 
-PurgeStep = Callable[[OpContext], Awaitable[int]]
+PurgeStep = Callable[[TenantContext], Awaitable[int]]
 """A manager's `purge_tenant(ctx)`: the hard delete of every row of a tenant
 deleted longer ago than the retention, a batch per statement, and nothing
 for any other tenant; it returns how many rows went, and a count of a whole
@@ -66,7 +66,7 @@ tasks' purge mints a tenant's context from it for the attachments it
 detaches); it returns how many rows went, and a whole batch or more says
 there may be more."""
 
-ChoreStep = Callable[[OpContext], Awaitable[object]]
+ChoreStep = Callable[[TenantContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
 of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
 
@@ -157,7 +157,7 @@ class WorkerLoop:
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         self._drained = asyncio.Event()
-        self._running: dict[asyncio.Task[None], tuple[OpContext, WorkItem]] = {}
+        self._running: dict[asyncio.Task[None], tuple[TenantContext, WorkItem]] = {}
         self._last_beat: float | None = None
         self.online = False
         self.sweeps = 0
@@ -291,7 +291,7 @@ class WorkerLoop:
 
     # Running one item.
 
-    async def _run_item(self, ctx: OpContext, item: WorkItem, span: Span) -> None:
+    async def _run_item(self, ctx: TenantContext, item: WorkItem, span: Span) -> None:
         # The claim refined the request stage minted for it; every log line of
         # the run carries its request id, the way the API's middleware does,
         # and the request that caused the work beside it.
@@ -309,7 +309,7 @@ class WorkerLoop:
             request_id_var.reset(token)
 
     @staticmethod
-    def _span_attributes(ctx: OpContext, item: WorkItem) -> dict[str, str]:
+    def _span_attributes(ctx: TenantContext, item: WorkItem) -> dict[str, str]:
         """The run's two requests and the item it advances. The cause is there
         only where the handoff named one; an attribute with nothing in it says
         less than no attribute."""
@@ -321,7 +321,7 @@ class WorkerLoop:
             attributes[CAUSED_BY_ATTRIBUTE] = str(ctx.caused_by_request_id)
         return attributes
 
-    async def _handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def _handle(self, ctx: TenantContext, item: WorkItem) -> None:
         handler = self._handlers.get(item.kind)
         if handler is None:
             await self._settle(item, self._work.release(ctx, item), "released")
@@ -381,7 +381,7 @@ class WorkerLoop:
         OUTCOMES.labels(subsystem="worker", outcome=outcome).inc()
 
     async def _renew_lease(
-        self, ctx: OpContext, item: WorkItem, owner: asyncio.Task[None] | None
+        self, ctx: TenantContext, item: WorkItem, owner: asyncio.Task[None] | None
     ) -> None:
         """Renews a third of the lease after the last renewal that succeeded. The
         fence is half the lease after it: every attempt is bounded by the time
@@ -643,7 +643,7 @@ class WorkerLoop:
     async def _outbox_failed_recently(self) -> int:
         return await self._outbox.failed_within(self._options.failed_window)
 
-    def _from_resume_point(self, contexts: list[OpContext]) -> list[OpContext]:
+    def _from_resume_point(self, contexts: list[TenantContext]) -> list[TenantContext]:
         """The pass's tenants in id order, the system scope first, turned to
         start at the tenant the last pass stopped at. A tenant that went from
         the list since starts the pass at the next one."""
@@ -653,7 +653,7 @@ class WorkerLoop:
         at = next((i for i, ctx in enumerate(ordered) if ctx.org_id >= self._resume_at), 0)
         return ordered[at:] + ordered[:at]
 
-    async def _run_chores(self, contexts: list[OpContext], deadline: float) -> int:
+    async def _run_chores(self, contexts: list[TenantContext], deadline: float) -> int:
         """The standing chores of the tenants with one due, in id order, a page
         a pass: one read across tenants names them, and each runs every chore
         once, under the service context the pass listed for it. A tenant with
@@ -690,7 +690,7 @@ class WorkerLoop:
             ran += 1
         return ran
 
-    async def _sweep_tenant(self, ctx: OpContext, deadline: float) -> None:
+    async def _sweep_tenant(self, ctx: TenantContext, deadline: float) -> None:
         """Every purge of one tenant once, then the purges whose batch came back
         full, round after round, while the budget lasts. A deleted tenant past
         its retention for which nothing was left is marked purged, and the
@@ -749,7 +749,7 @@ class WorkerLoop:
         return purged
 
     @staticmethod
-    async def _purge(ctx: OpContext, name: str, purge: PurgeStep) -> int | None:
+    async def _purge(ctx: TenantContext, name: str, purge: PurgeStep) -> int | None:
         """One call of one step; None when it failed, which it logs."""
         try:
             purged = await purge(ctx)

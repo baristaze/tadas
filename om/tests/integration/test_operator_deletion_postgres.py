@@ -11,8 +11,8 @@ import pytest
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id
+from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.exceptions import NotAuthenticated, NotFound
-from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.root import build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings

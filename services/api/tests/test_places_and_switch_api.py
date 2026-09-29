@@ -9,7 +9,7 @@ import pytest
 from api_support import OWNER, enrolled_sign_in, on_plan, seed_request, sign_in_as
 
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.context import OperatorRole, Role
 from tadas.services.api.container import AppContainer
 
 DEE = {"email": "dee@example.test", "display_name": "Dee"}

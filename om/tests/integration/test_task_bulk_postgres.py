@@ -14,7 +14,7 @@ from unit.test_task_import import World
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext
+from tadas.om.context import TenantContext
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.rules import BULK_BATCH
@@ -38,11 +38,11 @@ async def storage(
     await root.close()
 
 
-def team(ctx: OpContext) -> TaskFilter:
+def team(ctx: TenantContext) -> TaskFilter:
     return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
 
-async def add(world: World, ctx: OpContext, title: str) -> Task:
+async def add(world: World, ctx: TenantContext, title: str) -> Task:
     now = utcnow()
     task = Task(
         id=new_id(),

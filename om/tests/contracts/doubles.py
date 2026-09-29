@@ -6,18 +6,18 @@ from uuid import UUID
 from contracts.factories import make_org, make_user
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import EMPTY_UUID, new_id
-from tadas.om.exceptions import NotFound
-from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
-from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
-from tadas.om.opcontext import (
+from tadas.om.context import (
     AppContext,
     AppType,
     CredentialKind,
-    OpContext,
     RequestContext,
     Role,
+    TenantContext,
     build_context,
 )
+from tadas.om.exceptions import NotFound
+from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
+from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.orchestrations.impl.manager import OrchestrationsManagerImpl, OrchestrationsOptions
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
@@ -44,16 +44,16 @@ class Members(TenancyManagerInterface):
         self.users: dict[UUID, User] = {}
         self.expired = False
 
-    async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
+    async def get_user(self, ctx: TenantContext, user_id: UUID) -> User:
         user = self.users.get(user_id)
         if user is None:
             raise NotFound(f"user {user_id} not found")
         return user
 
-    async def tenant_expired(self, ctx: OpContext) -> bool:
+    async def tenant_expired(self, ctx: TenantContext) -> bool:
         return self.expired
 
-    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> OpContext | None:
+    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> TenantContext | None:
         return build_context(
             rctx,
             user_id=EMPTY_UUID,
@@ -72,7 +72,7 @@ def request() -> RequestContext:
     return RequestContext(request_id=new_id(), app=APP)
 
 
-def context(role: Role, org: Org | None = None, members: Members | None = None) -> OpContext:
+def context(role: Role, org: Org | None = None, members: Members | None = None) -> TenantContext:
     user = make_user(new_id())
     if members is not None:
         members.users[user.id] = user
@@ -109,7 +109,7 @@ def orchestrations_of(
 class NoSlack(SlackManagerInterface):
     """A partial double: an org with no Slack installation."""
 
-    async def get_installation(self, ctx: OpContext) -> SlackInstallation | None:
+    async def get_installation(self, ctx: TenantContext) -> SlackInstallation | None:
         return None
 
 

@@ -16,9 +16,9 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES, current_traceparent
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.events.types.event import Event
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox.impl.relay import DEAD_LETTER_KIND, OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot, versioned_row
@@ -145,7 +145,7 @@ async def test_purge_takes_done_and_failed_rows_past_the_retention(infra: InfraL
     assert await relay.purge_done(timedelta(seconds=-1), 1000) == 2
 
 
-async def sign_in(managers: Managers) -> OpContext:
+async def sign_in(managers: Managers) -> TenantContext:
     """A tenant with a member, so a relayed work item has a principal to run
     under: the row names the actor and the claim rebuilds it."""
     tenancy = managers.tenancy

@@ -23,8 +23,8 @@ from pydantic import ValidationError
 from tadas.infra.observability import failure_level
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
+from tadas.om.context import TenantContext
 from tadas.om.exceptions import PlatformException
-from tadas.om.opcontext import OpContext
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.auth import CLOSE_UNAUTHENTICATED, Ctx, Principal
 from tadas.services.api.gateway.resolve import RealtimeService, container_of
@@ -110,7 +110,7 @@ async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> IssuedTicketView:
 
 async def serve_commands(
     websocket: WebSocket,
-    ctx: OpContext,
+    ctx: TenantContext,
     realtime: RealtimeServiceInterface,
     buffer: SendBuffer,
     subscriptions: dict[Topics, Callable[[], None]],

@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 from tadas.apps.cli import config, main
 from tadas.client.client import ApiClient, ApiError
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.om.tasks.types.task import Task
 
 

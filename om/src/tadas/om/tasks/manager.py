@@ -5,9 +5,9 @@ from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
+from tadas.om.context import RequestContext, TenantContext
 from tadas.om.media.types.file import File
 from tadas.om.media.types.page import FilePage
-from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationPage
 from tadas.om.tasks.types.bulk import BulkAction, BulkOutcome
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -18,7 +18,7 @@ from tadas.om.tasks.types.task import DueReminder, Task, TaskStatus
 class TasksManagerInterface(ABC):
     @abstractmethod
     async def get_open_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
     ) -> TaskPage:
         """One page of the open tasks the filter shows, in manual order, top
         first, strictly after the cursor. The filter's user is the caller:
@@ -28,7 +28,7 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def get_recent_open_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, limit: int
     ) -> TaskPage:
         """The newest open tasks the filter shows, newest first: one page and
         no cursor, for a caller that shows a few and links to the rest. The
@@ -37,13 +37,15 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
+    async def count_open_tasks(self, ctx: TenantContext, criterion: TaskFilter) -> int:
         """How many open tasks the filter shows, the number beside a page of
         `get_open_tasks`; the filter's user is the caller, as there."""
         ...
 
     @abstractmethod
-    async def count_tasks(self, ctx: OpContext, criterion: TaskFilter, status: TaskStatus) -> int:
+    async def count_tasks(
+        self, ctx: TenantContext, criterion: TaskFilter, status: TaskStatus
+    ) -> int:
         """How many tasks the list of `status` shows under the filter: the open
         list, or the done list without the archived tasks. The number a
         "Mark all" asks about before it runs; the filter's user is the caller,
@@ -52,7 +54,7 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def get_done_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> TaskPage:
         """One page of the done tasks the filter shows, newest first, strictly
         before the cursor; `limit` and `has_more` as on `get_open_tasks`."""
@@ -60,25 +62,25 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def get_archived_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> TaskPage:
         """One page of the archived tasks the filter shows, newest first,
         paged as the done list is."""
         ...
 
     @abstractmethod
-    async def get_task(self, ctx: OpContext, task_id: UUID) -> Task:
+    async def get_task(self, ctx: TenantContext, task_id: UUID) -> Task:
         """A live task, archived or not: an archived one is still read."""
         ...
 
     @abstractmethod
-    async def create_task(self, ctx: OpContext, task: Task) -> Task:
+    async def create_task(self, ctx: TenantContext, task: Task) -> Task:
         """A new task is open and goes to the top of the open list. An org at
         its plan's bound of active tasks is refused (`PlanLimitReached`)."""
         ...
 
     @abstractmethod
-    async def update_task(self, ctx: OpContext, task: Task, expected_version: int) -> Task:
+    async def update_task(self, ctx: TenantContext, task: Task, expected_version: int) -> Task:
         """A task reopened from done goes back to the top of the open list, and
         is refused like a create when the org is at its bound. The
         entity supplies the fields a caller may change; the provenance and the
@@ -90,7 +92,7 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def move_task(
-        self, ctx: OpContext, task_id: UUID, after_id: UUID | None, expected_version: int
+        self, ctx: TenantContext, task_id: UUID, after_id: UUID | None, expected_version: int
     ) -> Task:
         """Places an open task right after `after_id` in the open list, or at
         the top when it is None, by giving it a rank between its new
@@ -101,7 +103,7 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def change_tasks(
-        self, ctx: OpContext, action: BulkAction, task_ids: Sequence[UUID]
+        self, ctx: TenantContext, action: BulkAction, task_ids: Sequence[UUID]
     ) -> BulkOutcome:
         """Completes or reopens the named tasks, at most `BULK_MAX_IDS` of them
         (more is `ValidationFailed`), a batch at a time (`BULK_BATCH`), one
@@ -119,7 +121,7 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def change_list(
-        self, ctx: OpContext, action: BulkAction, criterion: TaskFilter, status: TaskStatus
+        self, ctx: TenantContext, action: BulkAction, criterion: TaskFilter, status: TaskStatus
     ) -> BulkOutcome:
         """The same change over a whole list rather than named tasks: every
         task the list of `status` shows under the filter, read a batch at a
@@ -129,7 +131,7 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def delete_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
+    async def delete_task(self, ctx: TenantContext, task_id: UUID, expected_version: int) -> Task:
         """The soft delete. `expected_version` is the one the caller read, as
         on `update_task`: a delete that raced an edit is refused, and an edit
         that raced a delete finds the task gone and cannot bring it back. The
@@ -137,14 +139,14 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def restore_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
+    async def restore_task(self, ctx: TenantContext, task_id: UUID, expected_version: int) -> Task:
         """Takes an archived task back to the done list, at its top. A task
         that is not archived is refused (`ValidationFailed`). `expected_version`
         is the one the caller read, as on `update_task`."""
         ...
 
     @abstractmethod
-    async def attach_file(self, ctx: OpContext, task_id: UUID, file: File) -> File:
+    async def attach_file(self, ctx: TenantContext, task_id: UUID, file: File) -> File:
         """Starts an upload of a file to a live task: the media namespace lands
         it pending, as a task attachment whose subject is the task, whatever
         purpose and subject the caller's file names. The bytes and the confirm
@@ -153,13 +155,13 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def get_attachments(
-        self, ctx: OpContext, task_id: UUID, after: UUID | None, limit: int
+        self, ctx: TenantContext, task_id: UUID, after: UUID | None, limit: int
     ) -> FilePage:
         """One page of a live task's stored attachments, oldest first."""
         ...
 
     @abstractmethod
-    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> File:
+    async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> File:
         """Soft-deletes one attachment of a live task. A file that is not this
         task's attachment is `NotFound`, as one that never existed is."""
         ...
@@ -167,7 +169,7 @@ class TasksManagerInterface(ABC):
     # The import of tasks from a CSV file.
 
     @abstractmethod
-    async def create_import_file(self, ctx: OpContext, file: File) -> File:
+    async def create_import_file(self, ctx: TenantContext, file: File) -> File:
         """Starts the upload of a CSV file to import: the media namespace
         lands it pending under the `task_import` purpose and its bounds,
         whatever purpose and subject the caller's file names. The bytes and
@@ -175,7 +177,9 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def start_import(self, ctx: OpContext, import_id: UUID, file_id: UUID) -> Orchestration:
+    async def start_import(
+        self, ctx: TenantContext, import_id: UUID, file_id: UUID
+    ) -> Orchestration:
         """Starts the import of a stored `task_import` file: the record and
         the work row of its first step, in one commit. The rows are read by
         the worker, a batch a step. An id written already answers the import
@@ -183,21 +187,21 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_import(self, ctx: OpContext, import_id: UUID) -> Orchestration: ...
+    async def get_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration: ...
 
     @abstractmethod
-    async def get_imports(self, ctx: OpContext, limit: int) -> OrchestrationPage:
+    async def get_imports(self, ctx: TenantContext, limit: int) -> OrchestrationPage:
         """The org's newest imports, newest first."""
         ...
 
     @abstractmethod
-    async def resume_import(self, ctx: OpContext, import_id: UUID) -> Orchestration:
+    async def resume_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
         """A person's wake of a parked import: it runs again from its cursor,
         and parks again at once if the plan still has no room."""
         ...
 
     @abstractmethod
-    async def step_import(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def step_import(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         """One step of an import: reads the file, checks its bounds, and makes
         the tasks of the next batch of rows in one commit with the record's
         next cursor (`TasksStorageInterface.create_tasks_in_step`). A row that
@@ -210,7 +214,7 @@ class TasksManagerInterface(ABC):
     # The daily cleanup of old done tasks.
 
     @abstractmethod
-    async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
+    async def open_cleanup(self, ctx: TenantContext) -> Orchestration | None:
         """The sweep, for one tenant: opens today's cleanup record when the org
         has a done task unchanged since the day began, less the archive age
         (`tasks.rules.archive_cutoff`), and today's record is not open yet;
@@ -220,7 +224,7 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def step_cleanup(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def step_cleanup(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         """One step of a cleanup: archives the next batch of done tasks
         unchanged since the record's cutoff, in one conditional write with the
         record's next cursor (`TasksStorageInterface.update_archived_in_step`).
@@ -228,13 +232,13 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def count_active_tasks(self, ctx: OpContext) -> int:
+    async def count_active_tasks(self, ctx: TenantContext) -> int:
         """How many of the org's tasks are open and not deleted: what the
         plan's active-task bound counts."""
         ...
 
     @abstractmethod
-    async def get_due_reminder(self, ctx: OpContext, task_id: UUID) -> DueReminder | None:
+    async def get_due_reminder(self, ctx: TenantContext, task_id: UUID) -> DueReminder | None:
         """The reminder the task is waiting for: its due date and the moment
         the reminder goes out, nine in the morning of that date in the time
         zone of the person the task is for (`tasks.rules.reminder_time`),
@@ -243,7 +247,7 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def fire_reminder(self, ctx: OpContext, task_id: UUID, due_on: date) -> Task | None:
+    async def fire_reminder(self, ctx: TenantContext, task_id: UUID, due_on: date) -> Task | None:
         """The reminder of the task's due date, when its moment has come:
         marks the task reminded and announces it (`tasks.task.reminded`), and
         asks for the Slack post when the org has a Slack channel bound, all in
@@ -253,7 +257,7 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def respace_ranks(self, ctx: OpContext) -> int:
+    async def respace_ranks(self, ctx: TenantContext) -> int:
         """The sweep, for one tenant: when an open task's rank grew past
         `tasks.rules.RANK_SCALE_BOUND`, gives its run (the tasks between the
         nearest short ranks around it, `tasks.rules.respace_run`) ranks that
@@ -286,7 +290,7 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         """The sweep, for one tenant deleted longer ago than the retention: every
         task goes, open and done ones too, since the tenant keeps nothing but
         its org row; at most a batch a call; returns how many. Any other

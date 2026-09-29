@@ -4,7 +4,7 @@ and the end of an install, where Slack sends the browser back."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from tadas.om.opcontext import OpContext, RequestContext
+from tadas.om.context import RequestContext, TenantContext
 from tadas.services.api.types.slack import (
     SlackEventAnswerView,
     SlackInstallStartView,
@@ -26,13 +26,13 @@ class SlackRequest:
 
 class SlackServiceInterface(ABC):
     @abstractmethod
-    async def get_status(self, ctx: OpContext) -> SlackStatusView: ...
+    async def get_status(self, ctx: TenantContext) -> SlackStatusView: ...
 
     @abstractmethod
-    async def start_install(self, ctx: OpContext) -> SlackInstallStartView: ...
+    async def start_install(self, ctx: TenantContext) -> SlackInstallStartView: ...
 
     @abstractmethod
-    async def uninstall(self, ctx: OpContext) -> SlackStatusView: ...
+    async def uninstall(self, ctx: TenantContext) -> SlackStatusView: ...
 
     @abstractmethod
     async def finish_install(

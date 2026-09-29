@@ -17,8 +17,8 @@ from tadas.integrations.slack import (
     SlackTokens,
 )
 from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.context import Permission, RequestContext, TenantContext
 from tadas.om.exceptions import NotFound, SlackWorkspaceTaken, UniqueKeyTaken
-from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row
 from tadas.om.slack.manager import SlackManagerInterface
@@ -88,11 +88,11 @@ class SlackManagerImpl(SlackManagerInterface):
         self._secrets = secrets
         self._options = options
 
-    async def get_installation(self, ctx: OpContext) -> SlackInstallation | None:
+    async def get_installation(self, ctx: TenantContext) -> SlackInstallation | None:
         ctx.require(Permission.READ)
         return await self._storage.read_installation(ctx.org_id)
 
-    async def start_install(self, ctx: OpContext, redirect_uri: str) -> SlackInstallStart:
+    async def start_install(self, ctx: TenantContext, redirect_uri: str) -> SlackInstallStart:
         ctx.require(Permission.MANAGE_MEMBERS)
         now = utcnow()
         state = new_state()
@@ -147,7 +147,7 @@ class SlackManagerImpl(SlackManagerInterface):
         return installation
 
     def _installed(
-        self, ctx: OpContext, grant: SlackGrant, current: SlackInstallation | None
+        self, ctx: TenantContext, grant: SlackGrant, current: SlackInstallation | None
     ) -> SlackInstallation:
         """The installation a grant makes: a new one, or the org's own in the
         same workspace installed again (new scopes, a new token), which keeps
@@ -180,14 +180,14 @@ class SlackManagerImpl(SlackManagerInterface):
             }
         )
 
-    async def uninstall(self, ctx: OpContext) -> SlackInstallation | None:
+    async def uninstall(self, ctx: TenantContext) -> SlackInstallation | None:
         ctx.require(Permission.MANAGE_MEMBERS)
         current = await self._storage.read_installation(ctx.org_id)
         if current is None:
             return None
         return await self._remove(ctx, current, uninstall=True)
 
-    async def forget(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
+    async def forget(self, ctx: TenantContext, reason: str) -> SlackInstallation | None:
         ctx.require(Permission.WRITE)
         current = await self._storage.read_installation(ctx.org_id)
         if current is None:
@@ -196,7 +196,7 @@ class SlackManagerImpl(SlackManagerInterface):
         return await self._remove(ctx, current, uninstall=False)
 
     async def _remove(
-        self, ctx: OpContext, current: SlackInstallation, *, uninstall: bool
+        self, ctx: TenantContext, current: SlackInstallation, *, uninstall: bool
     ) -> SlackInstallation:
         """The app leaves the workspace (when Slack does not know yet), the
         token goes from the org's secrets, and the row is deleted, announced.
@@ -234,7 +234,7 @@ class SlackManagerImpl(SlackManagerInterface):
 
     async def installation_for_team(
         self, rctx: RequestContext, team_id: str
-    ) -> tuple[OpContext, SlackInstallation] | None:
+    ) -> tuple[TenantContext, SlackInstallation] | None:
         held = await self._storage.read_installation_by_team(team_id)
         if held is None:
             return None
@@ -242,7 +242,7 @@ class SlackManagerImpl(SlackManagerInterface):
         ctx = await self._tenancy.service_context(rctx, org_id, installation.created_by)
         return ctx, installation
 
-    async def bot_token(self, ctx: OpContext) -> str:
+    async def bot_token(self, ctx: TenantContext) -> str:
         ctx.require(Permission.READ)
         installation = await self._storage.read_installation(ctx.org_id)
         if installation is None:
@@ -304,7 +304,7 @@ class SlackManagerImpl(SlackManagerInterface):
         await self._storage.settle_refresh(ctx.org_id, installation.id, fresh.expires_at, utcnow())
         return fresh.access_token.get_secret_value()
 
-    async def bind_channel(self, ctx: OpContext, channel_id: str) -> SlackInstallation:
+    async def bind_channel(self, ctx: TenantContext, channel_id: str) -> SlackInstallation:
         ctx.require(Permission.MANAGE_MEMBERS)
         current = await self._storage.read_installation(ctx.org_id)
         if current is None:
@@ -321,7 +321,7 @@ class SlackManagerImpl(SlackManagerInterface):
         await self._write(ctx, bound, "updated")
         return bound
 
-    async def mark_broken(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
+    async def mark_broken(self, ctx: TenantContext, reason: str) -> SlackInstallation | None:
         ctx.require(Permission.WRITE)
         current = await self._storage.read_installation(ctx.org_id)
         if current is None:
@@ -339,7 +339,7 @@ class SlackManagerImpl(SlackManagerInterface):
         await self._write(ctx, broken, "updated")
         return broken
 
-    async def bot_joined(self, ctx: OpContext, channel_id: str) -> SlackInstallation | None:
+    async def bot_joined(self, ctx: TenantContext, channel_id: str) -> SlackInstallation | None:
         ctx.require(Permission.WRITE)
         current = await self._storage.read_installation(ctx.org_id)
         if (
@@ -361,11 +361,13 @@ class SlackManagerImpl(SlackManagerInterface):
         await self._write(ctx, mended, "updated")
         return mended
 
-    async def read_post(self, ctx: OpContext, key: UUID) -> SlackPost | None:
+    async def read_post(self, ctx: TenantContext, key: UUID) -> SlackPost | None:
         ctx.require(Permission.READ)
         return await self._storage.read_post(ctx.org_id, key)
 
-    async def record_post(self, ctx: OpContext, key: UUID, channel_id: str, ts: str) -> SlackPost:
+    async def record_post(
+        self, ctx: TenantContext, key: UUID, channel_id: str, ts: str
+    ) -> SlackPost:
         ctx.require(Permission.WRITE)
         post = SlackPost(id=new_id(), created_at=utcnow(), key=key, channel_id=channel_id, ts=ts)
         if await self._storage.create_post(ctx.org_id, post):
@@ -380,19 +382,21 @@ class SlackManagerImpl(SlackManagerInterface):
             utcnow() - self._options.retention, self._options.purge_batch
         )
 
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         ctx.require(Permission.WRITE)
         if not await self._tenancy.tenant_expired(ctx):
             return 0
         return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
-    async def _revoke_quietly(self, ctx: OpContext, tokens: SlackTokens) -> None:
+    async def _revoke_quietly(self, ctx: TenantContext, tokens: SlackTokens) -> None:
         try:
             await self._slack.revoke(tokens.access_token.get_secret_value(), deadline=ctx.deadline)
         except SlackError as error:
             log.warning("a Slack token the platform does not keep was not revoked: %s", error)
 
-    async def _write(self, ctx: OpContext, installation: SlackInstallation, action: str) -> None:
+    async def _write(
+        self, ctx: TenantContext, installation: SlackInstallation, action: str
+    ) -> None:
         """The installation and the row that announces it, in one commit; the
         portal's settings hear it and read the installation again. Ids only."""
         rows = (outbox_row(ctx, f"slack.installation.{action}", installation.id, {}),)

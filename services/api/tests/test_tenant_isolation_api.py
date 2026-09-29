@@ -18,7 +18,7 @@ from api_support import add_member, build_container, on_plan, run, seed_request,
 from starlette.testclient import TestClient
 
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 

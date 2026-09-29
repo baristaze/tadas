@@ -21,7 +21,7 @@ from api_support import add_member, build_container, seed_request, sign_in_as
 from tadas.infra.queues import Queues
 from tadas.integrations.slack.requests import SlackInbound, delivery_key, sign
 from tadas.integrations.slack.twin import SlackTwinImpl
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 

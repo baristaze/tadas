@@ -9,9 +9,9 @@ from uuid import UUID
 
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
+from tadas.om.context import ActorScope, CredentialKind, TenantContext
 from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import NotAuthenticated, PlanLimitReached, ValidationFailed
-from tadas.om.opcontext import ActorScope, CredentialKind, OpContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
@@ -97,12 +97,12 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
         # keeps the head of every tenant it holds a socket for.
         self._topics.subscribe(Topics.ENTITY_CHANGED, "socket-revocations", self._on_change)
 
-    async def head(self, ctx: OpContext) -> int:
+    async def head(self, ctx: TenantContext) -> int:
         seq = await self._events.get_head(ctx)
         self._learn(ctx.org_id, seq)
         return seq
 
-    async def pong_head(self, ctx: OpContext) -> int:
+    async def pong_head(self, ctx: TenantContext) -> int:
         known = self._heads.get(ctx.org_id)
         if known is not None and self._clock() - known.confirmed_at < self._head_max_age:
             return known.seq
@@ -136,7 +136,7 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
             return RIGHTS_CHANGED
         return None
 
-    async def issue_ticket(self, ctx: OpContext) -> IssuedTicketView:
+    async def issue_ticket(self, ctx: TenantContext) -> IssuedTicketView:
         issued = await self._tenancy.issue_ticket(ctx)
         remaining = int((issued.expires_at - utcnow()).total_seconds())
         return IssuedTicketView(ticket=issued.ticket, expires_in_seconds=max(remaining, 0))

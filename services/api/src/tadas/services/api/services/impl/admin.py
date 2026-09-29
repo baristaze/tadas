@@ -3,8 +3,8 @@ from uuid import UUID
 
 from tadas.om.billing import BillingOperatorManagerInterface
 from tadas.om.billing.types.billing import Billing
+from tadas.om.context import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.opcontext import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy import TenancyOperatorManagerInterface
 from tadas.om.tenancy.types.session import Session

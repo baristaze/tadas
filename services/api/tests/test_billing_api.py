@@ -21,7 +21,7 @@ from tadas.integrations.payments.stripe import translated
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.container import AppContainer
 
 PORTAL = "http://localhost:5173/settings/billing"

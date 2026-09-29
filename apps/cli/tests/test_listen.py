@@ -19,7 +19,7 @@ from tadas.client.client import DEFAULT_RETRIES, ApiClient, ApiError
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import State
 from tadas.client.types import TaskStatus, TaskView
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 
 CLOCK = datetime(2026, 9, 18, 9, 30, 0)
 CAROL = {"email": "carol@example.test"}

@@ -6,7 +6,7 @@ it makes itself (a start, a resume, a park, a failure)."""
 
 from datetime import datetime
 
-from tadas.om.opcontext import ProvenanceScope
+from tadas.om.context import ProvenanceScope
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationStatus
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.work.types.work_item import OrchestrationPayload, WorkKind, work_row_kind

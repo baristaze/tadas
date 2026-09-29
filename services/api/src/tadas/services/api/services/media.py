@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from tadas.om.opcontext import OpContext
+from tadas.om.context import TenantContext
 from tadas.services.api.types.media import (
     FileContentResponse,
     FileView,
@@ -15,26 +15,28 @@ from tadas.services.api.types.media import (
 
 class MediaServiceInterface(ABC):
     @abstractmethod
-    async def get_file(self, ctx: OpContext, file_id: UUID) -> FileView: ...
+    async def get_file(self, ctx: TenantContext, file_id: UUID) -> FileView: ...
 
     @abstractmethod
-    async def issue_upload(self, ctx: OpContext, file_id: UUID) -> IssuedUploadView: ...
+    async def issue_upload(self, ctx: TenantContext, file_id: UUID) -> IssuedUploadView: ...
 
     @abstractmethod
-    async def put_content(self, ctx: OpContext, file_id: UUID, data: bytes) -> FileView: ...
+    async def put_content(self, ctx: TenantContext, file_id: UUID, data: bytes) -> FileView: ...
 
     @abstractmethod
-    async def confirm_file(self, ctx: OpContext, file_id: UUID) -> FileView: ...
+    async def confirm_file(self, ctx: TenantContext, file_id: UUID) -> FileView: ...
 
     @abstractmethod
     async def issue_download(
-        self, ctx: OpContext, file_id: UUID, inline: bool
+        self, ctx: TenantContext, file_id: UUID, inline: bool
     ) -> IssuedDownloadView: ...
 
     @abstractmethod
-    async def get_content(self, ctx: OpContext, file_id: UUID, inline: bool) -> FileContentResponse:
+    async def get_content(
+        self, ctx: TenantContext, file_id: UUID, inline: bool
+    ) -> FileContentResponse:
         """The bytes through the API, for a store that cannot sign a link."""
         ...
 
     @abstractmethod
-    async def get_usage(self, ctx: OpContext) -> StorageUsageView: ...
+    async def get_usage(self, ctx: TenantContext) -> StorageUsageView: ...

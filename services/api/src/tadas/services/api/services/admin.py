@@ -1,11 +1,11 @@
-"""The operator service: takes OperatorContext and never an OpContext. A
+"""The operator service: takes OperatorContext and never an TenantContext. A
 read of one tenant names it by id; the views are the tenant's own."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID
 
+from tadas.om.context import OperatorContext
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.opcontext import OperatorContext
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.types.admin import (
     AddMemberRequest,

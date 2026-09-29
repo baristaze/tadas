@@ -22,7 +22,7 @@ from api_support import add_member, on_plan, seed_request
 
 from tadas.om.base import new_id
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import AppContext, AppType, RequestContext, Role
+from tadas.om.context import AppContext, AppType, RequestContext, Role
 
 CALLBACK = "http://localhost:55173/auth/callback"
 VERIFIER = "v" * 43

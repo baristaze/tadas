@@ -2,6 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
+from tadas.om.context import OperatorContext, OperatorPermission, Permission, TenantContext
 from tadas.om.exceptions import (
     DuplicateIdempotencyKey,
     IdempotencyAttemptLost,
@@ -13,7 +14,6 @@ from tadas.om.idempotency.manager import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import OpContext, OperatorContext, OperatorPermission, Permission
 
 
 class IdempotencyOptions(Platform):
@@ -41,7 +41,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
         self._options = options
 
     async def begin(
-        self, ctx: OpContext, key: str, request_digest: str, target_id: UUID
+        self, ctx: TenantContext, key: str, request_digest: str, target_id: UUID
     ) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
         return await self._begin(ctx.org_id, ctx.user_id, key, request_digest, target_id)
@@ -129,7 +129,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             self._options.purge_batch,
         )
 
-    async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:
+    async def release(self, ctx: TenantContext, key: str, attempt_id: UUID) -> None:
         ctx.require(Permission.WRITE)
         await self._release(ctx.org_id, ctx.user_id, key, attempt_id)
 
@@ -140,7 +140,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             )
 
     async def finish(
-        self, ctx: OpContext, key: str, attempt_id: UUID, status: int, body: str
+        self, ctx: TenantContext, key: str, attempt_id: UUID, status: int, body: str
     ) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
         return await self._finish(ctx.org_id, ctx.user_id, key, attempt_id, status, body)

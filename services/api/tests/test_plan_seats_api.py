@@ -14,7 +14,7 @@ from api_support import account_written, add_member, build_container, sign_in
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.container import AppContainer
 
 VERIFIER = "v" * 43

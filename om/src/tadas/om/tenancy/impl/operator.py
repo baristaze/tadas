@@ -10,6 +10,13 @@ from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.billing.rules import effective_plan, refuse_past, seats_metered
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.types.plan import Lever
+from tadas.om.context import (
+    CredentialKind,
+    OperatorContext,
+    OperatorPermission,
+    OperatorRole,
+    Role,
+)
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import (
@@ -21,13 +28,6 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.opcontext import (
-    CredentialKind,
-    OperatorContext,
-    OperatorPermission,
-    OperatorRole,
-    Role,
-)
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -83,7 +83,7 @@ class TenancyOperatorOptions(Platform):
 class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
     """Reads a tenant's rows through the storage of the namespace that owns
     them, under the tenant the operator named, never through that namespace's
-    manager: a tenant manager takes an `OpContext`, and none exists on this
+    manager: a tenant manager takes an `TenantContext`, and none exists on this
     plane."""
 
     def __init__(

@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.opcontext import CredentialKind, OperatorRole, Permission, Role
+from tadas.om.context import CredentialKind, OperatorRole, Permission, Role
 from tadas.om.tenancy.rules import MAX_API_KEY_TTL
 from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.org import OrgKind

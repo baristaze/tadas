@@ -18,7 +18,7 @@ from api_support import (
     seed_request,
 )
 
-from tadas.om.opcontext import OperatorRole
+from tadas.om.context import OperatorRole
 from tadas.om.tenancy.rules import email_digest
 from tadas.services.api import main as api_main
 from tadas.services.api.container import AppContainer

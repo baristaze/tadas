@@ -8,8 +8,8 @@ import pytest
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import NotFound, PreconditionFailed, ValidationFailed
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.orchestrations.rules import (
     ROW_ERRORS_KEPT,
     advanced,
@@ -167,7 +167,7 @@ class World:
     def __init__(self, tmp_path: Path) -> None:
         self.managers: Managers = build_managers(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
 
-    async def org(self) -> OpContext:
+    async def org(self) -> TenantContext:
         slug = f"acme-{new_id().hex[-8:]}"
         owner, _ = await self.managers.tenancy.bootstrap(
             RequestContext(request_id=new_id(), app=APP), "Acme", slug, f"a-{slug}@x.test", "Ann"

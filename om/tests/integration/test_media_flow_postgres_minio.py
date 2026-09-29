@@ -19,12 +19,12 @@ from tadas.infra.buckets.s3 import BucketsS3Impl
 from tadas.infra.impl.settings import InfraSettings
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import Role, TenantContext
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.exceptions import NotFound, ValidationFailed
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.media.storage.impl.postgres import MediaStoragePostgresImpl
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
-from tadas.om.opcontext import OpContext, Role
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import LoginSessions
@@ -84,7 +84,7 @@ def manager(
     return MediaManagerImpl(storage, buckets, members, relay, options or MediaOptions()), storage
 
 
-def a_file(ctx: OpContext, size: int = len(PDF), content_type: str = "application/pdf") -> File:
+def a_file(ctx: TenantContext, size: int = len(PDF), content_type: str = "application/pdf") -> File:
     now = utcnow()
     return File(
         id=new_id(),
@@ -102,7 +102,7 @@ def a_file(ctx: OpContext, size: int = len(PDF), content_type: str = "applicatio
 
 async def post_form(
     media: MediaManagerImpl,
-    ctx: OpContext,
+    ctx: TenantContext,
     file: File,
     data: bytes,
     **tampered: str,

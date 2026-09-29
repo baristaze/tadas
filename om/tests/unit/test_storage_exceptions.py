@@ -34,7 +34,7 @@ from contracts import (
 )
 
 import tadas.om
-from tadas.om.opcontext import IdentityContext, OpContext, OperatorContext, RequestContext
+from tadas.om.context import IdentityContext, OperatorContext, RequestContext, TenantContext
 
 STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
@@ -168,7 +168,7 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-STAGES: tuple[type, ...] = (RequestContext, IdentityContext, OpContext, OperatorContext)
+STAGES: tuple[type, ...] = (RequestContext, IdentityContext, TenantContext, OperatorContext)
 
 REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
     {

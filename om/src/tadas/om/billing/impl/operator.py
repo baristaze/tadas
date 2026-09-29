@@ -18,8 +18,8 @@ from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import OperatorContext, OperatorPermission
 from tadas.om.exceptions import NotFound
-from tadas.om.opcontext import OperatorContext, OperatorPermission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
     """Reads and writes one named org's account through the billing storage,
     under the tenant the operator named, and reads the org through the
-    tenancy storage, as the tenancy operator plane does: no `OpContext`
+    tenancy storage, as the tenancy operator plane does: no `TenantContext`
     exists on this plane, so no tenant manager is asked.
 
     `cache` is the billing account's scope, the one the tenant plane reads

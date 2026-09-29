@@ -43,8 +43,8 @@ from tadas.integrations.slack import (
 )
 from tadas.integrations.slack.requests import SlackInbound
 from tadas.om.base import derived_id, new_id, utcnow
+from tadas.om.context import AppContext, Permission, RequestContext, TenantContext
 from tadas.om.exceptions import PlanLimitReached, PlatformException
-from tadas.om.opcontext import AppContext, OpContext, Permission, RequestContext
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import TaskFilter
@@ -247,7 +247,7 @@ class SlackInboundHandler:
             answer = await self._add(person, delivery, command.argument)
         await self._client.respond(response_url, answer)
 
-    async def _list(self, person: OpContext, scope: TaskScope, heading: str) -> str:
+    async def _list(self, person: TenantContext, scope: TaskScope, heading: str) -> str:
         """The newest open tasks the scope shows, read as the person who
         typed: one bounded page, and a count only when more are open."""
         criterion = TaskFilter(scope=scope, user_id=person.user_id)
@@ -260,7 +260,7 @@ class SlackInboundHandler:
             more = max(total - len(page.items), 1)
         return list_answer(heading, page.items, more, self._portal_url)
 
-    async def _add(self, person: OpContext, delivery: SlackInbound, title: str) -> str:
+    async def _add(self, person: TenantContext, delivery: SlackInbound, title: str) -> str:
         now = utcnow()
         task = Task(
             id=derived_id(delivery.key, delivery.received_at),
@@ -276,7 +276,7 @@ class SlackInboundHandler:
             return over_the_plan(refused, self._portal_url)
         return f"Added: *{escaped(created.title)}*"
 
-    async def _connect(self, person: OpContext, token: str, channel_id: str) -> str:
+    async def _connect(self, person: TenantContext, token: str, channel_id: str) -> str:
         """The channel the command was typed in becomes the one Tadas posts to,
         once a first post there shows the app can post at all: a channel it
         was never invited to refuses, and is not bound."""
@@ -315,7 +315,7 @@ class SlackInboundHandler:
             log.info("slack event %s ignored", kind)
 
     async def _mention(
-        self, org_ctx: OpContext, delivery: SlackInbound, event: dict[str, Any]
+        self, org_ctx: TenantContext, delivery: SlackInbound, event: dict[str, Any]
     ) -> None:
         """`@tadas` answers with the usage, in the thread, once per call."""
         if await self._slack.read_post(org_ctx, delivery.key) is not None:

@@ -28,11 +28,11 @@ from contracts.outbox_storage import claim_all
 from contracts.racing import race
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.context import OperatorRole, Role
 from tadas.om.exceptions import Conflict, NotFound, RowDeleted, TenantMismatch, UniqueKeyTaken
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.rules import email_digest

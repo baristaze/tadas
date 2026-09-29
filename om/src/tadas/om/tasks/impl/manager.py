@@ -9,6 +9,7 @@ from tadas.om.base import PROVENANCE_FIELDS, Platform, derived_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import limits_of, refuse_past
 from tadas.om.billing.types.plan import Lever, Plan
+from tadas.om.context import Permission, RequestContext, TenantContext
 from tadas.om.exceptions import (
     NotFound,
     PlanLimitReached,
@@ -20,7 +21,6 @@ from tadas.om.media import MediaManagerInterface
 from tadas.om.media.rules import BOUNDS
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.media.types.page import FilePage
-from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.orchestrations import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import advanced
 from tadas.om.orchestrations.steps import step_rows
@@ -167,7 +167,7 @@ class TasksManagerImpl(TasksManagerInterface):
         self._entitlements = entitlements
 
     async def get_open_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
     ) -> TaskPage:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
@@ -176,7 +176,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return self._page(rows, limit)
 
     async def get_recent_open_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, limit: int
     ) -> TaskPage:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
@@ -184,12 +184,14 @@ class TasksManagerImpl(TasksManagerInterface):
         rows = await self._storage.read_recent_open_tasks(ctx.org_id, criterion, limit + 1)
         return self._page(rows, limit)
 
-    async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
+    async def count_open_tasks(self, ctx: TenantContext, criterion: TaskFilter) -> int:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
         return await self._storage.count_open_tasks(ctx.org_id, criterion)
 
-    async def count_tasks(self, ctx: OpContext, criterion: TaskFilter, status: TaskStatus) -> int:
+    async def count_tasks(
+        self, ctx: TenantContext, criterion: TaskFilter, status: TaskStatus
+    ) -> int:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
         if status is TaskStatus.OPEN:
@@ -197,7 +199,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return await self._storage.count_done_tasks(ctx.org_id, criterion)
 
     async def get_done_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> TaskPage:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
@@ -206,7 +208,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return self._page(rows, limit)
 
     async def get_archived_tasks(
-        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
+        self, ctx: TenantContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> TaskPage:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
@@ -214,14 +216,14 @@ class TasksManagerImpl(TasksManagerInterface):
         rows = await self._storage.read_archived_tasks(ctx.org_id, criterion, before, limit + 1)
         return self._page(rows, limit)
 
-    async def get_task(self, ctx: OpContext, task_id: UUID) -> Task:
+    async def get_task(self, ctx: TenantContext, task_id: UUID) -> Task:
         ctx.require(Permission.READ)
         task = await self._storage.read_task(ctx.org_id, task_id)
         if task is None or task.deleted_at is not None:
             raise NotFound(f"task {task_id} not found")
         return task
 
-    async def create_task(self, ctx: OpContext, task: Task) -> Task:
+    async def create_task(self, ctx: TenantContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
         rank = await self._rank_for_one_more(ctx, exclude=task.id)
@@ -260,7 +262,7 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._relay.relay_all(ctx.org_id, rows)
         return created
 
-    async def update_task(self, ctx: OpContext, task: Task, expected_version: int) -> Task:
+    async def update_task(self, ctx: TenantContext, task: Task, expected_version: int) -> Task:
         ctx.require(Permission.WRITE)
         current = await self.get_task(ctx, task.id)  # existence and tenancy, or NotFound
         await self._verify(ctx, task, current)
@@ -300,7 +302,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return updated
 
     async def move_task(
-        self, ctx: OpContext, task_id: UUID, after_id: UUID | None, expected_version: int
+        self, ctx: TenantContext, task_id: UUID, after_id: UUID | None, expected_version: int
     ) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
@@ -330,7 +332,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return moved
 
     async def change_tasks(
-        self, ctx: OpContext, action: BulkAction, task_ids: Sequence[UUID]
+        self, ctx: TenantContext, action: BulkAction, task_ids: Sequence[UUID]
     ) -> BulkOutcome:
         ctx.require(Permission.WRITE)
         named = list(dict.fromkeys(task_ids))  # a task named twice is changed once
@@ -345,7 +347,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return self._finished(ctx, bulk)
 
     async def change_list(
-        self, ctx: OpContext, action: BulkAction, criterion: TaskFilter, status: TaskStatus
+        self, ctx: TenantContext, action: BulkAction, criterion: TaskFilter, status: TaskStatus
     ) -> BulkOutcome:
         ctx.require(Permission.WRITE)
         self._own(ctx, criterion)
@@ -374,7 +376,7 @@ class TasksManagerImpl(TasksManagerInterface):
             before = TaskCursor(updated_at=page[-1].updated_at, id=page[-1].id)
         return self._finished(ctx, bulk)
 
-    async def _bulk_change(self, ctx: OpContext, action: BulkAction) -> _BulkChange:
+    async def _bulk_change(self, ctx: TenantContext, action: BulkAction) -> _BulkChange:
         """A bulk change about to run: for a reopen, the room the plan leaves,
         read once, as the import reads it once a step."""
         if action is not BulkAction.REOPEN:
@@ -383,7 +385,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return _BulkChange(action, await self._room(ctx), entitlements.plan)
 
     async def _change_batch(
-        self, ctx: OpContext, bulk: _BulkChange, batch: Sequence[tuple[UUID, Task | None]]
+        self, ctx: TenantContext, bulk: _BulkChange, batch: Sequence[tuple[UUID, Task | None]]
     ) -> None:
         """One batch of a bulk change: decides each task by the rules a single
         edit applies, then writes the ones it changes in one commit, each
@@ -460,7 +462,7 @@ class TasksManagerImpl(TasksManagerInterface):
         raise AssertionError("a plan with room left has a bound")
 
     @staticmethod
-    def _finished(ctx: OpContext, bulk: _BulkChange) -> BulkOutcome:
+    def _finished(ctx: TenantContext, bulk: _BulkChange) -> BulkOutcome:
         log.info(
             "bulk %s in org %s: %d changed, %d skipped",
             bulk.action.value,
@@ -470,7 +472,7 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         return bulk.outcome()
 
-    async def delete_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
+    async def delete_task(self, ctx: TenantContext, task_id: UUID, expected_version: int) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
         now = utcnow()
@@ -487,7 +489,7 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._detach_all(ctx, task_id)
         return deleted
 
-    async def restore_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
+    async def restore_task(self, ctx: TenantContext, task_id: UUID, expected_version: int) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
         if task.archived_at is None:
@@ -505,12 +507,14 @@ class TasksManagerImpl(TasksManagerInterface):
 
     # The import.
 
-    async def create_import_file(self, ctx: OpContext, file: File) -> File:
+    async def create_import_file(self, ctx: TenantContext, file: File) -> File:
         ctx.require(Permission.WRITE)
         upload = file.model_copy(update={"purpose": FilePurpose.TASK_IMPORT, "subject_id": None})
         return await self._media.create_file(ctx, upload)
 
-    async def start_import(self, ctx: OpContext, import_id: UUID, file_id: UUID) -> Orchestration:
+    async def start_import(
+        self, ctx: TenantContext, import_id: UUID, file_id: UUID
+    ) -> Orchestration:
         ctx.require(Permission.WRITE)
         file = await self._media.get_file(ctx, file_id)
         if file.purpose is not FilePurpose.TASK_IMPORT:
@@ -529,20 +533,20 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         return await self._orchestrations.start(ctx, record)
 
-    async def get_import(self, ctx: OpContext, import_id: UUID) -> Orchestration:
+    async def get_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
         record = await self._orchestrations.get(ctx, import_id)
         if record.kind is not OrchestrationKind.TASK_IMPORT:
             raise NotFound(f"import {import_id} not found")
         return record
 
-    async def get_imports(self, ctx: OpContext, limit: int) -> OrchestrationPage:
+    async def get_imports(self, ctx: TenantContext, limit: int) -> OrchestrationPage:
         return await self._orchestrations.get_recent(ctx, OrchestrationKind.TASK_IMPORT, limit)
 
-    async def resume_import(self, ctx: OpContext, import_id: UUID) -> Orchestration:
+    async def resume_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
         await self.get_import(ctx, import_id)
         return await self._orchestrations.resume(ctx, import_id)
 
-    async def step_import(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def step_import(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         ctx.require(Permission.WRITE)
         file_id = TaskImportInput.model_validate(dict(record.input)).file_id
         try:
@@ -605,7 +609,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return after.model_copy(update={"applied": record.applied + sum(written)})
 
     async def _imported_tasks(
-        self, ctx: OpContext, record: Orchestration, made: Sequence[ImportedTask], now: datetime
+        self, ctx: TenantContext, record: Orchestration, made: Sequence[ImportedTask], now: datetime
     ) -> list[tuple[Task, tuple[OutboxRow, ...]]]:
         """The tasks a step makes, with the rows that announce them and
         schedule their reminders. They go to the bottom of the open list, in
@@ -641,7 +645,7 @@ class TasksManagerImpl(TasksManagerInterface):
             tasks.append((task, rows))
         return tasks
 
-    async def _members(self, ctx: OpContext) -> dict[str, UUID]:
+    async def _members(self, ctx: TenantContext) -> dict[str, UUID]:
         """The org's members by address, folded: whom a row may assign."""
         members: dict[str, UUID] = {}
         after: UUID | None = None
@@ -654,7 +658,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 return members
             after = page.items[-1].id
 
-    async def _room(self, ctx: OpContext) -> int | None:
+    async def _room(self, ctx: TenantContext) -> int | None:
         """How many more tasks the plan lets the org open now; None when it
         has no bound. Read at each step, so a plan raised between two steps
         lets the next one go further."""
@@ -668,7 +672,7 @@ class TasksManagerImpl(TasksManagerInterface):
 
     # The cleanup.
 
-    async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
+    async def open_cleanup(self, ctx: TenantContext) -> Orchestration | None:
         ctx.require(Permission.WRITE)
         now = utcnow()
         before = archive_cutoff(now, self._options.archive_after)
@@ -695,7 +699,7 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         return await self._orchestrations.start(ctx, record)
 
-    async def step_cleanup(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def step_cleanup(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         ctx.require(Permission.WRITE)
         before = TaskCleanupInput.model_validate(dict(record.input)).before
         ids = await self._storage.read_archivable(ctx.org_id, before, CLEANUP_BATCH)
@@ -733,14 +737,14 @@ class TasksManagerImpl(TasksManagerInterface):
             log.info("archived %d done tasks in org %s", sum(archived), ctx.org_id)
         return after.model_copy(update={"applied": record.applied + sum(archived)})
 
-    async def _relay_all(self, ctx: OpContext, rows: Sequence[OutboxRow]) -> None:
+    async def _relay_all(self, ctx: TenantContext, rows: Sequence[OutboxRow]) -> None:
         await self._relay.relay_all(ctx.org_id, rows)
 
-    async def count_active_tasks(self, ctx: OpContext) -> int:
+    async def count_active_tasks(self, ctx: TenantContext) -> int:
         ctx.require(Permission.READ)
         return await self._storage.count_open_tasks(ctx.org_id, self._everyone(ctx))
 
-    async def attach_file(self, ctx: OpContext, task_id: UUID, file: File) -> File:
+    async def attach_file(self, ctx: TenantContext, task_id: UUID, file: File) -> File:
         ctx.require(Permission.WRITE)
         await self.get_task(ctx, task_id)  # a live task of this tenant, or NotFound
         attached = file.model_copy(
@@ -749,12 +753,12 @@ class TasksManagerImpl(TasksManagerInterface):
         return await self._media.create_file(ctx, attached)
 
     async def get_attachments(
-        self, ctx: OpContext, task_id: UUID, after: UUID | None, limit: int
+        self, ctx: TenantContext, task_id: UUID, after: UUID | None, limit: int
     ) -> FilePage:
         await self.get_task(ctx, task_id)
         return await self._media.get_files(ctx, FilePurpose.TASK_ATTACHMENT, task_id, after, limit)
 
-    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> File:
+    async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> File:
         ctx.require(Permission.WRITE)
         await self.get_task(ctx, task_id)
         file = await self._media.get_file(ctx, file_id)
@@ -762,7 +766,7 @@ class TasksManagerImpl(TasksManagerInterface):
             raise NotFound(f"file {file_id} is not attached to task {task_id}")
         return await self._media.delete_file(ctx, file_id)
 
-    async def _detach_all(self, ctx: OpContext, task_id: UUID) -> None:
+    async def _detach_all(self, ctx: TenantContext, task_id: UUID) -> None:
         """The attachments go after the task, in writes of their own: the task
         is another namespace's row, so no commit holds both. The task's delete
         has committed by now and is the answer; a failure here is logged and
@@ -775,7 +779,7 @@ class TasksManagerImpl(TasksManagerInterface):
             log.exception("the attachments of deleted task %s were left live", task_id)
             OUTCOMES.labels(subsystem="tasks", outcome="detach_failed").inc()
 
-    async def get_due_reminder(self, ctx: OpContext, task_id: UUID) -> DueReminder | None:
+    async def get_due_reminder(self, ctx: TenantContext, task_id: UUID) -> DueReminder | None:
         ctx.require(Permission.READ)
         task = await self._storage.read_task(ctx.org_id, task_id)
         if (
@@ -789,7 +793,7 @@ class TasksManagerImpl(TasksManagerInterface):
         zone = await self._tenancy.get_time_zone(ctx, reminder_person(task))
         return DueReminder(due_on=task.due_on, at=reminder_time(task.due_on, zone))
 
-    async def fire_reminder(self, ctx: OpContext, task_id: UUID, due_on: date) -> Task | None:
+    async def fire_reminder(self, ctx: TenantContext, task_id: UUID, due_on: date) -> Task | None:
         ctx.require(Permission.WRITE)
         rows = (
             outbox_row(ctx, "tasks.task.reminded", task_id, {}),
@@ -801,7 +805,7 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._relay.relay_all(ctx.org_id, rows)
         return reminded
 
-    async def respace_ranks(self, ctx: OpContext) -> int:
+    async def respace_ranks(self, ctx: TenantContext) -> int:
         ctx.require(Permission.WRITE)
         long = await self._storage.read_long_place(ctx.org_id)
         if long is None:
@@ -880,7 +884,7 @@ class TasksManagerImpl(TasksManagerInterface):
             detached.append(task_id)
         return detached
 
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         ctx.require(Permission.WRITE)
         if not await self._tenancy.tenant_expired(ctx):
             return 0
@@ -891,7 +895,7 @@ class TasksManagerImpl(TasksManagerInterface):
         # of it.
         return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
-    async def _rank_for_one_more(self, ctx: OpContext, exclude: UUID) -> Decimal:
+    async def _rank_for_one_more(self, ctx: TenantContext, exclude: UUID) -> Decimal:
         """The top rank one more open task takes, once the plan's bound on
         active tasks lets it open. Under a bound, the count and the top place
         are one read; with none, the place alone is. It reads the count and
@@ -907,7 +911,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return top_rank(top)
 
     @staticmethod
-    def _everyone(ctx: OpContext) -> TaskFilter:
+    def _everyone(ctx: TenantContext) -> TaskFilter:
         """Every open task of the org: what a plan's bound counts."""
         return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
@@ -923,18 +927,18 @@ class TasksManagerImpl(TasksManagerInterface):
         return TaskPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     @staticmethod
-    def _own(ctx: OpContext, criterion: TaskFilter) -> None:
+    def _own(ctx: TenantContext, criterion: TaskFilter) -> None:
         if criterion.user_id != ctx.user_id:
             raise ValidationFailed("a task list is scoped to the caller")
 
-    async def _top_rank(self, ctx: OpContext, exclude: UUID) -> Decimal:
+    async def _top_rank(self, ctx: TenantContext, exclude: UUID) -> Decimal:
         # The top place is all the rule reads.
         top = await self._storage.read_open_places(
             ctx.org_id, exclude=exclude, after=None, limit=NEIGHBOURS
         )
         return top_rank(top)
 
-    async def _rank_past(self, ctx: OpContext, anchor: Place, exclude: UUID) -> Decimal | None:
+    async def _rank_past(self, ctx: TenantContext, anchor: Place, exclude: UUID) -> Decimal | None:
         """The smallest open rank strictly past the anchor's, the moved task
         aside; None when the anchor is last. One place is read at a time; a
         place that shares the anchor's rank, which two writers placing at
@@ -950,7 +954,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 return places[0][0]
             after = places[0]
 
-    async def _verify(self, ctx: OpContext, task: Task, current: Task | None = None) -> None:
+    async def _verify(self, ctx: TenantContext, task: Task, current: Task | None = None) -> None:
         """What a caller may not write. The assignee is checked when the
         assignment changes, never over one already stored: a member removed
         from the org leaves their tasks assigned, and marking such a task done
@@ -968,7 +972,7 @@ class TasksManagerImpl(TasksManagerInterface):
 
     async def _write(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         task: Task,
         expected_version: int,
         action: str,
@@ -988,7 +992,7 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._relay.relay_all(ctx.org_id, rows)
 
     @staticmethod
-    def _reminder_rows(ctx: OpContext, task: Task) -> tuple[OutboxRow, ...]:
+    def _reminder_rows(ctx: TenantContext, task: Task) -> tuple[OutboxRow, ...]:
         """The work row that schedules the reminder of the task's due date,
         or none when it has none. The item waits in the queue until the
         first moment any zone's morning of that date comes, and its handler
@@ -1000,7 +1004,7 @@ class TasksManagerImpl(TasksManagerInterface):
         return (outbox_row(ctx, kind, task.id, payload.model_dump(mode="json")),)
 
     async def _slack_rows(
-        self, ctx: OpContext, task_id: UUID, event: SlackPostEvent
+        self, ctx: TenantContext, task_id: UUID, event: SlackPostEvent
     ) -> tuple[OutboxRow, ...]:
         """The work row that posts the event to the org's Slack channel, or
         none when the org has not installed Slack, bound no channel, or its

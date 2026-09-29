@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tadas.om.base import EMPTY_UUID, Identifiable, new_id
 from tadas.om.billing.storage.tables.billing_accounts import BillingAccounts
 from tadas.om.billing.types.account import BillingAccount
+from tadas.om.context import CredentialKind, Role
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
-from tadas.om.opcontext import CredentialKind, Role
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import (

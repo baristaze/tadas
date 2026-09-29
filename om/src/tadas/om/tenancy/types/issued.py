@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import Platform
-from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.context import OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session

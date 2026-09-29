@@ -19,7 +19,7 @@ from tadas.infra.observability import (
     name_process,
 )
 from tadas.infra.trust import install_trust_store
-from tadas.om.opcontext import AppContext, AppType, RequestContext
+from tadas.om.context import AppContext, AppType, RequestContext
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.accounts import (

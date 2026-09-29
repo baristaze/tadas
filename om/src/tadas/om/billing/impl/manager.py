@@ -26,20 +26,20 @@ from tadas.om.billing.types.account import BillingAccount, status_of
 from tadas.om.billing.types.billing import Billing, CheckoutStart, Entitlements
 from tadas.om.billing.types.delivery import BillingDelivery
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import (
+    CredentialKind,
+    Permission,
+    ProvenanceScope,
+    RequestContext,
+    Role,
+    TenantContext,
+)
 from tadas.om.exceptions import (
     NotAuthorized,
     NotFound,
     SubscriptionExists,
     TenantMismatch,
     ValidationFailed,
-)
-from tadas.om.opcontext import (
-    CredentialKind,
-    OpContext,
-    Permission,
-    ProvenanceScope,
-    RequestContext,
-    Role,
 )
 from tadas.om.orchestrations.types.orchestration import ParkReason
 from tadas.om.outbox import OutboxRelayInterface
@@ -159,22 +159,22 @@ class BillingManagerImpl(BillingManagerInterface):
         self._clock = clock
         self._accounts = AccountCache(cache, options.account_ttl)
 
-    async def get_entitlements(self, ctx: OpContext) -> Entitlements:
+    async def get_entitlements(self, ctx: TenantContext) -> Entitlements:
         ctx.require(Permission.READ)
         return self.entitlements_of(ctx, await self._cached_account(ctx))
 
-    def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
+    def entitlements_of(self, ctx: TenantContext, account: BillingAccount | None) -> Entitlements:
         ctx.require(Permission.READ)
         plan = effective_plan(account, self._clock())
         return Entitlements(plan=plan, limits=limits_of(plan))
 
-    async def get_billing(self, ctx: OpContext) -> Billing:
+    async def get_billing(self, ctx: TenantContext) -> Billing:
         ctx.require(Permission.READ)
         return billing_of(await self._cached_account(ctx), self._clock())
 
     async def start_checkout(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         plan: Plan,
         seats: int,
         org_name: str,
@@ -210,7 +210,7 @@ class BillingManagerImpl(BillingManagerInterface):
         return CheckoutStart(url=url)
 
     async def open_portal(
-        self, ctx: OpContext, return_url: str, update_payment_method: bool = False
+        self, ctx: TenantContext, return_url: str, update_payment_method: bool = False
     ) -> str:
         ctx.require(Permission.MANAGE_BILLING)
         account = await self._storage.read_account(ctx.org_id)
@@ -220,13 +220,13 @@ class BillingManagerImpl(BillingManagerInterface):
             account.customer_id, return_url, update_payment_method, deadline=ctx.deadline
         )
 
-    async def cancel(self, ctx: OpContext) -> Billing:
+    async def cancel(self, ctx: TenantContext) -> Billing:
         return await self._set_cancel(ctx, True)
 
-    async def resume(self, ctx: OpContext) -> Billing:
+    async def resume(self, ctx: TenantContext) -> Billing:
         return await self._set_cancel(ctx, False)
 
-    async def _set_cancel(self, ctx: OpContext, cancel: bool) -> Billing:
+    async def _set_cancel(self, ctx: TenantContext, cancel: bool) -> Billing:
         ctx.require(Permission.MANAGE_BILLING)
         account = await self._storage.read_account(ctx.org_id)
         now = self._clock()
@@ -240,7 +240,7 @@ class BillingManagerImpl(BillingManagerInterface):
         log.info("org %s set its plan to %s", ctx.org_id, "end" if cancel else "renew")
         return billing_of(updated, now)
 
-    async def close_account(self, ctx: OpContext) -> Billing:
+    async def close_account(self, ctx: TenantContext) -> Billing:
         # The work of an account's deletion, as a seat count's is: the
         # service role runs it, and it manages members, not a plan.
         ctx.require(Permission.MANAGE_MEMBERS)
@@ -278,7 +278,7 @@ class BillingManagerImpl(BillingManagerInterface):
             return await self._payments.read_customer_org(delivery.customer_id)
         return None
 
-    async def apply_delivery(self, ctx: OpContext, delivery: ProviderDelivery) -> bool:
+    async def apply_delivery(self, ctx: TenantContext, delivery: ProviderDelivery) -> bool:
         ctx.require(Permission.WRITE)
         mark = BillingDelivery(
             id=delivery.idempotency_key,
@@ -340,7 +340,7 @@ class BillingManagerImpl(BillingManagerInterface):
         live = status_of(subscription.status) in LIVE_STATUSES
         return should_mirror(account, subscription.id, live)
 
-    async def sync_seats(self, ctx: OpContext, seats: int, idempotency_key: str) -> Billing:
+    async def sync_seats(self, ctx: TenantContext, seats: int, idempotency_key: str) -> Billing:
         ctx.require(Permission.MANAGE_MEMBERS)
         account = await self._storage.read_account(ctx.org_id)
         now = self._clock()
@@ -360,7 +360,7 @@ class BillingManagerImpl(BillingManagerInterface):
         await self._write(ctx, updated)
         return billing_of(updated, now)
 
-    async def grant_seeded_plan(self, ctx: OpContext, plan: Plan) -> Billing:
+    async def grant_seeded_plan(self, ctx: TenantContext, plan: Plan) -> Billing:
         ctx.require(Permission.MANAGE_BILLING)
         if ctx.credential_kind is not CredentialKind.INTERNAL or ctx.role is not Role.OWNER:
             raise NotAuthorized("a plan is granted by an operator; the seed grants its own org")
@@ -398,7 +398,7 @@ class BillingManagerImpl(BillingManagerInterface):
             self._clock() - self._options.retention, self._options.purge_batch
         )
 
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         ctx.require(Permission.WRITE)
         if not await self._tenancy().tenant_expired(ctx):
             return 0
@@ -407,7 +407,7 @@ class BillingManagerImpl(BillingManagerInterface):
         return purged
 
     async def _with_customer(
-        self, ctx: OpContext, account: BillingAccount | None, customer_id: str
+        self, ctx: TenantContext, account: BillingAccount | None, customer_id: str
     ) -> BillingAccount:
         """The org's account, now naming its customer: created the first time,
         or, when a grant made the account first, updated with it."""
@@ -445,14 +445,14 @@ class BillingManagerImpl(BillingManagerInterface):
         return (outbox_row(ctx, ACCOUNT_UPDATED, account.id, {}),)
 
     async def _write(
-        self, ctx: OpContext, account: BillingAccount, work: tuple[OutboxRow, ...] = ()
+        self, ctx: TenantContext, account: BillingAccount, work: tuple[OutboxRow, ...] = ()
     ) -> None:
         rows = (*self._rows(ctx, account), *work)
         await self._storage.write_account(ctx.org_id, account, rows)
         await self._accounts.changed(ctx.org_id)
         await self._relay.relay_all(ctx.org_id, rows)
 
-    async def _cached_account(self, ctx: OpContext) -> BillingAccount | None:
+    async def _cached_account(self, ctx: TenantContext) -> BillingAccount | None:
         """The org's account for a read, from the cache when it holds it.
         The caller has checked its permission first."""
         return await self._accounts.read(ctx.org_id, lambda: self._storage.read_account(ctx.org_id))

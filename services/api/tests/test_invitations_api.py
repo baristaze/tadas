@@ -12,7 +12,7 @@ from httpx import ASGITransport
 
 from tadas.integrations.identity.twin import TWIN_PORTAL, IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 

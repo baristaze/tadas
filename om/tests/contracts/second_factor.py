@@ -7,7 +7,7 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import AppContext, AppType, OperatorContext, RequestContext
+from tadas.om.context import AppContext, AppType, OperatorContext, RequestContext
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl
 from tadas.om.tenancy.rules import TOTP_STEP, totp_code, totp_step

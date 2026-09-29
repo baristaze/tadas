@@ -25,8 +25,8 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import OperatorRole, Role
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
-from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.work.types.work_item import WorkKind
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer

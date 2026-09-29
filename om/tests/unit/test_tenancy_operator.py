@@ -19,6 +19,15 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.context import (
+    AppContext,
+    AppType,
+    OperatorContext,
+    OperatorPermission,
+    OperatorRole,
+    RequestContext,
+    Role,
+)
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import (
@@ -31,15 +40,6 @@ from tadas.om.exceptions import (
 )
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.opcontext import (
-    AppContext,
-    AppType,
-    OperatorContext,
-    OperatorPermission,
-    OperatorRole,
-    RequestContext,
-    Role,
-)
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow

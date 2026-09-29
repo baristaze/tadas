@@ -16,7 +16,7 @@ from tadas.integrations.slack.requests import SlackInbound, inbound_command, inb
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import AppContext, AppType, OpContext, Role
+from tadas.om.context import AppContext, AppType, Role, TenantContext
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
@@ -37,20 +37,20 @@ def build(tmp_path: Path) -> tuple[WorkerContainer, SlackTwinImpl]:
     return container, twin
 
 
-async def owner_of(container: WorkerContainer, slug: str) -> OpContext:
+async def owner_of(container: WorkerContainer, slug: str) -> TenantContext:
     ctx, _ = await container.managers.tenancy.bootstrap(
         request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
     )
     return ctx
 
 
-async def on_team(container: WorkerContainer, owner: OpContext) -> None:
+async def on_team(container: WorkerContainer, owner: TenantContext) -> None:
     """Puts the org of a fresh owner on Team, with the seed's grant: a test
     of a list longer than Free's ten active tasks is about the list."""
     await container.managers.billing.grant_seeded_plan(owner, Plan.TEAM)
 
 
-async def member_of(container: WorkerContainer, slug: str, email: str) -> OpContext:
+async def member_of(container: WorkerContainer, slug: str, email: str) -> TenantContext:
     tenancy = container.managers.tenancy
     await tenancy.add_member(request(), slug, email, "Member", Role.MEMBER)
     # The worker signs nobody in, so the sign-in runs through a manager over
@@ -70,7 +70,7 @@ async def member_of(container: WorkerContainer, slug: str, email: str) -> OpCont
     return await tenancy.authenticate(request(), issued.token)
 
 
-def make_task(ctx: OpContext, title: str = "Water the plants", **fields: object) -> Task:
+def make_task(ctx: TenantContext, title: str = "Water the plants", **fields: object) -> Task:
     now = utcnow()
     return Task(
         id=new_id(),
@@ -84,7 +84,7 @@ def make_task(ctx: OpContext, title: str = "Water the plants", **fields: object)
 
 
 async def queued(
-    container: WorkerContainer, ctx: OpContext, kind: WorkKind, target_id: UUID | None = None
+    container: WorkerContainer, ctx: TenantContext, kind: WorkKind, target_id: UUID | None = None
 ) -> list[WorkItem]:
     """The items of a kind the tenant's writes queued, oldest first, read off
     the memory queue without claiming anything."""
@@ -97,7 +97,9 @@ async def queued(
     return found
 
 
-async def claim(container: WorkerContainer, kind: WorkKind) -> tuple[OpContext, WorkItem] | None:
+async def claim(
+    container: WorkerContainer, kind: WorkKind
+) -> tuple[TenantContext, WorkItem] | None:
     return await container.managers.work.claim(request(), "default", [kind], "test", LEASE)
 
 
@@ -141,7 +143,7 @@ def inbound(container: WorkerContainer, twin: SlackTwinImpl) -> SlackInboundHand
 
 
 async def install(
-    container: WorkerContainer, twin: SlackTwinImpl, owner: OpContext, team: str = TEAM
+    container: WorkerContainer, twin: SlackTwinImpl, owner: TenantContext, team: str = TEAM
 ) -> None:
     """Installs the app for the owner's org the way a person does: Add to
     Slack in the portal, Allow on Slack's page, and back. The owner is in the
@@ -155,7 +157,7 @@ async def install(
 
 
 async def connect(
-    container: WorkerContainer, twin: SlackTwinImpl, owner: OpContext, channel: str = "C0SLACK"
+    container: WorkerContainer, twin: SlackTwinImpl, owner: TenantContext, channel: str = "C0SLACK"
 ) -> None:
     """Installs the app and binds a channel, as the owner types `/tadas
     connect` in it."""

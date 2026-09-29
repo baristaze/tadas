@@ -8,7 +8,7 @@ adopts unchanged; the technology choices as adopted are recorded in
 ## Object model (`om/`)
 
 The `tadas-om` distribution holds the base classes (`Platform`, the
-mixins, `new_id`, `utcnow`), the context model in `opcontext.py` with
+mixins, `new_id`, `utcnow`), the context model in `context.py` with
 `Role`, `Permission`, `CredentialKind`, and `AppType` declared beside it,
 the exception root, the storage root with its Postgres and memory impls,
 and one namespace per swimlane. `Created` (`created_at` alone) is the
@@ -42,12 +42,12 @@ the calling app, the trace id and the trace context as the `traceparent`
 header, read off the tracer once where the stage is minted, and the
 request that caused it where a handoff named one, empty at the edge),
 `IdentityContext` (a person is verified
-by their own sign-in; no tenant, on purpose), `OpContext` (a membership
+by their own sign-in; no tenant, on purpose), `TenantContext` (a membership
 is established: the user, the org, the role and its permissions, the
 credential), and `OperatorContext` (an identity on the operator allowlist;
 no org, on purpose). A subclass is a refinement, so every stage is
 accepted where `RequestContext` is asked for; `OperatorContext` is an
-`IdentityContext`, `OpContext` is not, because what a tenant operation
+`IdentityContext`, `TenantContext` is not, because what a tenant operation
 knows about the person is the user inside the tenant. A stage above the
 request stage is produced only by a transition, an operation of the
 tenancy manager or one that asks it, and nowhere else
@@ -57,7 +57,7 @@ seeding), and a function that
 takes a stage relies on its invariant instead of re-checking it. The
 context carries ids and facts, never a `User` or an `Org`: a manager that
 needs the entity loads it, so a role change is seen on the next request,
-and `opcontext.py` imports nothing above `base.py`.
+and `context.py` imports nothing above `base.py`.
 
 The scopes are five `Protocol` views over what a stage carries, each a
 set of read-only properties: `RequestScope`, `TenantScope`, `ActorScope`
@@ -67,7 +67,7 @@ because provenance is a domain concept). A function that reads only a
 few fields declares the scope it reads (`outbox_row` and `audit_event`
 take `ProvenanceScope`, the realtime `subscribe` takes `ActorScope`, the
 rate limit's subject takes `CredentialScope`) and its callers keep
-passing the stage they hold. A manager operation takes `OpContext`, which
+passing the stage they hold. A manager operation takes `TenantContext`, which
 is its scope, and says nothing narrower; a function that forwards the
 context on keeps the stage the callee needs.
 
@@ -2018,7 +2018,7 @@ the cases catch when a predicate is taken out of a query is recorded in
 [the tenant isolation runbook](runbooks/tenant-isolation.md).
 `test_stage_construction.py` scans every source tree (`om`, `infra`,
 `services`, `workers`, `apps`, `clients`) for a site that constructs
-`IdentityContext`, `OpContext`, or `OperatorContext` or calls
+`IdentityContext`, `TenantContext`, or `OperatorContext` or calls
 `build_context`, and fails when one appears that is not the tenancy
 manager's transitions or the helper they use, so only a transition
 produces a stage above the request stage. `test_role_rules.py` holds the

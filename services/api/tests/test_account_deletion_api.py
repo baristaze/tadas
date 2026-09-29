@@ -7,7 +7,7 @@ import httpx
 from api_support import OWNER, add_member, dev_login, on_plan, seed_request, sign_in_as
 
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.context import OperatorRole, Role
 from tadas.services.api.container import AppContainer
 
 

@@ -13,7 +13,7 @@ The guideline says what a push carries (Realtime at the Edge):
 > A frame and a replayed record carry the identity of the change
 > (`seq`, `kind`, `target_id`, the actor) and no field of the entity.
 > A client reads the entity through the authorized read, which applies
-> the visibility rules of OpContext.
+> the visibility rules of TenantContext.
 
 The portal follows it. A push about a task names the task, and every
 open tab reads that one task (`GET /v1/tasks/{id}`). That includes the

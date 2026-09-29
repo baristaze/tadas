@@ -29,9 +29,9 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.base import new_id
+from tadas.om.context import Role
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.exceptions import UniqueKeyTaken
-from tadas.om.opcontext import Role
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
 from tadas.om.storage.migrate import (
     RUN_AGAIN,

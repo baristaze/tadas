@@ -16,13 +16,13 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import PROVENANCE_FIELDS, new_id, utcnow
+from tadas.om.context import (
+    Role,
+    TenantContext,
+)
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, NotFound, PreconditionFailed, ValidationFailed
-from tadas.om.opcontext import (
-    OpContext,
-    Role,
-)
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
@@ -34,7 +34,7 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 
-def make_task(ctx: OpContext, title: str = "Ship it", assignee_id: UUID | None = None) -> Task:
+def make_task(ctx: TenantContext, title: str = "Ship it", assignee_id: UUID | None = None) -> Task:
     now = utcnow()
     return Task(
         id=new_id(),
@@ -92,33 +92,35 @@ def manager(
     )
 
 
-def _row(ctx: OpContext, task: Task) -> OutboxRow:
+def _row(ctx: TenantContext, task: Task) -> OutboxRow:
     """One outbox row, for the writes a test makes straight to storage."""
     return outbox_row(ctx, "tasks.task.updated", task.id, {})
 
 
-def own(ctx: OpContext, scope: TaskScope) -> TaskFilter:
+def own(ctx: TenantContext, scope: TaskScope) -> TaskFilter:
     return TaskFilter(scope=scope, user_id=ctx.user_id)
 
 
-async def open_titles(manager: TasksManagerImpl, ctx: OpContext, scope: TaskScope) -> list[str]:
+async def open_titles(manager: TasksManagerImpl, ctx: TenantContext, scope: TaskScope) -> list[str]:
     page = await manager.get_open_tasks(ctx, own(ctx, scope), None, limit=50)
     return [t.title for t in page.items]
 
 
-async def open_page(manager: TasksManagerImpl, ctx: OpContext, limit: int = 10) -> tuple[Task, ...]:
+async def open_page(
+    manager: TasksManagerImpl, ctx: TenantContext, limit: int = 10
+) -> tuple[Task, ...]:
     return (await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit)).items
 
 
 async def move(
-    manager: TasksManagerImpl, ctx: OpContext, task_id: UUID, after_id: UUID | None
+    manager: TasksManagerImpl, ctx: TenantContext, task_id: UUID, after_id: UUID | None
 ) -> Task:
     """A move from a fresh read, the way a client that just listed does it."""
     current = await manager.get_task(ctx, task_id)
     return await manager.move_task(ctx, task_id, after_id, current.version)
 
 
-async def delete(manager: TasksManagerImpl, ctx: OpContext, task_id: UUID) -> Task:
+async def delete(manager: TasksManagerImpl, ctx: TenantContext, task_id: UUID) -> Task:
     return await manager.delete_task(ctx, task_id, (await manager.get_task(ctx, task_id)).version)
 
 
@@ -575,7 +577,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
 
 
 async def split_one_gap(
-    manager: TasksManagerImpl, ctx: OpContext, moves: int
+    manager: TasksManagerImpl, ctx: TenantContext, moves: int
 ) -> tuple[Task, Task, Task, list[str]]:
     """`moves` moves into one and the same gap: a and c take turns right after
     b, so every move halves what the one before left. The worst case for a
