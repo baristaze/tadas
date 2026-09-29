@@ -1,7 +1,7 @@
 ---
 name: ops-investigate
 description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes and the work items that failed for good, the pool, the queues and their dead letters, the providers (sign-in, billing, Slack), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
-allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*)
+allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*), Bash(sleep:*)
 ---
 
 # ops-investigate
@@ -253,6 +253,13 @@ named with `-dead` after it. Slack's calls in are in
    aws logs get-query-results --query-id <id> --profile tadas-<env>-investigate
    ```
 
+   Poll `get-query-results` at most 10 times for one query, each poll
+   after `sleep 5` in the same command, so ten polls cover about a
+   minute. When the status is still `Scheduled` or `Running` after the
+   tenth, stop polling: the report reads that query's logs as "not
+   read: the query did not finish in 10 polls", with the query id, and
+   the next step starts. Step 8's query is polled the same way.
+
    Local: `docker compose -f deployment/local/docker-compose.yml -f
    deployment/local/docker-compose.full.yml logs --since <since> api
    maintenance` from the repository root when the processes
@@ -390,7 +397,10 @@ named with `-dead` after it. Slack's calls in are in
     org id when one tenant's rows explain it, `ops-watch` when the
     signal is still moving, `ops-infra-as-code` when the fix is a
     resource, and, for a failed work item whose cause is fixed, the
-    requeue command of step 7 for a person to run.
+    requeue command of step 7 for a person to run. A session follows
+    at most 2 hops of Next. The skill it starts with is hop zero; the
+    report of the second hop still names its next skill, and the
+    session stops there and reports.
 
 ## What it never does
 
@@ -405,6 +415,7 @@ named with `-dead` after it. Slack's calls in are in
 - No `terraform apply`, no console clicks, no scaling by hand.
 - No re-reading a wider window than asked; a longer look is a second
   run with a longer `--since`.
+- No unbounded poll: never more than 10 polls of a query.
 
 ## Output
 
