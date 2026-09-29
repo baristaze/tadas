@@ -5,6 +5,10 @@
 `<prefix>slack_bot_token` is gone from every environment.
 Amended (2026-09-26): the bot asks for `channels:read` and `groups:read`
 too, for `member_joined_channel` alone; see the note at the end.
+Neither of the two exceptions it shares with ADR 0031 is a deviation at
+v0.39.0: Secrets makes the process's own credentials, injected at start,
+a kind of their own, and no rule asks a rate limit of a route that
+carries neither a credential nor a path token.
 
 ## Context
 
