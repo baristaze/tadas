@@ -1,6 +1,8 @@
 # ADR 0030: The company site is HTML and CSS, not React
 
-**Status**: accepted (2026-09-22)
+**Status**: accepted (2026-09-22). A substitution since v0.39.0, which
+tags Client App Architecture, Stack `default`, and no deviation:
+[ADR 0002](0002-technology-choices.md) names it.
 
 ## Context
 
