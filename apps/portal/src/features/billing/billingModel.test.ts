@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, type BillingView, type PlanOfferView } from "../../api";
+import { ApiError, type BillingView, type PlanOfferView } from "@tadas/client";
 import {
   billingActions,
   boundSentence,

@@ -14,7 +14,7 @@ import {
   type SlackInstallationView,
   type SlackStatusView,
   type UserPageView,
-} from "../../api";
+} from "@tadas/client";
 import { useNoticesStore } from "../../store/notices";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 

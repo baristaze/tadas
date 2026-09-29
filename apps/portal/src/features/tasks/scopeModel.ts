@@ -1,7 +1,7 @@
 // Pure: which list the tasks page shows and what its heading says. An org
 // with more than one member, of either kind, offers the person's own tasks
 // and the team's; a person alone in an org has one list.
-import type { TaskScope } from "../../api";
+import type { TaskScope } from "@tadas/client";
 
 /** The switch that stands as the page's heading when the org has company. */
 export const SCOPE_CHOICES: readonly { value: TaskScope; label: string }[] = [

@@ -4,7 +4,7 @@
 // signed-in page shows it above its title, until a payment goes through or
 // the subscription ends.
 import { useState } from "react";
-import { ApiError } from "../../api";
+import { ApiError } from "@tadas/client";
 import { Banner, Button, ErrorText } from "../../design/kit";
 import { useBilling, useOpenBillingPortal } from "../../queries/billing";
 import { checkoutFailure, paymentFailedSentence, UPDATE_PAYMENT_METHOD } from "./billingModel";

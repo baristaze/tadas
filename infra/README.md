@@ -31,7 +31,8 @@ boot.
 - **A timeout on every client.** Every outbound client carries a
   timeout from settings: one for AWS, one for Valkey, one for the
   trace export. A test scans every source root and fails on a client
-  built without one.
+  built without one. The error tracker's SDK is the one exception: it
+  bounds its own transport.
 - **A request's deadline on the calls a request makes.** A queue's
   send, a secret's get, put, and delete, and an object's put, get, and
   exists take the request's `deadline`; the AWS impl cuts the call

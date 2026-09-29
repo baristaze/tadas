@@ -11,7 +11,7 @@ import type {
   TaskStatus,
   TaskView,
   UpdateTaskRequest,
-} from "../api";
+} from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 import { DONE_PAGE_SIZE, OPEN_PAGE_SIZE } from "./taskPlacement";

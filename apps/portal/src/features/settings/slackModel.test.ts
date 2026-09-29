@@ -1,4 +1,4 @@
-import type { MeView, SlackInstallationView, SlackStatusView } from "../../api";
+import type { MeView, SlackInstallationView, SlackStatusView } from "@tadas/client";
 import { describe, expect, it } from "vitest";
 import { brokenReasonText, canManageSlack, installOutcomeText, slackSummary } from "./slackModel";
 

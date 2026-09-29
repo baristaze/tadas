@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BulkTasksRequest, TaskScope, TaskView } from "../../api";
+import type { BulkTasksRequest, TaskScope, TaskView } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { placeTask, refreshTaskLists } from "../../queries/taskCache";
 import { ON_TOP } from "../../queries/taskPlacement";

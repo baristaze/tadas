@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FileView } from "../../api";
+import type { FileView } from "@tadas/client";
 import { attachmentRow, contentTypeOf, extensionOf, humanSize, previewKind, usageLine } from "./attachmentsModel";
 
 function file(overrides: Partial<FileView> = {}): FileView {

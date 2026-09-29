@@ -15,7 +15,7 @@
 // would now show, it asks for that one list to be read again rather than
 // guess.
 import type { InfiniteData } from "@tanstack/react-query";
-import type { TaskPageView, TaskScope, TaskStatus, TaskView } from "../api";
+import type { TaskPageView, TaskScope, TaskStatus, TaskView } from "@tadas/client";
 
 export type TaskPages = InfiniteData<TaskPageView>;
 
