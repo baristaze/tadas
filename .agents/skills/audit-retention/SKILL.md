@@ -89,8 +89,8 @@ holds. It reads no env file and no token: it calls no route.
 
    Write each purge's statement into
    `~/Downloads/tadas_retention_<yyyy-mm-dd>/purges.sql`, in the file
-   format `references/purges.md` gives (read it before writing
-   the file: it says how to get the exact SQL and the ids a statement
+   format `references/purges.md` in this skill's folder gives (read it
+   before writing the file: it says how to get the exact SQL and the ids a statement
    binds), and run:
 
    ```bash
