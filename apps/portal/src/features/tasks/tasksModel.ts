@@ -1,7 +1,7 @@
 // Pure: the rows the list renders, drag placements, and the order a drag
 // shows before the server answers.
 import type { InfiniteData } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskView, UserView } from "../../api";
+import type { MeView, TaskPageView, TaskView, UserView } from "@tadas/client";
 import { dueBadge, type DueBadge } from "./dueModel";
 
 /** How long a task takes to fade out of one group and into the other. */

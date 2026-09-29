@@ -3,7 +3,7 @@
 // move names the version of the task as held, the server's answer takes the
 // optimistic row's place, and a refusal (someone else changed the list first)
 // is said and the list reloaded from the server.
-import { ApiError, type TaskView } from "../../api";
+import { ApiError, type TaskView } from "@tadas/client";
 import { placement, type DropSide } from "./tasksModel";
 
 export const STALE_MESSAGE = "Someone changed this list first; it was reloaded.";

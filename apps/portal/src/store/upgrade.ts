@@ -2,7 +2,7 @@
 // met, closed by the person. A write refused for a plan's bound opens it
 // instead of leaving a notice, since the answer to it is a plan, not a retry.
 import { create } from "zustand";
-import { ApiError, type PlanLimit } from "../api";
+import { ApiError, type PlanLimit } from "@tadas/client";
 
 interface UpgradeState {
   limit: PlanLimit | null;

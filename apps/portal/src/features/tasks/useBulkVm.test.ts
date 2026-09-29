@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { BulkTasksView, TaskScope, TaskView } from "../../api";
+import type { BulkTasksView, TaskScope, TaskView } from "@tadas/client";
 import { useNoticesStore } from "../../store/notices";
 import { useUpgradeStore } from "../../store/upgrade";
 import { useBulkVm, type BulkVm } from "./useBulkVm";

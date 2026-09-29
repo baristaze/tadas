@@ -1,5 +1,5 @@
 // Pure: what a change of many tasks sends, what it says, and what undoes it.
-import type { BulkAction, BulkTasksRequest, BulkTasksView, TaskScope } from "../../api";
+import type { BulkAction, BulkTasksRequest, BulkTasksView, TaskScope } from "@tadas/client";
 import type { TaskSection } from "../../store/preferences";
 import type { Selection } from "./selectionModel";
 

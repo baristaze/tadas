@@ -1,5 +1,5 @@
 // Pure: which import the tasks page shows, and how it is said.
-import type { BillingView, ImportView, Plan, PlanLimit } from "../../api";
+import type { BillingView, ImportView, Plan, PlanLimit } from "@tadas/client";
 
 /** How long before the page opened an import may have ended and still show. */
 export const ENDED_SHOWN_MS = 15 * 60 * 1000;

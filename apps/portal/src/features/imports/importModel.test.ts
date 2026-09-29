@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BillingView, ImportView } from "../../api";
+import type { BillingView, ImportView } from "@tadas/client";
 import { activeTasksLimit, ENDED_SHOWN_MS, headline, progressLine, shownImport, skippedLines } from "./importModel";
 
 function view(fields: Partial<ImportView> = {}): ImportView {

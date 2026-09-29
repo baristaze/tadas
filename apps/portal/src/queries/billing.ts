@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BillingView, OpenPortalRequest, Plan, RedirectView } from "../api";
+import type { BillingView, OpenPortalRequest, Plan, RedirectView } from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 

@@ -5,7 +5,7 @@
 // take a form), the upload confirmed, and the import started naming it. The
 // rows are read by the worker; this returns as soon as the import is
 // accepted, and the page follows it by what the channel pushes.
-import type { AddFileRequest, FileView, ImportView, IssuedUploadView, StartImportRequest } from "../../api";
+import type { AddFileRequest, FileView, ImportView, IssuedUploadView, StartImportRequest } from "@tadas/client";
 import { storeForm, StoreRefused, type Picked } from "../attachments/transfer";
 
 export const CSV_TYPE = "text/csv";
