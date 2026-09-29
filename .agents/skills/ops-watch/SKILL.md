@@ -155,14 +155,25 @@ step 2 come before the first batch, and are not counted in it.
 5. Each interval, read one number per signal for that interval and
    nothing more: the request count, the 5xx count, the p95, the
    worker failures, through `get-metric-data`, or the same as a
-   Prometheus range query. The `--period` passed to `get-metric-data`
-   is a whole minute whatever the batch interval: the interval rounded
-   down to a multiple of 60 seconds, and never under 60, since
-   CloudWatch refuses any other period for a regular-resolution
-   metric. A Prometheus range query takes the same `step`. A batch's count is the sum of its datapoints, and its p95
-   the highest among them. A burst is a count in the batch, never a
-   line per event: the batch's lines over `--cap` are counted by level
-   and dropped.
+   Prometheus range query. A datapoint is a whole minute, so the two
+   bounds a batch passes are its start and its end, each rounded down
+   to a whole minute. Two batches in a row then split the minutes
+   between them, no minute is read twice, and each is read once it is
+   complete. A batch whose rounded start and end are the same minute
+   (a 30-second batch can be) makes no metric read; the next batch
+   reads that minute. The `--period` passed to `get-metric-data` is a whole
+   minute, 60 seconds, whatever the batch interval: CloudWatch refuses
+   a period that is not a multiple of 60 for a regular-resolution
+   metric, and a longer one would reach past the batch's rounded end
+   into the next batch's minutes. Locally, a count is
+   `increase(<metric>[1m])` and the p95 is
+   `histogram_quantile(0.95, sum by (le) (increase(tadas_http_request_seconds_bucket[1m])))`,
+   each a range query from the rounded start plus 60 seconds to the
+   rounded end, at a 60-second `step`: each point is one complete
+   minute of the batch. A batch's count is the sum of its datapoints,
+   and its p95 the highest among them. A burst is a count in the
+   batch, never a line per event: the batch's lines over `--cap` are
+   counted by level and dropped.
 6. The first responder rule. In production every alarm transition is
    an escalation. Outside production it is read against the size of
    step 2, and it is suppressed only when the traffic is the team's

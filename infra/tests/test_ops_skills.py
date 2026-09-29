@@ -265,6 +265,26 @@ def test_a_skill_that_waits_between_polls_may_sleep(name: str) -> None:
     assert "Bash(sleep:*)" in _allowed_tools(name)
 
 
+# A watch's batches start at its own second, and a metric's datapoint is a
+# whole minute: a batch that passed its own bounds would read the minute it
+# shares with the next batch twice, and every count would be about double.
+ONE_READ_A_MINUTE = [
+    "the two bounds a batch passes are its start and its end, each rounded down to a whole minute",
+    "no minute is read twice",
+    "makes no metric read; the next batch reads that minute",
+    "The `--period` passed to `get-metric-data` is a whole minute, 60 seconds, "
+    "whatever the batch interval",
+    "a count is `increase(<metric>[1m])`",
+    "each a range query from the rounded start plus 60 seconds to the rounded end, "
+    "at a 60-second `step`",
+]
+
+
+@pytest.mark.parametrize("sentence", ONE_READ_A_MINUTE)
+def test_a_watch_reads_each_minute_of_a_metric_once(sentence: str) -> None:
+    assert sentence in _prose("ops-watch"), f"ops-watch no longer says: {sentence}"
+
+
 def test_triage_closes_nothing_without_the_persons_word() -> None:
     text = _prose("tickets-triage")
     assert "Never closes a ticket without `--apply` and the person's word in this session" in text
