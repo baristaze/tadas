@@ -1,6 +1,6 @@
 import { QueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import type { MeView, TaskPageView, TaskView } from "../api";
+import type { MeView, TaskPageView, TaskView } from "@tadas/client";
 import { keys } from "./keys";
 import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "./taskCache";
 

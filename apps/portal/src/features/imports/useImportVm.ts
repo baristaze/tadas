@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { storeFetch } from "../../api";
+import { storeFetch } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { mediaCalls } from "../../queries/attachments";
 import { useBilling } from "../../queries/billing";

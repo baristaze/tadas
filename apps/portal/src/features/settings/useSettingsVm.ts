@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
 import { useSlackStatus, useStartSlackInstall, useUninstallSlack } from "../../queries/slack";
-import type { Role } from "../../api";
+import type { Role } from "@tadas/client";
 import {
   useApiKeys,
   useCreateApiKey,

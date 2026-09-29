@@ -5,7 +5,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { BillingView } from "../../api";
+import type { BillingView } from "@tadas/client";
 import { PaymentNotice } from "./PaymentNotice";
 
 const state = vi.hoisted(() => ({

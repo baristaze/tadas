@@ -7,7 +7,7 @@
 // gathered while they keep coming, so a task pushed twice is read once, and a
 // burst reads the lists once instead of task by task. Everything it reaches
 // for is handed in, so it runs in a test with fake timers and no query cache.
-import type { TaskView } from "../api";
+import type { TaskView } from "@tadas/client";
 
 /** How long a window stays open after its last hint. The pushes of one
  * write that touches many tasks (an import step, a respace) arrive a few

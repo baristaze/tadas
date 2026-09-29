@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TaskPageView, TaskView } from "../api";
+import type { TaskPageView, TaskView } from "@tadas/client";
 import {
   belongsIn,
   compareDone,

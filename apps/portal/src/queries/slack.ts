@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SlackInstallStartView, SlackStatusView } from "../api";
+import type { SlackInstallStartView, SlackStatusView } from "@tadas/client";
 import { api } from "../app/api";
 import type { Go } from "./billing";
 import { keys } from "./keys";

@@ -247,12 +247,16 @@ binary, the nine operational skills (`ops-investigate`, `ops-watch`,
 - `services/` web services ([services/api/README.md](services/api/README.md));
   `workers/` background roles
   ([workers/maintenance/README.md](workers/maintenance/README.md));
-  `apps/` clients: the
-  portal, with its generated API types and one transport client under
-  `src/api/` (a deadline on every call; the session in the tab's session
-  storage, never local storage), the CLI, and the company site
-  ([apps/site/README.md](apps/site/README.md)), a static page with no
-  script; `clients/python/` the one Python client
+  `apps/` the
+  portal ([apps/portal/README.md](apps/portal/README.md); the session in
+  the tab's session storage, never local storage), the CLI, and the
+  company site ([apps/site/README.md](apps/site/README.md)), a static
+  page with no script
+- `clients/` one client per language:
+  [clients/typescript/](clients/typescript/README.md), the generated API
+  types and one transport client (a deadline on every call) that every
+  browser app imports, and [clients/python/](clients/python/README.md),
+  the one Python client
 - `deployment/` compose, images, Terraform
   ([deployment/README.md](deployment/README.md)); the portal's distribution
   sends the security headers, a `Content-Security-Policy` naming its own

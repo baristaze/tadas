@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiError, type MeView, type TaskPageView, type TaskView, type UserPageView } from "../../api";
+import { ApiError, type MeView, type TaskPageView, type TaskView, type UserPageView } from "@tadas/client";
 import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "../../queries/taskCache";
 import { fetchTask } from "../../queries/tasks";
 import { parseEnvelope } from "../../realtime/envelopes";

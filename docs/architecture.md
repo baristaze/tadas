@@ -1507,7 +1507,7 @@ alone, and neither key may touch what the other's work does not need
   player, a PDF in a frame; the rest download-only, and read-only for a
   viewer), downloaded by the signed link and saved under the file's own
   name, removed; `src/features/attachments/transfer.ts` is the flow with
-  its effects handed in, and `src/api/store.ts` the one place that
+  its effects handed in, and the client's `storeFetch` the one place that
   reaches the store, with a deadline of its own and no credential of
   ours), settings at `/settings`
   (members, invitations with resend and revoke, single sign-on for a
@@ -1576,12 +1576,12 @@ alone, and neither key may touch what the other's work does not need
   into one line (`src/app/errorMessage.ts`, the request id of an API
   refusal quoted) and leaves it in the notices store, which `Notices`
   renders above every page as a kit banner until dismissed or after a
-  few seconds. The API is reached through `src/api/`: the committed
-  `openapi.json` at the app root, generated types behind the facade
+  few seconds. The API is reached through `@tadas/client`
+  (`clients/typescript`, below): generated types behind the facade
   `types.ts`, one transport client, which puts a deadline on every call
   (`requestTimeoutMs` in the runtime config, 30 seconds by default) and
   rejects a call that runs out with `RequestTimeout`, which carries the
-  app's one retry (`src/api/retry.ts`, `retryAttempts` and
+  app's one retry (the client's `retry.ts`, `retryAttempts` and
   `retryBaseDelayMs` in the same config): a read or a POST under an
   `Idempotency-Key` may be sent twice and nothing else may, a deadline,
   a connection that failed before an answer, and a 502, 503, or 504 are
@@ -1605,6 +1605,14 @@ alone, and neither key may touch what the other's work does not need
   reconnect even when no push reached it before the drop, and a push
   that was dropped with nothing behind it is found on the next
   keepalive rather than on the next event.
+- `clients/typescript` (`@tadas/client`): the one TypeScript client,
+  which every browser app imports by its name alone: the committed
+  `openapi.json`, the types generated from it (`src/schema.d.ts`, by
+  `make openapi`, which CI holds current) behind the facade `types.ts`,
+  the transport client and its retry, `storeFetch` for the object store,
+  and `pageJson` for a file of the page's own origin, `/config.json`.
+  Nothing outside it calls `fetch`: the portal's ESLint refuses a `fetch`,
+  the generated schema, and any path into the package.
 - `clients/python` (`tadas-client`, `tadas.client`): the one Python client,
   generated from the same committed `openapi.json` (`schema.py`, by
   `make openapi`, for the workspace's Python version, which CI holds
@@ -1691,7 +1699,7 @@ alone, and neither key may touch what the other's work does not need
   the registry, the state bucket, the two zones, the company site's
   certificate, the deploy roles, the
   investigate role, and the budget (see
-  [Operations](#operations-ops-claudeskills)). Staging's replicates
+  [Operations](#operations-ops-agentsskills)). Staging's replicates
   every image and static build into production's account, so
   production never reads staging's. The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
@@ -1816,7 +1824,7 @@ alone, and neither key may touch what the other's work does not need
   module called a second time, with no API and no config: its policy
   names its own origin alone, and a missing path gets its `404.html`.
 
-## Operations (`ops/`, `.claude/skills/`)
+## Operations (`ops/`, `.agents/skills/`)
 
 People steer, agents maintain. Every operational task is a skill a
 person runs with an agent, and the boundary is the credential the
@@ -1857,7 +1865,8 @@ page; this section says what exists.
   `local` the Prometheus and Jaeger URLs of the `devx` profile. Every
   skill verifies the profile it holds with `sts get-caller-identity`
   before it reads, and refuses a wider one.
-- **Skills.** The nine of "Operational Skills", under `.claude/skills/`:
+- **Skills.** The nine of "Operational Skills", under `.agents/skills/`
+  (`.claude/skills` is a link to it, for Claude Code):
   `ops-investigate`, `ops-watch`, `ops-root-cause`, `ops-infra-as-code`,
   `ops-cloud-deployment-create`, `ops-cloud-deployment-nuke`,
   `ops-simulate-traffic`, `stress-test-create-or-update`,
@@ -1870,7 +1879,7 @@ page; this section says what exists.
   create and nuke take `staging` or `production` only, and
   `stress-test-create-or-update` writes a file and touches none. The
   eight that hold a credential read
-  `.claude/skills/_shared/ops-preamble.md` first, where the profiles,
+  `.agents/skills/_shared/ops-preamble.md` first, where the profiles,
   the account check, and the env file's fields are written once; the
   rules that stop a secret leaking stay inline in each of them, and
   `infra/tests/test_ops_skills.py` holds both halves.
@@ -2067,14 +2076,6 @@ See [docs/adr/](adr/).
 Shapes a sibling system, scaffolded in one shot from the guideline, has
 and this one does not, judged and not taken, or not yet:
 
-- **A TypeScript client as its own workspace package** (`clients/api-client`
-  beside `clients/python`). "Clients Live in One Place" read literally; the
-  portal today keeps the committed `openapi.json`, the generated types, the
-  facade, and the transport client under `apps/portal/src/api/`, which is one
-  place while the portal is the only TypeScript caller. The move is real and
-  mechanical (a package with its own `tsconfig`, the portal importing it,
-  `make openapi` regenerating into it) and it pays off the day a second
-  TypeScript app arrives; it is not taken before then.
 - **A server-side scope on the realtime subscription** (`subscribe` with
   `scope: team | mine`, the push carrying the record's assignee and creator
   so the server filters by audience). Not taken: every push carries the

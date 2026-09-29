@@ -3,7 +3,7 @@
 // as that same date and takes it from a `date` input, whose value is the same
 // string. A date is never read through `new Date(iso)`, which would take it as
 // UTC midnight and shift it a day for anyone west of UTC.
-import type { TaskView } from "../../api";
+import type { TaskView } from "@tadas/client";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const LONG_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

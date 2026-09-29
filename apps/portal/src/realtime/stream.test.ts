@@ -1,4 +1,4 @@
-import { ApiError, type EventView } from "../api";
+import { ApiError, type EventView } from "@tadas/client";
 import { describe, expect, it } from "vitest";
 import {
   behind,

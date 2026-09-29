@@ -1,4 +1,4 @@
-import type { MeView, Role } from "../../api";
+import type { MeView, Role } from "@tadas/client";
 import { useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
 import {

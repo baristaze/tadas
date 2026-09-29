@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Role } from "../../api";
+import type { Role } from "@tadas/client";
 import { BotIcon, Caret, CrownIcon, EyeIcon, Menu, MenuItemRadio, ShieldIcon, UserIcon } from "../../design/kit";
 import type { MemberRow } from "./settingsModel";
 
