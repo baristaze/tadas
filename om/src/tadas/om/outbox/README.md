@@ -73,6 +73,11 @@ push come. This is one of the seven kinds of thing
   ([ADR 0062](../../../../../docs/adr/0062-a-dropped-publish-leaves-its-outbox-row-pending.md)).
 - **A stuck row blocks nothing behind it.** Each attempt sets the next
   one later, so a row that will not relay waits on its own.
+- **The writer relays, for a push in milliseconds.** The process that
+  wrote a row relays it, so a change reaches every screen at once. That
+  costs an append, a publish, and a mark on every write. A sweep alone,
+  every second or two, would cost less and push later, so the sweep is
+  the fallback, not the path.
 - **A young row is the request path's.** The sweep leaves rows younger
   than a grace period alone, so two relays do not race for one row.
 - **The retention outlives the backup.** Done rows are kept longer

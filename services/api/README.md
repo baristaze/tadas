@@ -248,6 +248,14 @@ change. A name the image does not host refuses the boot.
   again". A change of the member's role closes the socket with 1012,
   which every client reads as "reconnect", and the new socket carries
   the new role.
+- **A socket carries the org's whole stream.** A subscription names no
+  audience, and "mine" is the client's filter. Every push carries the
+  org's stream position, and each client holds a contiguous cursor, so
+  a push the server withheld would be a gap. The replay of
+  `/v1/events` that fills a gap is unscoped, and it would hand back
+  what was withheld. Filtering at the server needs a scoped replay and
+  a frame counter per subscription, a second protocol, and it waits
+  until the channel's traffic makes the filter worth that protocol.
 - **The socket ticket is never logged.** Access logging is the
   gateway's own, by route template, with no query string.
 
