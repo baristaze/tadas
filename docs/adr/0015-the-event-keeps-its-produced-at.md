@@ -1,6 +1,11 @@
 # ADR 0015: The event keeps `produced_at`, because its public record carries no id
 
-**Status**: accepted (2026-09-20)
+**Status**: superseded (2026-09-29). Guideline v0.39.0 reverses OM-06:
+an append-only record carries its time in a field of its own, such as
+`produced_at`, and its time is never read out of its id. `Event` keeps
+`produced_at`, as this record decided, and that is the rule now, so the
+route out below is not taken ([ADR 0081](0081-what-0-39-0-asks.md)).
+The record stays for the interval it covers.
 
 ## Context
 
