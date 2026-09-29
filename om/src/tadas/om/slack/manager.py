@@ -5,7 +5,7 @@ the platform posted there."""
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from tadas.om.opcontext import OpContext, RequestContext
+from tadas.om.context import RequestContext, TenantContext
 from tadas.om.slack.types.installation import (
     SlackInstallation,
     SlackInstallStart,
@@ -15,12 +15,12 @@ from tadas.om.slack.types.installation import (
 
 class SlackManagerInterface(ABC):
     @abstractmethod
-    async def get_installation(self, ctx: OpContext) -> SlackInstallation | None:
+    async def get_installation(self, ctx: TenantContext) -> SlackInstallation | None:
         """The org's installation, or None when it has none."""
         ...
 
     @abstractmethod
-    async def start_install(self, ctx: OpContext, redirect_uri: str) -> SlackInstallStart:
+    async def start_install(self, ctx: TenantContext, redirect_uri: str) -> SlackInstallStart:
         """Where an owner or an admin goes to install the app for the org:
         Slack's page, carrying a fresh one-time state bound to the org and to
         them, which Slack sends back to `redirect_uri` with a code. The state
@@ -43,14 +43,14 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def uninstall(self, ctx: OpContext) -> SlackInstallation | None:
+    async def uninstall(self, ctx: TenantContext) -> SlackInstallation | None:
         """Removes the app from the org's workspace, deletes the token, and
         deletes the installation, announced; None when it had none. Requires
         `MANAGE_MEMBERS`."""
         ...
 
     @abstractmethod
-    async def forget(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
+    async def forget(self, ctx: TenantContext, reason: str) -> SlackInstallation | None:
         """Slack says the install is gone (the app was uninstalled in Slack,
         or its tokens revoked): the token and the installation are deleted,
         announced. None when the org had none."""
@@ -59,7 +59,7 @@ class SlackManagerInterface(ABC):
     @abstractmethod
     async def installation_for_team(
         self, rctx: RequestContext, team_id: str
-    ) -> tuple[OpContext, SlackInstallation] | None:
+    ) -> tuple[TenantContext, SlackInstallation] | None:
         """Platform-internal, on the request stage: the org a call from Slack
         is for, found by its workspace, with the service context of that org
         attributed to the member who installed the app. None when no org
@@ -67,7 +67,7 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def bot_token(self, ctx: OpContext) -> str:
+    async def bot_token(self, ctx: TenantContext) -> str:
         """The installation's bot token, for one call: renewed first when it
         expires within `refresh_margin`, by one caller at a time. NotFound
         when the org has no installation; `SlackTokenRevoked` when the token
@@ -75,14 +75,14 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def bind_channel(self, ctx: OpContext, channel_id: str) -> SlackInstallation:
+    async def bind_channel(self, ctx: TenantContext, channel_id: str) -> SlackInstallation:
         """Makes `channel_id` the channel reminders and task updates go to,
         announced. NotFound when the org has no installation. Requires
         `MANAGE_MEMBERS`."""
         ...
 
     @abstractmethod
-    async def mark_broken(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
+    async def mark_broken(self, ctx: TenantContext, reason: str) -> SlackInstallation | None:
         """Slack refused a post for good (the channel is gone, archived, or the
         app is not in it): the installation says so, announced, until a
         channel is bound again or the bot joins this one. None when the org
@@ -90,7 +90,7 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def bot_joined(self, ctx: OpContext, channel_id: str) -> SlackInstallation | None:
+    async def bot_joined(self, ctx: TenantContext, channel_id: str) -> SlackInstallation | None:
         """Slack says the app's bot joined `channel_id` (`member_joined_channel`
         with the bot as its member): someone invited it. When that is the bound
         channel and Slack's refusal of the channel broke the installation, the
@@ -100,12 +100,14 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_post(self, ctx: OpContext, key: UUID) -> SlackPost | None:
+    async def read_post(self, ctx: TenantContext, key: UUID) -> SlackPost | None:
         """The message the work under `key` already posted, if any."""
         ...
 
     @abstractmethod
-    async def record_post(self, ctx: OpContext, key: UUID, channel_id: str, ts: str) -> SlackPost:
+    async def record_post(
+        self, ctx: TenantContext, key: UUID, channel_id: str, ts: str
+    ) -> SlackPost:
         """Records the message the work under `key` posted; a second record
         under the key returns the first."""
         ...
@@ -120,7 +122,7 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         """The sweep, for one tenant past its own retention: every row of it, a
         batch of each kind at most a call. Any other tenant returns 0 and
         reads nothing: its rows past the retention go across tenants."""

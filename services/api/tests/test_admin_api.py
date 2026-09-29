@@ -13,7 +13,7 @@ import pytest
 from api_support import OWNER, enrol_operator, sign_in_as
 
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext
+from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.services.api.container import AppContainer
 

@@ -7,7 +7,7 @@ from uuid import UUID
 import httpx
 from api_support import OWNER, add_member, dev_login, sign_in_as
 
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.container import AppContainer
 
 

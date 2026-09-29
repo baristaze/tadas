@@ -14,8 +14,8 @@ import pytest
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import ValidationFailed
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
     OrchestrationKind,
@@ -44,7 +44,7 @@ class World:
             self.storage, InfraLocalImpl(tmp_path), tasks_options=TasksOptions()
         )
 
-    async def org(self) -> OpContext:
+    async def org(self) -> TenantContext:
         slug = f"acme-{new_id().hex[-8:]}"
         owner, _ = await self.managers.tenancy.bootstrap(
             request(), "Acme", slug, f"ann-{slug}@example.test", "Ann"
@@ -52,11 +52,11 @@ class World:
         await self.managers.billing.grant_seeded_plan(owner, Plan.MAX)
         return owner
 
-    async def done(self, ctx: OpContext, title: str, days_ago: float) -> Task:
+    async def done(self, ctx: TenantContext, title: str, days_ago: float) -> Task:
         """A task marked done `days_ago` days ago and not changed since."""
         return await self.done_at(ctx, title, utcnow() - timedelta(days=days_ago))
 
-    async def done_at(self, ctx: OpContext, title: str, at: datetime) -> Task:
+    async def done_at(self, ctx: TenantContext, title: str, at: datetime) -> Task:
         """A task marked done at `at` and not changed since."""
         now = utcnow()
         task = await self.managers.tasks.create_task(
@@ -80,21 +80,21 @@ class World:
         await self.storage.get_tasks_storage().update_task(ctx.org_id, aged, task.version, ())
         return aged
 
-    async def run(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def run(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         while record.status is OrchestrationStatus.RUNNING:
             record = await self.managers.tasks.step_cleanup(ctx, record)
         return await self.managers.orchestrations.get(ctx, record.id)
 
-    async def done_titles(self, ctx: OpContext) -> list[str]:
+    async def done_titles(self, ctx: TenantContext) -> list[str]:
         page = await self.managers.tasks.get_done_tasks(ctx, team(ctx), None, 200)
         return sorted(t.title for t in page.items)
 
-    async def archived_titles(self, ctx: OpContext) -> list[str]:
+    async def archived_titles(self, ctx: TenantContext) -> list[str]:
         page = await self.managers.tasks.get_archived_tasks(ctx, team(ctx), None, 200)
         return sorted(t.title for t in page.items)
 
 
-def team(ctx: OpContext) -> TaskFilter:
+def team(ctx: TenantContext) -> TaskFilter:
     return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
 
@@ -185,7 +185,7 @@ async def test_a_task_reopened_mid_run_is_left_alone(tmp_path: Path) -> None:
 
         target: UUID | None = None
         manager: Managers | None = None
-        ctx: OpContext | None = None
+        ctx: TenantContext | None = None
 
         async def read_archivable(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
             found = await super().read_archivable(org_id, before, limit)

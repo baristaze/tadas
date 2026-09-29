@@ -12,8 +12,8 @@ from tadas.integrations.slack.requests import (
     inbound_event,
 )
 from tadas.om.base import utcnow
+from tadas.om.context import RequestContext, TenantContext
 from tadas.om.exceptions import NotFound, SlackWorkspaceTaken
-from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.slack import SlackManagerInterface
 from tadas.services.api.services.slack import SlackRequest, SlackServiceInterface
 from tadas.services.api.types.slack import (
@@ -47,16 +47,16 @@ class SlackServiceImpl(SlackServiceInterface):
         self._redirect_uri = redirect_uri
         self._portal_url = portal_url.rstrip("/")
 
-    async def get_status(self, ctx: OpContext) -> SlackStatusView:
+    async def get_status(self, ctx: TenantContext) -> SlackStatusView:
         installation = await self._slack.get_installation(ctx)
         view = None if installation is None else SlackInstallationView.model_validate(installation)
         return SlackStatusView(installation=view)
 
-    async def start_install(self, ctx: OpContext) -> SlackInstallStartView:
+    async def start_install(self, ctx: TenantContext) -> SlackInstallStartView:
         start = await self._slack.start_install(ctx, self._redirect_uri)
         return SlackInstallStartView(url=start.url, expires_at=start.expires_at)
 
-    async def uninstall(self, ctx: OpContext) -> SlackStatusView:
+    async def uninstall(self, ctx: TenantContext) -> SlackStatusView:
         await self._slack.uninstall(ctx)
         return SlackStatusView(installation=None)
 

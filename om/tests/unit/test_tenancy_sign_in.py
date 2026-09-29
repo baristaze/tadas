@@ -17,6 +17,14 @@ from tadas.integrations.identity import InvitationState as ProvidedState
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.identity.twin import TWIN_ISSUER, IdentityProviderTwinImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import (
+    AppContext,
+    AppType,
+    IdentityContext,
+    RequestContext,
+    Role,
+    TenantContext,
+)
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
@@ -35,7 +43,6 @@ from tadas.om.exceptions import (
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext, Role
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
@@ -117,7 +124,7 @@ def manager(
     return build(storage, infra, outbox, twin)
 
 
-async def enter(manager: TenancyManagerImpl, login: IssuedLogin, org_id: UUID) -> OpContext:
+async def enter(manager: TenancyManagerImpl, login: IssuedLogin, org_id: UUID) -> TenantContext:
     session = await manager.exchange_login(
         await manager.authenticate_login(request(), login.token), org_id
     )
@@ -126,7 +133,7 @@ async def enter(manager: TenancyManagerImpl, login: IssuedLogin, org_id: UUID) -
 
 async def signed_in_at(
     manager: TenancyManagerImpl, login: IssuedLogin, org_id: UUID
-) -> tuple[OpContext, IdentityContext]:
+) -> tuple[TenantContext, IdentityContext]:
     """A fresh session's tenant stage and the identity stage it proves, which
     is what a sign-out takes."""
     session = await manager.exchange_login(
@@ -138,7 +145,9 @@ async def signed_in_at(
     )
 
 
-async def owner_of_team(manager: TenancyManagerImpl, email: str = "ann@acme.example") -> OpContext:
+async def owner_of_team(
+    manager: TenancyManagerImpl, email: str = "ann@acme.example"
+) -> TenantContext:
     """The owner of a team org, in a session there."""
     _, org = await manager.bootstrap(request(), "Acme", "acme", email, "Ann")
     return await enter(manager, await manager.dev_sign_in(request(), email), org.id)
@@ -575,7 +584,7 @@ async def test_the_single_sign_on_link_is_a_team_orgs_for_a_member_manager(
 
 
 async def provider_org(
-    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, ctx: OpContext
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, ctx: TenantContext
 ) -> Org:
     await manager.sso_setup_link(ctx, "sso", SETTINGS)
     org = await storage.read_org(ctx.org_id)

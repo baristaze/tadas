@@ -39,7 +39,7 @@ from typing import ClassVar
 
 from tadas.integrations.identity import IdentityProviderInterface
 from tadas.om.billing import BillingManagerInterface
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.context import Permission, TenantContext
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskFilter
@@ -72,7 +72,7 @@ class DeleteAccountHandlerImpl(WorkHandlerInterface):
         self._slack = slack
         self._identity = identity
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         payload = DeleteAccountPayload.model_validate(item.payload)
         user_id = payload.provider_user_id
         identity_step = None if user_id is None else lambda: self._identity.delete_user(user_id)
@@ -98,7 +98,7 @@ class DeleteOrgHandlerImpl(WorkHandlerInterface):
         self._slack = slack
         self._identity = identity
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         payload = DeleteOrgPayload.model_validate(item.payload)
         org_id = payload.provider_org_id
         identity_step = (
@@ -110,7 +110,7 @@ class DeleteOrgHandlerImpl(WorkHandlerInterface):
 
 
 async def end_providers(
-    ctx: OpContext,
+    ctx: TenantContext,
     identity_step: Callable[[], Awaitable[None]] | None,
     billing: BillingManagerInterface,
     slack: SlackManagerInterface,
@@ -136,7 +136,7 @@ class UnassignTasksHandlerImpl(WorkHandlerInterface):
     def __init__(self, tasks: TasksManagerInterface) -> None:
         self._tasks = tasks
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         # The item runs as the person who left, so `mine` is their list: the
         # tasks assigned to them, and the unassigned ones they made.
         mine = TaskFilter(scope=TaskScope.MINE, user_id=item.target_id)

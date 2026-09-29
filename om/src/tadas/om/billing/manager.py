@@ -13,7 +13,7 @@ from tadas.integrations.payments.types import ProviderDelivery
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.billing import Billing, CheckoutStart, Entitlements
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext, OperatorContext, RequestContext
+from tadas.om.context import OperatorContext, RequestContext, TenantContext
 
 
 class EntitlementsInterface(ABC):
@@ -22,10 +22,10 @@ class EntitlementsInterface(ABC):
     this and nothing else of billing."""
 
     @abstractmethod
-    async def get_entitlements(self, ctx: OpContext) -> Entitlements: ...
+    async def get_entitlements(self, ctx: TenantContext) -> Entitlements: ...
 
     @abstractmethod
-    def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
+    def entitlements_of(self, ctx: TenantContext, account: BillingAccount | None) -> Entitlements:
         """What `get_entitlements` answers, from the org's account as a read
         of the caller's own found it. An api key's use reads the account in
         the statement that reads its principal, so the key path reads the
@@ -35,7 +35,7 @@ class EntitlementsInterface(ABC):
 
 class BillingManagerInterface(EntitlementsInterface):
     @abstractmethod
-    async def get_billing(self, ctx: OpContext) -> Billing:
+    async def get_billing(self, ctx: TenantContext) -> Billing:
         """The plan, where it comes from, and when a paid plan set to end
         drops the org to what is left."""
         ...
@@ -43,7 +43,7 @@ class BillingManagerInterface(EntitlementsInterface):
     @abstractmethod
     async def start_checkout(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         plan: Plan,
         seats: int,
         org_name: str,
@@ -59,7 +59,7 @@ class BillingManagerInterface(EntitlementsInterface):
 
     @abstractmethod
     async def open_portal(
-        self, ctx: OpContext, return_url: str, update_payment_method: bool = False
+        self, ctx: TenantContext, return_url: str, update_payment_method: bool = False
     ) -> str:
         """The processor's page for the org's customer: payment methods,
         invoices, a change between paid plans, cancellation. With
@@ -69,13 +69,13 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def cancel(self, ctx: OpContext) -> Billing:
+    async def cancel(self, ctx: TenantContext) -> Billing:
         """Sets the paid plan to end at its period's end. The org keeps it until
         then and drops to what is left after."""
         ...
 
     @abstractmethod
-    async def resume(self, ctx: OpContext) -> Billing:
+    async def resume(self, ctx: TenantContext) -> Billing:
         """Takes a cancellation back before the period ends."""
         ...
 
@@ -90,7 +90,7 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def apply_delivery(self, ctx: OpContext, delivery: ProviderDelivery) -> bool:
+    async def apply_delivery(self, ctx: TenantContext, delivery: ProviderDelivery) -> bool:
         """Platform-internal: mirrors what a delivery is about, under the org's
         service context. The subscription is read from the processor again and
         never from the delivery, so deliveries that arrive out of order
@@ -100,14 +100,14 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def sync_seats(self, ctx: OpContext, seats: int, idempotency_key: str) -> Billing:
+    async def sync_seats(self, ctx: TenantContext, seats: int, idempotency_key: str) -> Billing:
         """Holds a per-seat subscription's quantity to `seats`, the active
         member count, read by the caller at the moment it runs. A plan not per
         seat, or a quantity already at `seats`, changes nothing."""
         ...
 
     @abstractmethod
-    async def close_account(self, ctx: OpContext) -> Billing:
+    async def close_account(self, ctx: TenantContext) -> Billing:
         """Platform-internal, a step of `DELETE_ACCOUNT`: the org is going with
         its person, so its subscription is canceled now and its customer at
         the processor deleted; the processor keeps the invoices. The account
@@ -116,7 +116,7 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def grant_seeded_plan(self, ctx: OpContext, plan: Plan) -> Billing:
+    async def grant_seeded_plan(self, ctx: TenantContext, plan: Plan) -> Billing:
         """Platform-internal: the local seed's grant, so the team a laptop is
         seeded with is not on Free. It takes the context a seeding transition
         produced (`bootstrap`), an internal credential held by the org's
@@ -133,7 +133,7 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         """The sweep, for one tenant past its own retention: its account and
         its marks, a batch of each at most a call. Any other tenant returns 0
         and reads nothing: its marks go across tenants."""

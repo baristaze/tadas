@@ -16,6 +16,7 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id
+from tadas.om.context import AppContext, AppType, RequestContext, Role, TenantContext
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     NotAuthenticated,
@@ -24,7 +25,6 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext, Role
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
@@ -122,7 +122,7 @@ TOKENS: dict[UUID, str] = {}
 """The token behind each session the tests signed in with, by session id."""
 
 
-async def dev(manager: TenancyManagerImpl, email: str, org_id: UUID | None = None) -> OpContext:
+async def dev(manager: TenancyManagerImpl, email: str, org_id: UUID | None = None) -> TenantContext:
     """A person signed in locally, in `org_id` or else their personal org."""
     login = await manager.dev_sign_in(request(), email)
     if org_id is None:

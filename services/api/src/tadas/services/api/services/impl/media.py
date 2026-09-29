@@ -1,8 +1,8 @@
 from uuid import UUID
 
+from tadas.om.context import TenantContext
 from tadas.om.media import MediaManagerInterface
 from tadas.om.media.types.file import File
-from tadas.om.opcontext import OpContext
 from tadas.services.api.services.media import MediaServiceInterface
 from tadas.services.api.types.media import (
     FileContentResponse,
@@ -23,10 +23,10 @@ class MediaServiceImpl(MediaServiceInterface):
     def __init__(self, media: MediaManagerInterface) -> None:
         self._media = media
 
-    async def get_file(self, ctx: OpContext, file_id: UUID) -> FileView:
+    async def get_file(self, ctx: TenantContext, file_id: UUID) -> FileView:
         return file_view(await self._media.get_file(ctx, file_id))
 
-    async def issue_upload(self, ctx: OpContext, file_id: UUID) -> IssuedUploadView:
+    async def issue_upload(self, ctx: TenantContext, file_id: UUID) -> IssuedUploadView:
         form = await self._media.issue_upload(ctx, file_id)
         return IssuedUploadView(
             url=form.url,
@@ -34,24 +34,26 @@ class MediaServiceImpl(MediaServiceInterface):
             expires_at=form.expires_at,
         )
 
-    async def put_content(self, ctx: OpContext, file_id: UUID, data: bytes) -> FileView:
+    async def put_content(self, ctx: TenantContext, file_id: UUID, data: bytes) -> FileView:
         return file_view(await self._media.put_content(ctx, file_id, data))
 
-    async def confirm_file(self, ctx: OpContext, file_id: UUID) -> FileView:
+    async def confirm_file(self, ctx: TenantContext, file_id: UUID) -> FileView:
         return file_view(await self._media.confirm_file(ctx, file_id))
 
     async def issue_download(
-        self, ctx: OpContext, file_id: UUID, inline: bool
+        self, ctx: TenantContext, file_id: UUID, inline: bool
     ) -> IssuedDownloadView:
         link = await self._media.issue_download(ctx, file_id, inline=inline)
         return IssuedDownloadView(url=link.url, expires_at=link.expires_at)
 
-    async def get_content(self, ctx: OpContext, file_id: UUID, inline: bool) -> FileContentResponse:
+    async def get_content(
+        self, ctx: TenantContext, file_id: UUID, inline: bool
+    ) -> FileContentResponse:
         file = await self._media.get_file(ctx, file_id)
         data = await self._media.get_content(ctx, file_id)
         return FileContentResponse(file.name, file.content_type, data, inline=inline)
 
-    async def get_usage(self, ctx: OpContext) -> StorageUsageView:
+    async def get_usage(self, ctx: TenantContext) -> StorageUsageView:
         usage = await self._media.get_usage(ctx)
         return StorageUsageView(
             purposes=[PurposeUsageView.model_validate(p) for p in usage.purposes],

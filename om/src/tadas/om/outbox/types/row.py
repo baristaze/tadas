@@ -10,7 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from tadas.om.base import Created, FrozenMapping, Identifiable, new_id, utcnow
-from tadas.om.opcontext import ProvenanceScope
+from tadas.om.context import ProvenanceScope
 
 
 class OutboxRow(Identifiable, Created):

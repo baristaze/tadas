@@ -10,7 +10,7 @@ import httpx
 import pytest
 from api_support import add_member, build_container, seed_request, sign_in_as
 
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.body import MAX_BODY_BYTES

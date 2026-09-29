@@ -4,7 +4,7 @@ from typing import ClassVar
 from uuid import UUID
 
 from tadas.om.base import Identifiable, Trackable
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 
 
 class InvitationState(StrEnum):

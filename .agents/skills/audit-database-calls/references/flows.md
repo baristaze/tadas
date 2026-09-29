@@ -75,7 +75,7 @@ helpers from `api_support` (`services/api/tests/api_support.py`, on the
 path once `dbcalls_flows` is imported): `add_member`, `on_plan`,
 `seed_request`, and `enrol_operator(w.client, w.container, email,
 OperatorRole.READ)` for the operator plane's routes, with `OperatorRole`
-from `tadas.om.opcontext`. The built-in `sweep` flow measures a pass at
+from `tadas.om.context`. The built-in `sweep` flow measures a pass at
 two tenant counts, so a pass's cost per tenant is a measure, not a
 guess. A flow that raises is named
 in the run's output and the next one runs; write each flow so it stands

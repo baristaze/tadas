@@ -20,7 +20,7 @@ from tadas.integrations.payments.deliveries import delivery_of
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext, Role
+from tadas.om.context import Role, TenantContext
 from tadas.om.tenancy.rules import ROLE_PERMISSIONS
 from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, WorkKind
@@ -59,7 +59,7 @@ async def queued(container: WorkerContainer, payload: bytes) -> QueueMessage:
     return message
 
 
-async def checkout(container: WorkerContainer, ctx: OpContext, plan: Plan, seats: int) -> bytes:
+async def checkout(container: WorkerContainer, ctx: TenantContext, plan: Plan, seats: int) -> bytes:
     start = await container.managers.billing.start_checkout(
         ctx, plan, seats, "Acme", PORTAL, PORTAL
     )
@@ -128,7 +128,9 @@ async def test_the_consumer_runs_until_it_is_stopped(tmp_path: Path) -> None:
     assert (await container.managers.billing.get_billing(ctx)).plan is Plan.TEAM
 
 
-async def seats_to_sync(tmp_path: Path) -> tuple[WorkerContainer, OpContext, OpContext, WorkItem]:
+async def seats_to_sync(
+    tmp_path: Path,
+) -> tuple[WorkerContainer, TenantContext, TenantContext, WorkItem]:
     """Acme pays for one seat on Max and has just added Bob: the owner's
     context, the service context the item runs under, and the item."""
     container = build_container(tmp_path)

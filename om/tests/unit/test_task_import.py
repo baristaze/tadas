@@ -13,9 +13,9 @@ import pytest
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import PreconditionFailed, ValidationFailed
 from tadas.om.media.types.file import File, FilePurpose
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.orchestrations.rules import ROW_ERRORS_KEPT
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
@@ -46,7 +46,7 @@ class World:
         self.storage = storage or StorageMemoryImpl()
         self.managers: Managers = build_managers(self.storage, InfraLocalImpl(tmp_path))
 
-    async def org(self, plan: Plan = Plan.FREE) -> OpContext:
+    async def org(self, plan: Plan = Plan.FREE) -> TenantContext:
         slug = f"acme-{new_id().hex[-8:]}"
         owner, _ = await self.managers.tenancy.bootstrap(
             request(), "Acme", slug, f"ann-{slug}@example.test", "Ann"
@@ -55,7 +55,7 @@ class World:
             await self.managers.billing.grant_seeded_plan(owner, plan)
         return owner
 
-    async def upload(self, ctx: OpContext, data: bytes, name: str = "tasks.csv") -> UUID:
+    async def upload(self, ctx: TenantContext, data: bytes, name: str = "tasks.csv") -> UUID:
         now = utcnow()
         file = File(
             id=new_id(),
@@ -73,22 +73,22 @@ class World:
         await self.managers.media.confirm_file(ctx, started.id)
         return started.id
 
-    async def start(self, ctx: OpContext, data: bytes) -> Orchestration:
+    async def start(self, ctx: TenantContext, data: bytes) -> Orchestration:
         file_id = await self.upload(ctx, data)
         return await self.managers.tasks.start_import(ctx, new_id(), file_id)
 
-    async def step(self, ctx: OpContext, record_id: UUID) -> Orchestration:
+    async def step(self, ctx: TenantContext, record_id: UUID) -> Orchestration:
         record = await self.managers.orchestrations.get(ctx, record_id)
         return await self.managers.tasks.step_import(ctx, record)
 
-    async def run(self, ctx: OpContext, record_id: UUID) -> Orchestration:
+    async def run(self, ctx: TenantContext, record_id: UUID) -> Orchestration:
         """Steps the record until it stops running, as the worker's items do."""
         record = await self.managers.orchestrations.get(ctx, record_id)
         while record.status is OrchestrationStatus.RUNNING:
             record = await self.managers.tasks.step_import(ctx, record)
         return await self.managers.orchestrations.get(ctx, record_id)
 
-    async def open_titles(self, ctx: OpContext) -> list[str]:
+    async def open_titles(self, ctx: TenantContext) -> list[str]:
         """Every open task's title, top first, a page at a time."""
         team = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
         titles: list[str] = []
@@ -101,7 +101,7 @@ class World:
             last = page.items[-1]
             after = OpenTaskCursor(rank=last.rank, id=last.id)
 
-    async def queued(self, ctx: OpContext, kind: WorkKind) -> int:
+    async def queued(self, ctx: TenantContext, kind: WorkKind) -> int:
         """The work items of a kind waiting in the org's queue."""
         items = self.storage.get_work_storage()._items  # type: ignore[attr-defined]
         return sum(
@@ -353,7 +353,7 @@ async def test_the_imports_are_listed_newest_first(world: World) -> None:
     assert (await world.managers.tasks.get_import(ctx, first.id)).id == first.id
 
 
-def _task(ctx: OpContext, title: str) -> Task:
+def _task(ctx: TenantContext, title: str) -> Task:
     now = utcnow()
     return Task(
         id=new_id(),

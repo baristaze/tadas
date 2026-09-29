@@ -7,8 +7,8 @@ import pytest
 from api_support import add_member, sign_in_as
 
 from tadas.om.base import PROVENANCE_FIELDS
+from tadas.om.context import Role
 from tadas.om.exceptions import ValidationFailed
-from tadas.om.opcontext import Role
 from tadas.om.tasks.types.filter import OpenTaskCursor
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.container import AppContainer

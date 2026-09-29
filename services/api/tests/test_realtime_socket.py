@@ -23,8 +23,8 @@ from tadas.infra.exceptions import BackendFailed
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import Role, TenantContext
 from tadas.om.exceptions import Unavailable
-from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.app import create_app
@@ -352,7 +352,7 @@ def test_a_revocation_during_the_hello_still_closes_the_socket(
     working = service.head
     revoked: list[bool] = []
 
-    async def head_while_revoked(ctx: OpContext) -> int:
+    async def head_while_revoked(ctx: TenantContext) -> int:
         if not revoked:
             revoked.append(True)
             assert ctx.credential_id is not None

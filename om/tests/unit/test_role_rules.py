@@ -6,7 +6,7 @@ import itertools
 
 import pytest
 
-from tadas.om.opcontext import OperatorPermission, OperatorRole, Role
+from tadas.om.context import OperatorPermission, OperatorRole, Role
 from tadas.om.tenancy.rules import (
     OPERATOR_ROLE_PERMISSIONS,
     PERSON_ROLES,

@@ -10,7 +10,7 @@ import logging
 from typing import ClassVar
 
 from tadas.om.billing import BillingManagerInterface
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.context import Permission, TenantContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem
@@ -25,7 +25,7 @@ class NoopHandlerImpl(WorkHandlerInterface):
 
     REQUIRES: ClassVar[tuple[Permission, ...]] = ()
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         log.info(
             "noop %s for %s in org %s (attempt %d)",
             item.id,
@@ -50,7 +50,7 @@ class SyncSeatsHandlerImpl(WorkHandlerInterface):
         self._tenancy = tenancy
         self._billing = billing
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         seats = await self._tenancy.count_members(ctx)
         async with provider_calls():
             await self._billing.sync_seats(ctx, seats, f"tadas-seats-{item.id}-{seats}")

@@ -13,7 +13,7 @@ from tadas.om.billing.storage.impl.memory import BillingStorageMemoryImpl
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.billing import Entitlements
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.context import Permission, TenantContext
 
 
 class FixedPlan(EntitlementsInterface):
@@ -22,10 +22,10 @@ class FixedPlan(EntitlementsInterface):
     def __init__(self, plan: Plan = Plan.MAX) -> None:
         self.plan = plan
 
-    async def get_entitlements(self, ctx: OpContext) -> Entitlements:
+    async def get_entitlements(self, ctx: TenantContext) -> Entitlements:
         return self.entitlements_of(ctx, None)
 
-    def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
+    def entitlements_of(self, ctx: TenantContext, account: BillingAccount | None) -> Entitlements:
         ctx.require(Permission.READ)
         return Entitlements(plan=self.plan, limits=limits_of(self.plan))
 

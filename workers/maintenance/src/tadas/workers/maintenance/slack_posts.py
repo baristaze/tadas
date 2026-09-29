@@ -26,8 +26,8 @@ from tadas.integrations.slack import (
     SlackRateLimited,
     SlackTokenRevoked,
 )
+from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import NotFound
-from tadas.om.opcontext import OpContext, Permission
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks import TasksManagerInterface
@@ -70,7 +70,7 @@ class SlackPostHandlerImpl(WorkHandlerInterface):
         self._slack = slack
         self._client = client
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         payload = SlackPostPayload.model_validate(item.payload)
         if await self._slack.read_post(ctx, item.idempotency_key) is not None:
             return  # posted by an earlier run of this item

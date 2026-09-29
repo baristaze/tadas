@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import CredentialKind, OperatorRole, Role
+from tadas.om.context import CredentialKind, OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import Invitation

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from tadas.om.base import Identifiable, SoftDeletable, Trackable
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 
 
 class Membership(Identifiable, Trackable, SoftDeletable):

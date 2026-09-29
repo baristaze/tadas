@@ -12,8 +12,8 @@ import httpx
 import pytest
 from api_support import add_member, sign_in_as
 
+from tadas.om.context import Role
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
-from tadas.om.opcontext import Role
 from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.ratelimit import RateLimited
 

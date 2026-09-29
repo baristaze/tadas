@@ -17,7 +17,7 @@ import logging
 from typing import ClassVar
 
 from tadas.om.base import utcnow
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.context import Permission, TenantContext
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
 from tadas.om.work.types.work_item import WorkItem
@@ -32,7 +32,7 @@ class TaskReminderHandlerImpl(WorkHandlerInterface):
     def __init__(self, tasks: TasksManagerInterface) -> None:
         self._tasks = tasks
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         due = await self._tasks.get_due_reminder(ctx, item.target_id)
         if due is None:
             log.info("reminder %s for task %s is stale; nothing sent", item.id, item.target_id)

@@ -4,9 +4,9 @@ from decimal import Decimal
 from uuid import UUID
 
 from tadas.om.base import utcnow
+from tadas.om.context import TenantContext
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media.types.file import File, FilePurpose
-from tadas.om.opcontext import OpContext
 from tadas.om.orchestrations.types.orchestration import Orchestration, TaskImportInput
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.bulk import BulkOutcome
@@ -123,7 +123,7 @@ class TasksServiceImpl(TasksServiceInterface):
 
     async def get_tasks(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         status: TaskStatus,
         scope: TaskScope,
         cursor: str | None,
@@ -148,7 +148,7 @@ class TasksServiceImpl(TasksServiceInterface):
         )
 
     async def get_archived_tasks(
-        self, ctx: OpContext, scope: TaskScope, cursor: str | None, limit: int
+        self, ctx: TenantContext, scope: TaskScope, cursor: str | None, limit: int
     ) -> TaskPageView:
         # The archived list pages as the done list does, by (updated_at, id).
         before = decode_cursor(TaskStatus.DONE, cursor) if cursor else None
@@ -161,13 +161,13 @@ class TasksServiceImpl(TasksServiceInterface):
         )
 
     async def count_tasks(
-        self, ctx: OpContext, status: TaskStatus, scope: TaskScope
+        self, ctx: TenantContext, status: TaskStatus, scope: TaskScope
     ) -> TaskCountView:
         criterion = TaskFilter(scope=scope, user_id=ctx.user_id)
         count = await self._tasks.count_tasks(ctx, criterion, status)
         return TaskCountView(status=status, scope=scope, count=count)
 
-    async def change_tasks(self, ctx: OpContext, body: BulkTasksRequest) -> BulkTasksView:
+    async def change_tasks(self, ctx: TenantContext, body: BulkTasksRequest) -> BulkTasksView:
         if (body.ids is None) == (body.all is None):
             raise ValidationFailed("a bulk change names its tasks in ids or in all, not both")
         if body.ids is not None:
@@ -177,17 +177,17 @@ class TasksServiceImpl(TasksServiceInterface):
         outcome = await self._tasks.change_list(ctx, body.action, criterion, body.all.status)
         return bulk_view(outcome)
 
-    async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView:
+    async def get_task(self, ctx: TenantContext, task_id: UUID) -> TaskView:
         return TaskView.model_validate(await self._tasks.get_task(ctx, task_id))
 
     async def restore_task(
-        self, ctx: OpContext, task_id: UUID, body: RestoreTaskRequest
+        self, ctx: TenantContext, task_id: UUID, body: RestoreTaskRequest
     ) -> TaskView:
         expected = expected_version(body.expected_version)
         return TaskView.model_validate(await self._tasks.restore_task(ctx, task_id, expected))
 
     async def create_import_file(
-        self, ctx: OpContext, body: AddFileRequest, file_id: UUID
+        self, ctx: TenantContext, body: AddFileRequest, file_id: UUID
     ) -> FileView:
         now = utcnow()
         file = File(
@@ -204,21 +204,23 @@ class TasksServiceImpl(TasksServiceInterface):
         return file_view(await self._tasks.create_import_file(ctx, file))
 
     async def start_import(
-        self, ctx: OpContext, body: StartImportRequest, import_id: UUID
+        self, ctx: TenantContext, body: StartImportRequest, import_id: UUID
     ) -> ImportView:
         return import_view(await self._tasks.start_import(ctx, import_id, body.file_id))
 
-    async def get_imports(self, ctx: OpContext, limit: int) -> ImportPageView:
+    async def get_imports(self, ctx: TenantContext, limit: int) -> ImportPageView:
         page = await self._tasks.get_imports(ctx, clamp_limit(limit))
         return ImportPageView(items=[import_view(r) for r in page.items])
 
-    async def get_import(self, ctx: OpContext, import_id: UUID) -> ImportView:
+    async def get_import(self, ctx: TenantContext, import_id: UUID) -> ImportView:
         return import_view(await self._tasks.get_import(ctx, import_id))
 
-    async def resume_import(self, ctx: OpContext, import_id: UUID) -> ImportView:
+    async def resume_import(self, ctx: TenantContext, import_id: UUID) -> ImportView:
         return import_view(await self._tasks.resume_import(ctx, import_id))
 
-    async def create_task(self, ctx: OpContext, body: AddTaskRequest, task_id: UUID) -> TaskView:
+    async def create_task(
+        self, ctx: TenantContext, body: AddTaskRequest, task_id: UUID
+    ) -> TaskView:
         now = utcnow()
         task = Task(
             id=task_id,
@@ -234,7 +236,7 @@ class TasksServiceImpl(TasksServiceInterface):
         return TaskView.model_validate(await self._tasks.create_task(ctx, task))
 
     async def update_task(
-        self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest, if_match: int | None
+        self, ctx: TenantContext, task_id: UUID, body: UpdateTaskRequest, if_match: int | None
     ) -> TaskView:
         expected = expected_version(if_match)
         current = await self._tasks.get_task(ctx, task_id)
@@ -250,17 +252,19 @@ class TasksServiceImpl(TasksServiceInterface):
         changed = Task.model_validate({**current.model_dump(), **changes})
         return TaskView.model_validate(await self._tasks.update_task(ctx, changed, expected))
 
-    async def move_task(self, ctx: OpContext, task_id: UUID, body: MoveTaskRequest) -> TaskView:
+    async def move_task(self, ctx: TenantContext, task_id: UUID, body: MoveTaskRequest) -> TaskView:
         expected = expected_version(body.expected_version)
         moved = await self._tasks.move_task(ctx, task_id, body.after_id, expected)
         return TaskView.model_validate(moved)
 
-    async def delete_task(self, ctx: OpContext, task_id: UUID, if_match: int | None) -> TaskView:
+    async def delete_task(
+        self, ctx: TenantContext, task_id: UUID, if_match: int | None
+    ) -> TaskView:
         expected = expected_version(if_match)
         return TaskView.model_validate(await self._tasks.delete_task(ctx, task_id, expected))
 
     async def attach_file(
-        self, ctx: OpContext, task_id: UUID, body: AddFileRequest, file_id: UUID
+        self, ctx: TenantContext, task_id: UUID, body: AddFileRequest, file_id: UUID
     ) -> FileView:
         now = utcnow()
         file = File(
@@ -278,7 +282,7 @@ class TasksServiceImpl(TasksServiceInterface):
         return file_view(await self._tasks.attach_file(ctx, task_id, file))
 
     async def get_attachments(
-        self, ctx: OpContext, task_id: UUID, cursor: str | None, limit: int
+        self, ctx: TenantContext, task_id: UUID, cursor: str | None, limit: int
     ) -> FilePageView:
         after = decode_file_cursor(cursor) if cursor else None
         page = await self._tasks.get_attachments(ctx, task_id, after, clamp_limit(limit))
@@ -287,5 +291,5 @@ class TasksServiceImpl(TasksServiceInterface):
             next_cursor=encode_file_cursor(page.items[-1].id) if page.has_more else None,
         )
 
-    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> FileView:
+    async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> FileView:
         return file_view(await self._tasks.remove_attachment(ctx, task_id, file_id))

@@ -25,7 +25,7 @@ from websockets.exceptions import ConnectionClosed
 
 from tadas.om.base import new_id
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import IdentityContext, OpContext, Role
+from tadas.om.context import IdentityContext, Role, TenantContext
 from tadas.om.outbox.types.row import outbox_row
 from tadas.om.tenancy.types.org import Org
 from tadas.services.api.app import create_app
@@ -159,7 +159,7 @@ async def headers_of(address: str, email: str, org: Org) -> dict[str, str]:
         return await sign_in_as(client, email, org.id)
 
 
-async def context_of(container: AppContainer, headers: dict[str, str]) -> OpContext:
+async def context_of(container: AppContainer, headers: dict[str, str]) -> TenantContext:
     token = headers["Authorization"].removeprefix("Bearer ")
     return await container.managers.tenancy.authenticate(seed_request(), token)
 
@@ -320,7 +320,7 @@ async def test_the_pong_carries_the_head_heard_on_the_bus(tmp_path: Path) -> Non
         events = server.managers.events
         read = events.get_head
 
-        async def counted(ctx: OpContext) -> int:
+        async def counted(ctx: TenantContext) -> int:
             reads.append(1)
             return await read(ctx)
 

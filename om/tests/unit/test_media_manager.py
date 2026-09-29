@@ -15,12 +15,12 @@ from tadas.infra.buckets import Buckets
 from tadas.infra.exceptions import UploadRefused
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import Role, TenantContext
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
-from tadas.om.opcontext import OpContext, Role
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
@@ -78,7 +78,7 @@ def tasks(
 
 
 def a_file(
-    ctx: OpContext,
+    ctx: TenantContext,
     name: str = "plan.pdf",
     *,
     content_type: str = "application/pdf",
@@ -101,7 +101,7 @@ def a_file(
     )
 
 
-def make_task(ctx: OpContext, title: str = "Ship it") -> Task:
+def make_task(ctx: TenantContext, title: str = "Ship it") -> Task:
     now = utcnow()
     return Task(
         id=new_id(),
@@ -113,7 +113,9 @@ def make_task(ctx: OpContext, title: str = "Ship it") -> Task:
     )
 
 
-async def uploaded(media: MediaManagerImpl, ctx: OpContext, file: File, data: bytes = PDF) -> File:
+async def uploaded(
+    media: MediaManagerImpl, ctx: TenantContext, file: File, data: bytes = PDF
+) -> File:
     """The whole flow over the local store: start, ask for a form (the local
     store cannot presign, so it has no URL), move the bytes, confirm."""
     created = await media.create_file(ctx, file)
@@ -394,7 +396,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
 ) -> None:
     class Failing(MediaManagerImpl):
         async def delete_subject_files(
-            self, ctx: OpContext, purpose: FilePurpose, subject_id: UUID
+            self, ctx: TenantContext, purpose: FilePurpose, subject_id: UUID
         ) -> int:
             raise RuntimeError("storage down")
 
@@ -441,7 +443,7 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
         down = True
 
         async def delete_subject_files(
-            self, ctx: OpContext, purpose: FilePurpose, subject_id: UUID
+            self, ctx: TenantContext, purpose: FilePurpose, subject_id: UUID
         ) -> int:
             if self.down:
                 raise RuntimeError("storage down")

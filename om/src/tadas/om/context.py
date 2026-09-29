@@ -2,7 +2,7 @@
 
 Stages are concrete frozen types, one per amount of evidence a request has
 gathered: `RequestContext` (a request exists), `IdentityContext` (a person
-is verified), `OpContext` (a membership is established), `OperatorContext`
+is verified), `TenantContext` (a membership is established), `OperatorContext`
 (an operator is admitted). A subclass is a refinement, so every stage is
 accepted where a weaker one is asked for. A stage above the request stage
 is produced only by a transition, an operation of the tenancy manager or
@@ -13,7 +13,7 @@ Scopes are structural views (`Protocol`) over what a stage carries:
 `RequestScope`, `TenantScope`, `ActorScope`, `CredentialScope`, and the one
 named composition, `ProvenanceScope`. A function that reads only a few
 fields declares the scope it reads, and its callers keep passing the stage
-they hold. A manager operation is the exception: it takes `OpContext`, which
+they hold. A manager operation is the exception: it takes `TenantContext`, which
 is its scope, and declares nothing narrower. A function that passes the
 context on keeps the stage its callee needs.
 
@@ -36,7 +36,6 @@ __all__ = [
     "CredentialKind",
     "CredentialScope",
     "IdentityContext",
-    "OpContext",
     "OperatorContext",
     "OperatorPermission",
     "OperatorRole",
@@ -46,6 +45,7 @@ __all__ = [
     "RequestScope",
     "Role",
     "SecurityContext",
+    "TenantContext",
     "TenantScope",
     "build_context",
 ]
@@ -174,7 +174,7 @@ class IdentityContext(RequestContext):
     second_factor_enrolled: bool = False
 
 
-class OpContext(RequestContext):
+class TenantContext(RequestContext):
     """A membership is established: the person is a user of one tenant with a
     role. What a tenant operation knows about the person is the user inside
     the tenant, not the identity across tenants, so this is not an
@@ -280,12 +280,12 @@ def build_context(
     credential_kind: CredentialKind,
     teams: tuple[UUID, ...] = (),
     credential_id: UUID = EMPTY_UUID,
-) -> OpContext:
+) -> TenantContext:
     """The one place a tenant context is assembled from its parts: the request
     stage it refines and the security facts. The permissions come from the
     tenancy namespace's role table, which is a pure rule this module does not
     import."""
-    return OpContext(
+    return TenantContext(
         request_id=rctx.request_id,
         app=rctx.app,
         trace_id=rctx.trace_id,

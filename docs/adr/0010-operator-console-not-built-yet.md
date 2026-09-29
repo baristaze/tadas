@@ -17,7 +17,7 @@ Tadas has the server side of this and none of the client side. The
 operator routes exist under `/v1/admin/*` in `services/api`
 (`routers/admin.py`): they take `OperatorContext`, which only
 `admit_operator` produces, and cannot reach a tenant manager because no
-`OpContext` exists on that path. No browser console consumes them, no
+`TenantContext` exists on that path. No browser console consumes them, no
 screen in `apps/portal` is an operator screen, no `apps/admin` package
 exists, and no `admin.` domain exists in `deployment/terraform`; the
 terraform modules serve `api.` and `app.` only. The operator tasks that

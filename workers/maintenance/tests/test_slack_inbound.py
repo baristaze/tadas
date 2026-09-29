@@ -34,7 +34,7 @@ from tadas.integrations.slack import SlackFailed, error_for
 from tadas.integrations.slack.requests import inbound_event
 from tadas.integrations.slack.twin import SlackTwinImpl, bot_user_of
 from tadas.om.base import derived_id, utcnow
-from tadas.om.opcontext import OpContext
+from tadas.om.context import TenantContext
 from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -84,7 +84,7 @@ def answers(twin: SlackTwinImpl) -> list[str]:
     return [text for _, text in twin.responses]
 
 
-async def with_bob(container: WorkerContainer, twin: SlackTwinImpl) -> OpContext:
+async def with_bob(container: WorkerContainer, twin: SlackTwinImpl) -> TenantContext:
     """Bob, a member of acme, in the workspace as `BOB_SLACK`."""
     bob = await member_of(container, "acme", "bob@acme.test")
     twin.add_user(TEAM, BOB_SLACK, "bob@acme.test")
@@ -213,7 +213,7 @@ async def test_connect_in_a_channel_the_app_is_not_in_binds_nothing(tmp_path: Pa
 
 
 async def add_tasks(
-    container: WorkerContainer, ctx: OpContext, count: int, prefix: str = "Task"
+    container: WorkerContainer, ctx: TenantContext, count: int, prefix: str = "Task"
 ) -> list[Task]:
     """`count` open tasks, created oldest first, so the last one created is
     the newest."""
@@ -386,7 +386,7 @@ async def post_what_is_queued(container: WorkerContainer, twin: SlackTwinImpl) -
         await container.managers.work.complete(*claimed)
 
 
-async def status_of(container: WorkerContainer, ctx: OpContext) -> tuple[str, str | None]:
+async def status_of(container: WorkerContainer, ctx: TenantContext) -> tuple[str, str | None]:
     installation = await container.managers.slack.get_installation(ctx)
     assert installation is not None
     return installation.status, installation.broken_reason

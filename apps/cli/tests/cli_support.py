@@ -19,7 +19,7 @@ from tadas.client.client import ApiClient
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 

@@ -11,7 +11,7 @@ from tadas.infra.buckets import Buckets
 from tadas.infra.cache import CacheScope
 from tadas.infra.queues import Queues
 from tadas.infra.topics import Topics
-from tadas.om.opcontext import (
+from tadas.om.context import (
     AppType,
     CredentialKind,
     OperatorPermission,

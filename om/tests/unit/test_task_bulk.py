@@ -17,9 +17,9 @@ from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import Role, TenantContext
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, ValidationFailed
-from tadas.om.opcontext import OpContext, Role
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
@@ -77,7 +77,7 @@ class Stack:
 
         infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
 
-    async def add(self, ctx: OpContext, title: str, assignee_id: UUID | None = None) -> Task:
+    async def add(self, ctx: TenantContext, title: str, assignee_id: UUID | None = None) -> Task:
         now = utcnow()
         task = Task(
             id=new_id(),
@@ -90,25 +90,25 @@ class Stack:
         )
         return await self.manager.create_task(ctx, task)
 
-    async def finish(self, ctx: OpContext, task: Task) -> Task:
+    async def finish(self, ctx: TenantContext, task: Task) -> Task:
         current = await self.manager.get_task(ctx, task.id)
         return await self.manager.update_task(
             ctx, current.model_copy(update={"status": TaskStatus.DONE}), current.version
         )
 
-    async def status_of(self, ctx: OpContext, task: Task) -> TaskStatus:
+    async def status_of(self, ctx: TenantContext, task: Task) -> TaskStatus:
         return (await self.manager.get_task(ctx, task.id)).status
 
-    async def open_titles(self, ctx: OpContext) -> list[str]:
+    async def open_titles(self, ctx: TenantContext) -> list[str]:
         page = await self.manager.get_open_tasks(ctx, team(ctx), None, 200)
         return [t.title for t in page.items]
 
 
-def team(ctx: OpContext) -> TaskFilter:
+def team(ctx: TenantContext) -> TaskFilter:
     return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
 
-def mine(ctx: OpContext) -> TaskFilter:
+def mine(ctx: TenantContext) -> TaskFilter:
     return TaskFilter(scope=TaskScope.MINE, user_id=ctx.user_id)
 
 

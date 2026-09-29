@@ -16,8 +16,8 @@ from worker_support import build_container, request, sign_in
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import TenantContext
 from tadas.om.media.types.file import File, FilePurpose
-from tadas.om.opcontext import OpContext
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
@@ -39,7 +39,7 @@ KINDS = [WorkKind.ORCHESTRATION, WorkKind.WAKE_PARKED]
 STEPS = [WorkKind.ORCHESTRATION]
 
 
-async def start_import(container: WorkerContainer, ctx: OpContext, rows: int) -> Orchestration:
+async def start_import(container: WorkerContainer, ctx: TenantContext, rows: int) -> Orchestration:
     data = ("title\n" + "".join(f"Task {n}\n" for n in range(1, rows + 1))).encode()
     now = utcnow()
     file = await container.managers.tasks.create_import_file(
@@ -111,7 +111,7 @@ class Flaky:
         self.container = container
         self.failing = True
 
-    async def __call__(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def __call__(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         if self.failing:
             raise ConnectionResetError("the database went away")
         return await self.container.managers.tasks.step_import(ctx, record)

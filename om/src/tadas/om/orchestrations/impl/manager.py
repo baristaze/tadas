@@ -7,13 +7,13 @@ from pydantic import ValidationError
 
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import Platform, utcnow
+from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import (
     NotFound,
     PreconditionFailed,
     TenantMismatch,
     ValidationFailed,
 )
-from tadas.om.opcontext import OpContext, Permission
 from tadas.om.orchestrations.manager import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import failed, is_settled, outcome, resumed, stagger
 from tadas.om.orchestrations.steps import step_rows
@@ -58,7 +58,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         self._options = options
         self._clock = clock
 
-    async def start(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+    async def start(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         ctx.require(Permission.WRITE)
         try:
             ORCHESTRATION_INPUTS[record.kind].model_validate(dict(record.input))
@@ -96,7 +96,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         OUTCOMES.labels(subsystem="orchestrations", outcome=outcome(created)).inc()
         return created
 
-    async def get(self, ctx: OpContext, record_id: UUID) -> Orchestration:
+    async def get(self, ctx: TenantContext, record_id: UUID) -> Orchestration:
         ctx.require(Permission.READ)
         record = await self._storage.read_orchestration(ctx.org_id, record_id)
         if record is None:
@@ -104,14 +104,14 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         return record
 
     async def get_recent(
-        self, ctx: OpContext, kind: OrchestrationKind, limit: int
+        self, ctx: TenantContext, kind: OrchestrationKind, limit: int
     ) -> OrchestrationPage:
         ctx.require(Permission.READ)
         limit = max(1, min(limit, self._options.max_limit))
         rows = await self._storage.read_recent(ctx.org_id, kind, limit + 1)
         return OrchestrationPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
-    async def resume(self, ctx: OpContext, record_id: UUID) -> Orchestration:
+    async def resume(self, ctx: TenantContext, record_id: UUID) -> Orchestration:
         ctx.require(Permission.WRITE)
         record = await self.get(ctx, record_id)
         if record.status is OrchestrationStatus.RUNNING:
@@ -120,7 +120,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
             raise ValidationFailed(f"orchestration {record_id} has {record.status.value}")
         return await self._resume(ctx, record, self._clock())
 
-    async def wake(self, ctx: OpContext, reason: ParkReason) -> int:
+    async def wake(self, ctx: TenantContext, reason: ParkReason) -> int:
         ctx.require(Permission.WRITE)
         now = self._clock()
         waiting = await self._storage.read_parked(ctx.org_id, reason, self._options.wake_batch)
@@ -128,7 +128,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
 
     async def fail(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         record: Orchestration,
         reason: FailReason,
         detail: str | None = None,
@@ -155,13 +155,15 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
             self._clock() - self._options.retention, self._options.purge_batch
         )
 
-    async def purge_tenant(self, ctx: OpContext) -> int:
+    async def purge_tenant(self, ctx: TenantContext) -> int:
         ctx.require(Permission.WRITE)
         if not await self._tenancy.tenant_expired(ctx):
             return 0
         return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
-    async def _resume_all(self, ctx: OpContext, records: list[Orchestration], now: datetime) -> int:
+    async def _resume_all(
+        self, ctx: TenantContext, records: list[Orchestration], now: datetime
+    ) -> int:
         """Each record's next step starts a stagger after the one before it,
         so the records one event wakes do not all start at once. A record
         another writer moved meanwhile is left to it."""
@@ -178,7 +180,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
 
     async def _resume(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         record: Orchestration,
         now: datetime,
         not_before: datetime | None = None,
@@ -190,7 +192,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
 
     async def _write(
         self,
-        ctx: OpContext,
+        ctx: TenantContext,
         record: Orchestration,
         expected_version: int,
         not_before: datetime | None = None,
@@ -201,5 +203,5 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         await self._storage.write_orchestration(ctx.org_id, record, expected_version, rows)
         await self._relay_all(ctx, rows)
 
-    async def _relay_all(self, ctx: OpContext, rows: tuple[OutboxRow, ...]) -> None:
+    async def _relay_all(self, ctx: TenantContext, rows: tuple[OutboxRow, ...]) -> None:
         await self._relay.relay_all(ctx.org_id, rows)

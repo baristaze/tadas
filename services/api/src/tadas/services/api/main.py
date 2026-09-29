@@ -20,8 +20,8 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.impl.configured import absent_integrations
 from tadas.om.base import new_id
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.exceptions import Conflict
-from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage import migrate
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer, boot, memory_storage, postgres_storage

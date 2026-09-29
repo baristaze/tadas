@@ -20,8 +20,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import ClassVar
 
 from tadas.infra.observability import OUTCOMES
+from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import NotFound, PreconditionFailed
-from tadas.om.opcontext import OpContext, Permission
 from tadas.om.orchestrations import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import outcome
 from tadas.om.orchestrations.types.orchestration import (
@@ -36,7 +36,7 @@ from tadas.om.work.types.work_item import WakeParkedPayload, WorkItem
 
 log = logging.getLogger(__name__)
 
-StepFn = Callable[[OpContext, Orchestration], Awaitable[Orchestration]]
+StepFn = Callable[[TenantContext, Orchestration], Awaitable[Orchestration]]
 """One step of a kind: `TasksManagerInterface.step_import`, `step_cleanup`."""
 
 
@@ -52,7 +52,7 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
         self._orchestrations = orchestrations
         self._steps = steps
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         try:
             record = await self._orchestrations.get(ctx, item.target_id)
         except NotFound:
@@ -114,7 +114,7 @@ class WakeParkedHandlerImpl(WorkHandlerInterface):
     def __init__(self, orchestrations: OrchestrationsManagerInterface) -> None:
         self._orchestrations = orchestrations
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         reason = WakeParkedPayload.model_validate(dict(item.payload)).reason
         woken = await self._orchestrations.wake(ctx, reason)
         log.info("woke %d records parked for %s in org %s", woken, reason.value, ctx.org_id)

@@ -8,7 +8,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.billing.types.account import BillingAccount
-from tadas.om.opcontext import Role
+from tadas.om.context import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity

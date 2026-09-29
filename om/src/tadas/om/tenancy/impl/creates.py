@@ -25,8 +25,8 @@ from typing import Any
 from uuid import UUID
 
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import OperatorRole, RequestScope, Role
 from tadas.om.exceptions import Conflict, MembershipLimitReached, ValidationFailed
-from tadas.om.opcontext import OperatorRole, RequestScope, Role
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.rules import (

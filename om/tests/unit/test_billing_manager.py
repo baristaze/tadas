@@ -27,6 +27,15 @@ from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
 from tadas.om.billing.types.account import BillingAccount, SubscriptionStatus
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import (
+    AppContext,
+    AppType,
+    OperatorContext,
+    OperatorRole,
+    RequestContext,
+    Role,
+    TenantContext,
+)
 from tadas.om.exceptions import (
     InvalidCredential,
     NotAuthorized,
@@ -34,15 +43,6 @@ from tadas.om.exceptions import (
     PlanLimitReached,
     SubscriptionExists,
     ValidationFailed,
-)
-from tadas.om.opcontext import (
-    AppContext,
-    AppType,
-    OpContext,
-    OperatorContext,
-    OperatorRole,
-    RequestContext,
-    Role,
 )
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
@@ -84,14 +84,14 @@ class World:
             clock=lambda: self.now,
         )
 
-    async def org(self, slug: str) -> OpContext:
+    async def org(self, slug: str) -> TenantContext:
         """A fresh org; the context is its owner's."""
         ctx, _ = await self.managers.tenancy.bootstrap(
             request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
         )
         return ctx
 
-    async def signed_in(self, email: str, org_id: UUID) -> OpContext:
+    async def signed_in(self, email: str, org_id: UUID) -> TenantContext:
         tenancy = self.managers.tenancy
         login = await tenancy.dev_sign_in(request(), email)
         identity = await tenancy.authenticate_login(request(), login.token)
@@ -106,7 +106,7 @@ class World:
         ctx = await self.managers.tenancy.service_context(request(), org_id, new_id())
         return await self.billing.apply_delivery(ctx, verified)
 
-    async def buy(self, ctx: OpContext, plan: Plan, seats: int = 1) -> str:
+    async def buy(self, ctx: TenantContext, plan: Plan, seats: int = 1) -> str:
         """A checkout the customer completes; answers the subscription id."""
         start = await self.billing.start_checkout(ctx, plan, seats, "Acme", SUCCESS, CANCEL)
         assert await self.deliver(self.twin.complete_checkout(start.url))
@@ -120,7 +120,7 @@ def world(tmp_path: Path) -> World:
     return World(tmp_path)
 
 
-def make_task(ctx: OpContext, title: str) -> Task:
+def make_task(ctx: TenantContext, title: str) -> Task:
     now = utcnow()
     return Task(
         id=new_id(),

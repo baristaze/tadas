@@ -28,8 +28,8 @@ from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.context import Role, TenantContext
 from tadas.om.media.types.file import File, FilePurpose
-from tadas.om.opcontext import OpContext, Role
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.handler import WorkParked, WorkRefused
@@ -45,7 +45,9 @@ def identity_of(container: WorkerContainer) -> IdentityProviderTwinImpl:
     return cast(IdentityProviderTwinImpl, container.identity_provider)
 
 
-async def bob_signs_in(container: WorkerContainer, org_id: UUID) -> tuple[OpContext, OpContext]:
+async def bob_signs_in(
+    container: WorkerContainer, org_id: UUID
+) -> tuple[TenantContext, TenantContext]:
     """Bob, a member of the org, signs in through the provider's twin, which
     then knows him by a subject: his session in the org, and in his personal
     org."""
@@ -59,7 +61,7 @@ async def bob_signs_in(container: WorkerContainer, org_id: UUID) -> tuple[OpCont
         identity_provider=container.identity_provider,
         entitlements=container.managers.billing,
     )
-    places: list[OpContext] = []
+    places: list[TenantContext] = []
     login = await signing.sign_in_with_code(
         request(), identity_of(container).issue_code("bob@example.test")
     )
@@ -73,7 +75,7 @@ async def bob_signs_in(container: WorkerContainer, org_id: UUID) -> tuple[OpCont
     return places[0], places[1]
 
 
-async def attach(container: WorkerContainer, ctx: OpContext, task_id: UUID) -> File:
+async def attach(container: WorkerContainer, ctx: TenantContext, task_id: UUID) -> File:
     data = b"\x89PNG\r\n\x1a\n" + b"0" * 64
     now = utcnow()
     file = await container.managers.tasks.attach_file(
@@ -203,7 +205,7 @@ async def test_a_provider_that_is_down_parks_the_work_until_it_answers(tmp_path:
 
 async def claimed_deletion(
     tmp_path: Path,
-) -> tuple[WorkerContainer, OpContext, OpContext, WorkItem]:
+) -> tuple[WorkerContainer, TenantContext, TenantContext, WorkItem]:
     """Bob deleted his account; the worker holds its DELETE_ACCOUNT item."""
     container, _ = build(tmp_path)
     ann = await owner_of(container, "acme")

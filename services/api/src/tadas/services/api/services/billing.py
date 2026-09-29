@@ -4,7 +4,7 @@ pages, cancellation, and the processor's inbound deliveries."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from tadas.om.opcontext import OpContext, RequestContext
+from tadas.om.context import RequestContext, TenantContext
 from tadas.services.api.types.billing import (
     BillingView,
     DeliveryReceivedView,
@@ -26,19 +26,21 @@ class SignedDelivery:
 
 class BillingServiceInterface(ABC):
     @abstractmethod
-    async def get_billing(self, ctx: OpContext) -> BillingView: ...
+    async def get_billing(self, ctx: TenantContext) -> BillingView: ...
 
     @abstractmethod
-    async def start_checkout(self, ctx: OpContext, body: StartCheckoutRequest) -> RedirectView: ...
+    async def start_checkout(
+        self, ctx: TenantContext, body: StartCheckoutRequest
+    ) -> RedirectView: ...
 
     @abstractmethod
-    async def open_portal(self, ctx: OpContext, body: OpenPortalRequest) -> RedirectView: ...
+    async def open_portal(self, ctx: TenantContext, body: OpenPortalRequest) -> RedirectView: ...
 
     @abstractmethod
-    async def cancel(self, ctx: OpContext) -> BillingView: ...
+    async def cancel(self, ctx: TenantContext) -> BillingView: ...
 
     @abstractmethod
-    async def resume(self, ctx: OpContext) -> BillingView: ...
+    async def resume(self, ctx: TenantContext) -> BillingView: ...
 
 
 class WebhooksServiceInterface(ABC):

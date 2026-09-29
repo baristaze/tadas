@@ -21,8 +21,8 @@ from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.slack import SlackTokenRevoked
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import AppContext, AppType, RequestContext, Role, TenantContext
 from tadas.om.exceptions import NotAuthorized, NotFound, SlackWorkspaceTaken
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext, Role
 from tadas.om.root import Managers, build_managers
 from tadas.om.slack.impl.manager import tokens_from, tokens_json
 from tadas.om.slack.types.installation import SlackInstallationStatus
@@ -49,13 +49,13 @@ class World:
             integrations=IntegrationsOverImpl(IdentityProviderAbsentImpl(), slack=self.twin),
         )
 
-    async def org(self, slug: str) -> OpContext:
+    async def org(self, slug: str) -> TenantContext:
         ctx, _ = await self.managers.tenancy.bootstrap(
             request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
         )
         return ctx
 
-    async def member(self, slug: str, email: str, role: Role = Role.MEMBER) -> OpContext:
+    async def member(self, slug: str, email: str, role: Role = Role.MEMBER) -> TenantContext:
         tenancy = self.managers.tenancy
         await tenancy.add_member(request(), slug, email, "Member", role)
         login = await tenancy.dev_sign_in(request(), email)
@@ -65,7 +65,7 @@ class World:
         session = await tenancy.exchange_login(identity, org)
         return await tenancy.authenticate(request(), session.token)
 
-    async def install(self, ctx: OpContext, team: str = "T0ACME") -> str:
+    async def install(self, ctx: TenantContext, team: str = "T0ACME") -> str:
         """An owner starts the install, and Slack sends the browser back with
         a code for `team`: answers the state it carried."""
         start = await self.managers.slack.start_install(ctx, REDIRECT)

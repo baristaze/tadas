@@ -28,8 +28,8 @@ from starlette.requests import HTTPConnection
 from tadas.infra.cache import CacheScope
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import EMPTY_UUID, Platform
+from tadas.om.context import CredentialScope, IdentityContext, TenantContext
 from tadas.om.exceptions import NotAuthenticated, PlatformException
-from tadas.om.opcontext import CredentialScope, IdentityContext, OpContext
 from tadas.services.api.gateway.admission import READ_METHODS
 from tadas.services.api.gateway.resolve import container_of
 
@@ -115,12 +115,12 @@ async def count(request: Request, route: str, org_id: UUID, subject: str) -> Non
     OUTCOMES.labels(subsystem="rate_limit", outcome="allowed").inc()
 
 
-async def spend_credential(request: Request, ctx: OpContext | IdentityContext) -> None:
+async def spend_credential(request: Request, ctx: TenantContext | IdentityContext) -> None:
     """The credential's own budget: reads (GET, HEAD) apart from writes, the
     split admission uses. A session or key counts under its tenant; a sign-in
     or operator credential, which has none, under the system scope."""
     route = "reads" if request.method in READ_METHODS else "writes"
-    org_id = ctx.org_id if isinstance(ctx, OpContext) else EMPTY_UUID
+    org_id = ctx.org_id if isinstance(ctx, TenantContext) else EMPTY_UUID
     await count(request, route, org_id, credential_of(ctx))
 
 

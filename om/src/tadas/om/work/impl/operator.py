@@ -4,10 +4,10 @@ from uuid import UUID
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import new_id, utcnow
+from tadas.om.context import OperatorContext, OperatorPermission
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import NotFound, WorkNotFailed
-from tadas.om.opcontext import OperatorContext, OperatorPermission
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.work.manager import WorkOperatorManagerInterface
 from tadas.om.work.storage import WorkStorageInterface
@@ -22,7 +22,7 @@ REQUEUED_KIND = "work.item.requeued"
 class WorkOperatorManagerImpl(WorkOperatorManagerInterface):
     """Writes one named org's work item through the work storage, under the
     tenant the operator named, and reads the org through the tenancy
-    storage, as the other operator planes do: no `OpContext` exists on this
+    storage, as the other operator planes do: no `TenantContext` exists on this
     plane, so no tenant manager is asked."""
 
     def __init__(

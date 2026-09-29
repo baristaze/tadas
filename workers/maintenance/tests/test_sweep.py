@@ -28,7 +28,7 @@ from tadas.infra.observability import (
     JsonFormatter,
 )
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
-from tadas.om.opcontext import CredentialKind, OpContext, RequestContext, Role, build_context
+from tadas.om.context import CredentialKind, RequestContext, Role, TenantContext, build_context
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.tasks.rules import RANK_SCALE_BOUND
@@ -56,7 +56,7 @@ class Tenants(WorkManagerInterface):
     and a record of the calls in order and of the tenants it was asked to
     mark purged. A partial double."""
 
-    def __init__(self, contexts: Sequence[OpContext], requeued: Sequence[int] = (0,)) -> None:
+    def __init__(self, contexts: Sequence[TenantContext], requeued: Sequence[int] = (0,)) -> None:
         self.contexts = list(contexts)
         self.marked: list[UUID] = []
         self.requeued = list(requeued)
@@ -65,7 +65,7 @@ class Tenants(WorkManagerInterface):
         self.failed = 0
         self.windows: list[timedelta] = []
 
-    async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
+    async def maintenance_contexts(self, rctx: RequestContext) -> list[TenantContext]:
         self.calls.append("contexts")
         return list(self.contexts)
 
@@ -85,7 +85,7 @@ class Tenants(WorkManagerInterface):
         self.windows.append(window)
         return self.failed
 
-    async def mark_purged(self, ctx: OpContext) -> bool:
+    async def mark_purged(self, ctx: TenantContext) -> bool:
         self.marked.append(ctx.org_id)
         return False
 
@@ -93,11 +93,11 @@ class Tenants(WorkManagerInterface):
 Tenants.__abstractmethods__ = frozenset()
 
 
-def team_of(ctx: OpContext) -> TaskFilter:
+def team_of(ctx: TenantContext) -> TaskFilter:
     return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
 
-def listed(contexts: Sequence[OpContext], requeued: Sequence[int] = (0,)) -> Tenants:
+def listed(contexts: Sequence[TenantContext], requeued: Sequence[int] = (0,)) -> Tenants:
     return Tenants(contexts, requeued)  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
@@ -139,7 +139,7 @@ def quiet_outbox(relayed: Sequence[int] = (0,)) -> Outbox:
     return Outbox(relayed)  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
-def service_contexts(count: int) -> list[OpContext]:
+def service_contexts(count: int) -> list[TenantContext]:
     """The system scope and `count` tenants, as the sweep receives them."""
     rctx = request()
     return [
@@ -183,12 +183,12 @@ def sweeping(
 
 def recording(
     calls: list[tuple[str, UUID]], name: str, counts: Sequence[int] = (0,)
-) -> Callable[[OpContext], Awaitable[int]]:
+) -> Callable[[TenantContext], Awaitable[int]]:
     """A purge step that records each call and returns `counts` in turn, the
     last of them for ever after."""
     left = list(counts)
 
-    async def step(ctx: OpContext) -> int:
+    async def step(ctx: TenantContext) -> int:
         calls.append((name, ctx.org_id))
         return left.pop(0) if len(left) > 1 else left[0]
 
@@ -281,7 +281,7 @@ async def test_only_a_tenant_with_nothing_left_is_offered_to_be_marked_purged(
     work = listed([busy, idle, failing])
     calls: list[tuple[str, UUID]] = []
 
-    async def step(ctx: OpContext) -> int:
+    async def step(ctx: TenantContext) -> int:
         calls.append(("step", ctx.org_id))
         if ctx.org_id == failing.org_id:
             raise RuntimeError("the database is down")
@@ -536,7 +536,7 @@ async def test_the_chores_run_in_the_tenants_found_due_and_in_no_other(
     due = Due([tenants[1], tenants[3]])
     calls: list[tuple[str, UUID]] = []
 
-    async def failing(ctx: OpContext) -> int:
+    async def failing(ctx: TenantContext) -> int:
         calls.append(("failing", ctx.org_id))
         raise RuntimeError("the database is down")
 
@@ -764,7 +764,7 @@ async def test_each_purge_across_tenants_runs_once_a_pass_after_the_tenants(
         stages.add(rctx.request_id)
         return 0
 
-    async def tenant(ctx: OpContext) -> int:
+    async def tenant(ctx: TenantContext) -> int:
         calls.append("tenant")
         stages.add(ctx.request_id)
         return 0
@@ -950,7 +950,7 @@ async def test_a_tenant_with_no_chore_due_costs_the_pass_no_read_of_its_tasks(
     container = build_container(tmp_path)
     tasks = container.managers.tasks
     storage = container.storage.get_tasks_storage()
-    owners: list[OpContext] = []
+    owners: list[TenantContext] = []
     for slug in ("acme", "beta", "gamma"):
         ctx, _ = await container.managers.tenancy.bootstrap(
             request(), slug.title(), slug, f"ann@{slug}.test", "Ann"

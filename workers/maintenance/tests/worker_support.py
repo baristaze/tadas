@@ -12,7 +12,7 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
+from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
@@ -30,7 +30,7 @@ class RecordingHandler(WorkHandlerInterface):
         self._inner = NoopHandlerImpl()
         self.handled: list[WorkItem] = []
 
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         await self._inner.handle(ctx, item)
         self.handled.append(item)
 
@@ -46,7 +46,7 @@ def request() -> RequestContext:
     )
 
 
-async def sign_in(container: WorkerContainer, slug: str = "acme") -> OpContext:
+async def sign_in(container: WorkerContainer, slug: str = "acme") -> TenantContext:
     """A session in a seeded org, `acme` unless named, whose owner is
     `ann@<slug>.test`. The worker signs nobody in, so the sign-in runs
     through a manager over the same storage with the local sign-in on."""
@@ -68,7 +68,7 @@ async def sign_in(container: WorkerContainer, slug: str = "acme") -> OpContext:
 
 
 def make_item(
-    ctx: OpContext, *, target_id: UUID | None = None, traceparent: str | None = None
+    ctx: TenantContext, *, target_id: UUID | None = None, traceparent: str | None = None
 ) -> WorkItem:
     """The item a caller enqueues under its own context: the request that caused
     the work and its trace context are the caller's, and the enqueue leaves

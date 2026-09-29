@@ -14,7 +14,7 @@ from unit.test_task_import import World
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext
+from tadas.om.context import TenantContext
 from tadas.om.storage.impl.pg_base import set_scope
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.roles import DatabaseRole
@@ -39,11 +39,11 @@ async def storage(
     await root.close()
 
 
-def team(ctx: OpContext) -> TaskFilter:
+def team(ctx: TenantContext) -> TaskFilter:
     return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
 
-async def add(world: World, ctx: OpContext, title: str) -> Task:
+async def add(world: World, ctx: TenantContext, title: str) -> Task:
     now = utcnow()
     task = Task(
         id=new_id(),
@@ -56,7 +56,7 @@ async def add(world: World, ctx: OpContext, title: str) -> Task:
     return await world.managers.tasks.create_task(ctx, task)
 
 
-async def versions(world: World, ctx: OpContext) -> dict[str, int]:
+async def versions(world: World, ctx: TenantContext) -> dict[str, int]:
     tasks = world.managers.tasks
     return {
         task.title: task.version
@@ -64,7 +64,7 @@ async def versions(world: World, ctx: OpContext) -> dict[str, int]:
     }
 
 
-async def split_one_gap(world: World, ctx: OpContext, moves: int) -> None:
+async def split_one_gap(world: World, ctx: TenantContext, moves: int) -> None:
     """a and c take turns right after b: every move halves one gap."""
     tasks = world.managers.tasks
     c, a, b = [await add(world, ctx, title) for title in ("c", "a", "b")]

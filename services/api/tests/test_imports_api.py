@@ -13,7 +13,7 @@ import pytest
 from api_support import seed_request, sign_in
 
 from tadas.om.base import utcnow
-from tadas.om.opcontext import OpContext
+from tadas.om.context import TenantContext
 from tadas.om.orchestrations.types.orchestration import OrchestrationStatus
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.container import AppContainer
@@ -56,7 +56,7 @@ async def free_owner(client: httpx.AsyncClient, container: AppContainer) -> dict
     return await sign_in(client, container, plan=None)
 
 
-async def worker_context(container: AppContainer, headers: dict[str, str]) -> OpContext:
+async def worker_context(container: AppContainer, headers: dict[str, str]) -> TenantContext:
     """The context the worker's claim builds for the person who asked."""
     ctx = await container.managers.tenancy.authenticate(
         seed_request(), headers["Authorization"].removeprefix("Bearer ")

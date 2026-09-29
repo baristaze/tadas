@@ -15,7 +15,7 @@ from worker_support import fast_options
 
 from tadas.infra.cache import CacheScope
 from tadas.om.base import utcnow
-from tadas.om.opcontext import OpContext
+from tadas.om.context import TenantContext
 from tadas.om.tasks.rules import earliest_reminder_time
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
@@ -35,7 +35,7 @@ def yesterday() -> date:
     return today() - timedelta(days=1)
 
 
-async def reminded_kinds(container: WorkerContainer, ctx: OpContext) -> list[str]:
+async def reminded_kinds(container: WorkerContainer, ctx: TenantContext) -> list[str]:
     events = await container.managers.events.get_events(ctx, 0, 100)
     return [event.kind for event in events if event.kind == "tasks.task.reminded"]
 
@@ -224,7 +224,7 @@ async def test_a_reminder_asks_for_the_slack_post_when_a_channel_is_bound(
 
 
 class Parking(WorkHandlerInterface):
-    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+    async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         raise WorkParked("slack said wait", timedelta(minutes=3))
 
 

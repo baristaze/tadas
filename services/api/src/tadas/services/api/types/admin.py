@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.context import OperatorRole, Role
 from tadas.om.tenancy.rules import MAX_OPERATOR_TOKEN_TTL
 from tadas.om.work.types.work_item import WorkKind, WorkStatus
 from tadas.services.api.types.common import RequestBody, View
