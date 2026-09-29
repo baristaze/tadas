@@ -5,10 +5,9 @@ This project follows the Software Design and Architecture Guidelines:
 (pinned at release `v0.37.0`; the pin moves with the releases this
 project adopts, one pull request per release).
 
-The guideline is the source of truth for how this system is shaped.
-`docs/architecture.md` describes what is implemented; `docs/adr/`
-records the decisions that constrain future work, including every
-deliberate deviation from the guideline.
+The guideline is the source of truth for how this system is shaped, and
+the tree is the system as built. `docs/adr/` records the decisions that
+constrain future work, every deliberate deviation among them.
 
 ## Substitutions
 
