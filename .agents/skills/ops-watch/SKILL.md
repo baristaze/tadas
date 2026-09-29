@@ -161,7 +161,9 @@ step 2 come before the first batch, and are not counted in it.
    between them, no minute is read twice, and each is read once it is
    complete. A batch whose rounded start and end are the same minute
    (a 30-second batch can be) makes no metric read; the next batch
-   reads that minute. The `--period` passed to `get-metric-data` is a whole
+   reads that minute. Such a batch writes "metrics read in the next
+   batch" in place of its numbers, never a zero, which would read as
+   traffic stopping. The `--period` passed to `get-metric-data` is a whole
    minute, 60 seconds, whatever the batch interval: CloudWatch refuses
    a period that is not a multiple of 60 for a regular-resolution
    metric, and a longer one would reach past the batch's rounded end
@@ -220,7 +222,7 @@ step 2 come before the first batch, and are not counted in it.
 
 ## Batches
 
-- <start of batch>: <requests> requests, <5xx> 5xx, p95 <ms>, <failures> worker failures; <lines> lines shown, <dropped> over the cap (<by level>)
+- <start of batch>: <<requests> requests, <5xx> 5xx, p95 <ms>, <failures> worker failures | metrics read in the next batch>; <lines> lines shown, <dropped> over the cap (<by level>)
   - <line>
   - <line>
 

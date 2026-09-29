@@ -30,8 +30,9 @@ A run follows at most 5 request ids, one pass each: the first five
 given, in the order given, or without `--request-id`, the five newest
 failing requests tied to the symptom (the Y of "tenant X sees Y"),
 never the newest failures of any kind. The symptom is the one the
-prompt names or the investigation's report gives. When neither names
-one, ask for it before the first step, as for `--env`. A pass
+prompt names or the investigation's report gives. A run without
+`--request-id` whose symptom neither names asks for it before the
+first step, as for `--env`; a run given ids needs none. A pass
 that finds no cause reports "not found" for its id. After the fifth
 pass the skill stops and writes the report. It lists every id past
 the fifth as not followed, for a second run to take.
