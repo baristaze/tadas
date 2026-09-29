@@ -1691,7 +1691,7 @@ alone, and neither key may touch what the other's work does not need
   the registry, the state bucket, the two zones, the company site's
   certificate, the deploy roles, the
   investigate role, and the budget (see
-  [Operations](#operations-ops-claudeskills)). Staging's replicates
+  [Operations](#operations-ops-agentsskills)). Staging's replicates
   every image and static build into production's account, so
   production never reads staging's. The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
@@ -1816,7 +1816,7 @@ alone, and neither key may touch what the other's work does not need
   module called a second time, with no API and no config: its policy
   names its own origin alone, and a missing path gets its `404.html`.
 
-## Operations (`ops/`, `.claude/skills/`)
+## Operations (`ops/`, `.agents/skills/`)
 
 People steer, agents maintain. Every operational task is a skill a
 person runs with an agent, and the boundary is the credential the
@@ -1857,7 +1857,8 @@ page; this section says what exists.
   `local` the Prometheus and Jaeger URLs of the `devx` profile. Every
   skill verifies the profile it holds with `sts get-caller-identity`
   before it reads, and refuses a wider one.
-- **Skills.** The nine of "Operational Skills", under `.claude/skills/`:
+- **Skills.** The nine of "Operational Skills", under `.agents/skills/`
+  (`.claude/skills` is a link to it, for Claude Code):
   `ops-investigate`, `ops-watch`, `ops-root-cause`, `ops-infra-as-code`,
   `ops-cloud-deployment-create`, `ops-cloud-deployment-nuke`,
   `ops-simulate-traffic`, `stress-test-create-or-update`,
@@ -1870,7 +1871,7 @@ page; this section says what exists.
   create and nuke take `staging` or `production` only, and
   `stress-test-create-or-update` writes a file and touches none. The
   eight that hold a credential read
-  `.claude/skills/_shared/ops-preamble.md` first, where the profiles,
+  `.agents/skills/_shared/ops-preamble.md` first, where the profiles,
   the account check, and the env file's fields are written once; the
   rules that stop a secret leaking stay inline in each of them, and
   `infra/tests/test_ops_skills.py` holds both halves.

@@ -208,7 +208,12 @@ change`.
 
 ## The skills
 
-Fourteen, under `.claude/skills/`, in two kinds.
+Fourteen, under `.agents/skills/`, in two kinds. That is the folder
+every agent that reads the Agent Skills standard shares;
+`.claude/skills` links to it for Claude Code. A skill names its own
+files by a path from its folder, and the two that a person starts by
+name carry `agents/openai.yaml` beside `disable-model-invocation`, so
+Codex never starts them on its own either.
 
 The operational skills act on an environment. Every one that reads or
 drives one takes `--env local|staging|production` (create and nuke
@@ -217,7 +222,7 @@ every one names the role it needs, what it reads, what it never does,
 and its report.
 
 The eight that hold a credential open by naming
-`.claude/skills/_shared/ops-preamble.md`, which they read first: the
+`.agents/skills/_shared/ops-preamble.md`, which they read first: the
 profiles, the account check, the env file's fields, and the way back
 when a token expires, written once. What a skill must never miss stays
 in the skill itself, one line each, because a referenced file is a
