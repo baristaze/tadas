@@ -4,6 +4,38 @@ Each release has an entry here, the newest first. An entry lists what
 changed since the previous tag. A project that clones Tadas at a release
 checks out its tag, such as `git clone --branch v0.7.0`.
 
+## 0.8.0 (2026-09-29)
+
+Tadas moves to the shape of the guideline at v0.39.0. The portal, the
+command line, and the API work as they did at 0.7.0: no route, wire
+type, screen, or migration changes.
+
+- **The guideline pin moves to v0.39.0,** by way of v0.38.0.
+  `make arch-check` passes at v0.39.0, and ADRs 0080 and 0081 record
+  where Tadas stands on each rule the two releases change. (#173, #174)
+- **A tenant operation's context is `TenantContext`.** `OpContext` is
+  renamed, and its module `tadas.om.opcontext` is `tadas.om.context`.
+  Code built on Tadas imports the new names. (#174)
+- **The TypeScript client is a package of its own.** `@tadas/client`,
+  in `clients/typescript/`, holds the one transport, the generated
+  types, and the OpenAPI document, which was `apps/portal/openapi.json`.
+  The portal imports it alone, and a new browser app imports it too.
+  (#171)
+- **The ops skills live in `.agents/skills/`,** where any agent that
+  reads the Agent Skills standard finds them, and `.claude/skills`
+  links there. Every loop a skill runs has a count: a watch's batches,
+  a query's polls, the request ids a root cause follows, and the hops
+  of Next. (#170, #173)
+- **The docs tell the story for two readers.** `docs/architecture.md`
+  is gone: the guideline holds the shape, the tree is the system as
+  built, and `docs/adr/` records each decision. The README and
+  `llms.txt` take the scaffold's shape and keep the product story.
+  (#172)
+- **The deviations table lists live deviations only.** Each row in
+  `specs/architecture.md` names its rule, the section the rule cites,
+  and that section's tag at v0.39.0. There are 14. (#175)
+- **CI** runs `astral-sh/setup-uv` 10.2.0. (#169)
+
 ## 0.7.0 (2026-09-27)
 
 The first tagged release. Tadas is a multi-tenant to-do application for
