@@ -5,12 +5,14 @@ half ended with the first deployment, staging's, on 2026-09-22. The last
 rename in one migration, `202609202100_operator_role`, came before it,
 and a column has moved in two releases since
 ([ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md),
-[ADR 0050](0050-a-move-writes-one-row.md)). The wire half is still open.
-Since that day a field has left `/v1` one release after it was marked
-deprecated, where NET-23 asks for `/v2`: a task write's `version`
-([ADR 0009](0009-tasks-carry-a-version.md)), then `remind_at`
-([ADR 0034](0034-a-task-is-due-on-a-date.md)), and `position` next
-([ADR 0050](0050-a-move-writes-one-row.md)).
+[ADR 0050](0050-a-move-writes-one-row.md)). The wire half stays open
+while Tadas has no customer: the API keeps `/v1`, and a field may leave
+it one release after it is marked deprecated, where NET-23 asks for
+`/v2`. A task write's `version` ([ADR 0009](0009-tasks-carry-a-version.md))
+and `remind_at` ([ADR 0034](0034-a-task-is-due-on-a-date.md)) left that
+way, and `position` goes next ([ADR 0050](0050-a-move-writes-one-row.md)).
+The first customer, or the first client outside this repository, ends
+it: from then on NET-23 holds, and a removal or a rename is `/v2`.
 
 ## Context
 
