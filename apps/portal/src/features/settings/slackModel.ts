@@ -1,7 +1,7 @@
 // Pure: what the Slack section of the settings screen says, and who may act
 // on it. The org installs Tadas into one Slack workspace, from here; the
 // channel it posts to is chosen in Slack, with `/tadas connect`.
-import type { MeView, SlackStatusView } from "../../api";
+import type { MeView, SlackStatusView } from "@tadas/client";
 
 export const INVITE_COMMAND = "/invite @tadas";
 export const CONNECT_COMMAND = "/tadas connect";

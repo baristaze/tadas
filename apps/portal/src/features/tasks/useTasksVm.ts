@@ -1,5 +1,5 @@
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import type { TaskPageView, TaskScope, TaskView } from "../../api";
+import type { TaskPageView, TaskScope, TaskView } from "@tadas/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keys } from "../../queries/keys";
 import { placeTask, refreshTaskLists, removeTask } from "../../queries/taskCache";

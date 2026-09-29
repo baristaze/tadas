@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FileView, IssuedDownloadView, IssuedUploadView } from "../../api";
+import type { FileView, IssuedDownloadView, IssuedUploadView } from "@tadas/client";
 import { downloadAttachment, StoreRefused, uploadAttachment, type DownloadEffects, type UploadEffects } from "./transfer";
 
 const FILE: FileView = {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { MeView } from "../../api";
+import type { MeView } from "@tadas/client";
 import { adoptSession } from "../../app/adoptSession";
 import { forgetSession, holdSession } from "../../app/forgetSession";
 import { useDeleteOrg } from "../../queries/tenancy";

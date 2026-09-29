@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskView } from "../../api";
+import type { TaskView } from "@tadas/client";
 import { LONG_PRESS_MS, TaskItem } from "./TaskItem";
 import { taskRow } from "./tasksModel";
 
