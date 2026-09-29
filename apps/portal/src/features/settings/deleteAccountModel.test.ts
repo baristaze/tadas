@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError } from "../../api";
+import { ApiError } from "@tadas/client";
 import { confirms, GONE_LINE, listed, ownedAlone, refusalText, strandedHere } from "./deleteAccountModel";
 
 const acme = { id: "o1", name: "Acme", slug: "acme" };

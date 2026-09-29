@@ -7,7 +7,7 @@
 // the replay after the reconnect has read it back from the stream: one
 // notice each, by title, up to MISSED_REMINDERS_NAMED of them, and past that
 // one notice that counts them, which reads nothing.
-import type { TaskView } from "../api";
+import type { TaskView } from "@tadas/client";
 
 export interface ReminderEffects {
   /** Reads the task the push names. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BulkTasksView } from "../../api";
+import type { BulkTasksView } from "@tadas/client";
 import { actionLabel, confirmTitle, doneMessage, requestFor, requestForAll, undoRequest } from "./bulkModel";
 import { NOTHING, selectAll, toggle } from "./selectionModel";
 

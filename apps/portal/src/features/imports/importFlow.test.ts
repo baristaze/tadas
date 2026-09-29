@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FileView, ImportView, IssuedUploadView } from "../../api";
+import type { FileView, ImportView, IssuedUploadView } from "@tadas/client";
 import { StoreRefused } from "../attachments/transfer";
 import { CSV_TYPE, startImport, type ImportEffects } from "./importFlow";
 

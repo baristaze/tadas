@@ -1,5 +1,5 @@
 // The plans on offer, one row each, with a choice on the ones a person may take.
-import type { Plan, PlanOfferView } from "../../api";
+import type { Plan, PlanOfferView } from "@tadas/client";
 import { Button, Pill } from "../../design/kit";
 import { limitLines, planName, priceText } from "./billingModel";
 

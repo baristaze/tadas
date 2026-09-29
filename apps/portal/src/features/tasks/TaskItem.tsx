@@ -1,4 +1,4 @@
-import type { TaskView } from "../../api";
+import type { TaskView } from "@tadas/client";
 import { useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { Button, LinkButton, Pill, Select, TextArea, TextField } from "../../design/kit";
 import { tokens } from "../../design/tokens";

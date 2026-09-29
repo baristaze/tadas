@@ -3,7 +3,7 @@
 // the top of the done list.
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { TaskScope, TaskView } from "../../api";
+import type { TaskScope, TaskView } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { Button, Card, LinkButton, Muted } from "../../design/kit";
 import { tokens } from "../../design/tokens";

@@ -5,7 +5,7 @@ recorders, a service that calls this one) goes through it, and nothing
 else in Python calls `/v1/*`.
 
 - `schema.py` is generated from the committed OpenAPI document
-  (`apps/portal/openapi.json`, one document for both type sets) by
+  (`clients/typescript/openapi.json`, one document for both type sets) by
   `make openapi`; never hand-edited, excluded from lint, checked current
   in CI.
 - `types.py` is the facade consumers import: the views and enums by name.
