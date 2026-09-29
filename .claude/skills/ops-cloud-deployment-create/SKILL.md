@@ -216,7 +216,9 @@ the names of what was written and never a value.
    environment's account. A dry run skips this step: the profile does
    not exist yet.
 
-5. Write the report.
+5. Write the report. Its Next is the person's to run, never the
+   session's: the next run of Order acts on another account, and
+   `grant-operator.yml` grants an operator.
 
 ## What it never does
 
