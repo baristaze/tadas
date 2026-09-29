@@ -1,6 +1,6 @@
 // Pure: how a file is shown, and what type a file the browser could not name
 // is sent as. Values in, values out; the server decides what it accepts.
-import type { FileView } from "../../api";
+import type { FileView } from "@tadas/client";
 
 /** Bytes as a person reads them: B under a kilobyte, then KB and MB. */
 export function humanSize(bytes: number): string {

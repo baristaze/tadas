@@ -106,7 +106,8 @@ hold the procedures a person follows by hand.
 - [workers/maintenance/](workers/maintenance/README.md): the work queue's worker and the sweep.
 - `apps/`: the [portal](apps/portal/README.md), the [CLI](apps/cli/README.md), and the
   [company site](apps/site/README.md).
-- `clients/`: [python/](clients/python/README.md), the one Python client.
+- `clients/`: [typescript/](clients/typescript/README.md), the one client every browser
+  app imports, and [python/](clients/python/README.md), the one Python client.
 - [deployment/](deployment/README.md): compose, images, and Terraform.
 - [ops/](ops/README.md): the operators' package, skills, and stress scenarios.
 - `docs/adr/`: the decisions; [specs/architecture.md](specs/architecture.md) pins the

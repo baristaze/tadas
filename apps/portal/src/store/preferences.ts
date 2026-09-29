@@ -3,7 +3,7 @@
 // which sections of the task list they folded, per org. Local storage is the
 // right place for a preference; the session token is the one thing that
 // never goes there.
-import type { TaskScope } from "../api";
+import type { TaskScope } from "@tadas/client";
 import { parseTheme, type ThemePreference } from "../app/themeModel";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";

@@ -1,7 +1,7 @@
 // The one upgrade dialog: what a refusal met, the plans, and a checkout for
 // the plan that lifts it. Someone who cannot change the plan is told whom to ask.
 import { useState } from "react";
-import type { Plan } from "../../api";
+import type { Plan } from "@tadas/client";
 import { Banner, Button, ErrorText, Muted } from "../../design/kit";
 import { useBilling, useOpenBillingPortal, useStartCheckout } from "../../queries/billing";
 import { useUpgradeStore } from "../../store/upgrade";

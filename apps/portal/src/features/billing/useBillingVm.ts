@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import type { Plan } from "../../api";
+import type { Plan } from "@tadas/client";
 import {
   useBilling,
   useCancelPlan,

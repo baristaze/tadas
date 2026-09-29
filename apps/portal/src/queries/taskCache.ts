@@ -8,7 +8,7 @@
 // An older version never overwrites a newer one, even after the task left
 // the lists; a read issued before a removal never brings the task back.
 import type { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskScope, TaskStatus, TaskView } from "../api";
+import type { MeView, TaskPageView, TaskScope, TaskStatus, TaskView } from "@tadas/client";
 import { keys } from "./keys";
 import {
   DONE_PAGE_SIZE,

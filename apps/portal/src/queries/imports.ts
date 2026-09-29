@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { AddFileRequest, FileView, ImportPageView, ImportView, StartImportRequest } from "../api";
+import type { AddFileRequest, FileView, ImportPageView, ImportView, StartImportRequest } from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 

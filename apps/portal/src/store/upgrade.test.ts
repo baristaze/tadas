@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { ApiError } from "../api";
+import { ApiError } from "@tadas/client";
 import { queryClient } from "../app/queryClient";
 import { isPlanLimit, offerUpgrade, planLimitOf, useUpgradeStore } from "./upgrade";
 

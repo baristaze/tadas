@@ -6,7 +6,7 @@ import type {
   IssuedDownloadView,
   IssuedUploadView,
   StorageUsageView,
-} from "../api";
+} from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 

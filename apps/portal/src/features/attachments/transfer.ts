@@ -8,7 +8,7 @@
 // bytes go through the API instead, held to the same bounds. A download
 // follows the link the API signed, or reads the bytes through the API when
 // there is no link.
-import type { AddFileRequest, FileView, IssuedDownloadView, IssuedUploadView } from "../../api";
+import type { AddFileRequest, FileView, IssuedDownloadView, IssuedUploadView } from "@tadas/client";
 import { contentTypeOf } from "./attachmentsModel";
 
 /** The store answered, and not with a success: the form refused the body

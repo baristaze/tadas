@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskView } from "../api";
+import type { TaskView } from "@tadas/client";
 import {
   createTaskHints,
   HINT_BURST,
