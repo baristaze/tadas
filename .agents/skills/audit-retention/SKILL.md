@@ -11,8 +11,9 @@ purge still works when the table is large. The answer comes from the code,
 checked against plans on a seeded database of the run's own, and against
 the retention settings staging actually runs with.
 
-Read `.claude/skills/_shared/ops-preamble.md` before the first step: the
-profiles, the account check, and the env file are there.
+Read `../_shared/ops-preamble.md`, a path from this skill's folder,
+before the first step: the profiles, the account check, and the env
+file are there.
 
 ## Input
 
@@ -88,7 +89,7 @@ holds. It reads no env file and no token: it calls no route.
 
    Write each purge's statement into
    `~/Downloads/tadas_retention_<yyyy-mm-dd>/purges.sql`, in the file
-   format `${CLAUDE_SKILL_DIR}/references/purges.md` gives (read it before writing
+   format `references/purges.md` gives (read it before writing
    the file: it says how to get the exact SQL and the ids a statement
    binds), and run:
 

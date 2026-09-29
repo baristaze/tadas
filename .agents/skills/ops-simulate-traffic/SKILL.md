@@ -13,8 +13,9 @@ complete, reopen, move, list again, delete one, read the events, one
 socket that sees its own change, sign out. The profiles differ by
 tenants, members, concurrency, and think time.
 
-Read `.claude/skills/_shared/ops-preamble.md` before the first step:
-the profiles, the account check, and the env file are there.
+Read `../_shared/ops-preamble.md`, a path from this skill's folder,
+before the first step: the profiles, the account check, and the env
+file are there.
 
 ## Input
 
