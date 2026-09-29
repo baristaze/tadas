@@ -28,8 +28,10 @@ error tracker. `--since` is the window, a day by default.
 
 A run follows at most 5 request ids, one pass each: the first five
 given, in the order given, or without `--request-id`, the five newest
-failing requests tied to the symptom the investigation named (the Y
-of "tenant X sees Y"), never the newest failures of any kind. A pass
+failing requests tied to the symptom (the Y of "tenant X sees Y"),
+never the newest failures of any kind. The symptom is the one the
+prompt names or the investigation's report gives. When neither names
+one, ask for it before the first step, as for `--env`. A pass
 that finds no cause reports "not found" for its id. After the fifth
 pass the skill stops and writes the report. It lists every id past
 the fifth as not followed, for a second run to take.
@@ -101,8 +103,7 @@ do not use up the first pass's one read of each signal.
    are `/v1/admin/orgs/<org_id>/tasks?status=open|done` and
    `.../members`. Without `--request-id`, pick the request ids of the
    window's failed or missing writes here and in step 4, at most five,
-   the newest first among those tied to the symptom the investigation
-   named.
+   the newest first among those tied to the symptom of Input.
 
    The feed reads only forward from `after_seq`, with no time filter,
    so the skill first finds the window's first `seq`, and never reads
