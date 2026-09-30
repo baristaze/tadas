@@ -117,7 +117,7 @@ class WorkStorageContract:
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
         """The order is readiness, then id: an item made later that became
-        ready earlier, a requeued one or a reminder whose time came, goes
+        ready earlier, a requeued one or a step whose wait is over, goes
         first; items ready at the same moment go by id."""
         org = new_id()
         later = make_item(lane=lane, available_in=timedelta(hours=1))

@@ -88,7 +88,7 @@ def test_om_reaches_infra_only_through_interfaces(module: str, path: Path) -> No
 
 def test_the_scan_sees_the_whole_tree() -> None:
     names = {m for m, _ in OM_MODULES}
-    assert {"tadas.om.root", "tadas.om.base", "tadas.om.tasks.impl.manager"} <= names
+    assert {"tadas.om.root", "tadas.om.base", "tadas.om.tenancy.impl.manager"} <= names
     assert is_infra_impl("tadas.infra.cache.valkey")
     assert is_infra_impl("tadas.infra.impl.local")
     assert is_infra_impl("tadas.infra.topics.dispatch")

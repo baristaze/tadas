@@ -46,8 +46,8 @@ async def test_an_operator_closes_a_team_org_at_once_and_its_work_deletes_it(
 ) -> None:
     managers = build_managers(storage, InfraLocalImpl(tmp_path), TenancyOptions(dev_sign_in=True))
     tenancy = managers.tenancy
-    _, org = await tenancy.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
-    await tenancy.add_member(request(), "acme", "bob@example.test", "Bob", Role.MEMBER)
+    _, org = await tenancy.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
+    await tenancy.add_member(request(), "ajax", "bob@example.test", "Bob", Role.MEMBER)
     login = await tenancy.dev_sign_in(request(), "bob@example.test")
     issued = await tenancy.exchange_login(
         await tenancy.authenticate_login(request(), login.token), org.id
