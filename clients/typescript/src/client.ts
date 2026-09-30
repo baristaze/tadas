@@ -14,14 +14,6 @@ import {
   retryWaitMs,
 } from "./retry";
 
-/** What a `plan_limit_reached` refusal carries: the bound it met and the plan that lifts it. */
-export interface PlanLimit {
-  lever: string;
-  plan: string;
-  limit: number | null;
-  suggested_plan: string | null;
-}
-
 /** What a `stream_truncated` refusal carries: the highest seq trimmed, and the head to go on from. */
 export interface StreamTruncated {
   floor: number;
@@ -31,14 +23,22 @@ export interface StreamTruncated {
 /** An org a `last_owner` refusal names: the team orgs the person is the last owner of. */
 export type OwnedOrg = OwnedOrgRef;
 
+/** What a `plan_limit_reached` refusal carries: the bound it met and the plan that lifts it. */
+export interface PlanLimit {
+  lever: string;
+  plan: string;
+  limit: number | null;
+  suggested_plan: string | null;
+}
+
 export interface ErrorEnvelope {
   error: {
     code: string;
     message: string;
     request_id: string;
-    plan_limit?: PlanLimit | null;
     stream?: StreamTruncated | null;
     last_owner?: LastOwnerDetail | null;
+    plan_limit?: PlanLimit | null;
   };
 }
 
@@ -48,12 +48,12 @@ export class ApiError extends Error {
   readonly requestId: string | null;
   /** How long the server asked a retry to wait (its `Retry-After`), when it did. */
   readonly retryAfterMs: number | undefined;
-  /** The bound a `plan_limit_reached` refusal met, when the envelope carried one. */
-  readonly planLimit: PlanLimit | null;
   /** Where the stream goes on from, when a `stream_truncated` refusal carried it. */
   readonly stream: StreamTruncated | null;
   /** The orgs a `last_owner` refusal names; empty for every other refusal. */
   readonly lastOwnerOf: OwnedOrg[];
+  /** The bound a `plan_limit_reached` refusal met, when the envelope carried one. */
+  readonly planLimit: PlanLimit | null;
 
   constructor(
     status: number,
@@ -61,9 +61,9 @@ export class ApiError extends Error {
     message: string,
     requestId: string | null,
     retryAfterMs?: number,
-    planLimit: PlanLimit | null = null,
     stream: StreamTruncated | null = null,
     lastOwnerOf: OwnedOrg[] = [],
+    planLimit: PlanLimit | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -71,9 +71,9 @@ export class ApiError extends Error {
     this.code = code;
     this.requestId = requestId;
     this.retryAfterMs = retryAfterMs;
-    this.planLimit = planLimit;
     this.stream = stream;
     this.lastOwnerOf = lastOwnerOf;
+    this.planLimit = planLimit;
   }
 }
 
@@ -261,9 +261,9 @@ export function createClient(options: ClientOptions): ApiClient {
           parsed.error.message,
           parsed.error.request_id ?? requestId,
           retryAfterMs,
-          parsed.error.plan_limit ?? null,
           parsed.error.stream ?? null,
           parsed.error.last_owner?.orgs ?? [],
+          parsed.error.plan_limit ?? null,
         );
       }
       throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId, retryAfterMs);
