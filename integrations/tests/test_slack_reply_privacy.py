@@ -23,7 +23,11 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.tracing_utils import add_http_breadcrumb
 from sentry_sdk.transport import Transport
 
-from tadas.infra.observability import configure_error_reporting, configure_logging
+from tadas.infra.observability import (
+    HTTP_CLIENT_LOGGERS,
+    configure_error_reporting,
+    configure_logging,
+)
 from tadas.integrations.slack import SlackFailed
 from tadas.integrations.slack.web import SlackWebImpl
 
@@ -75,9 +79,15 @@ def tracker(monkeypatch: pytest.MonkeyPatch) -> Iterator[Captured]:
 @contextmanager
 def deployed() -> Iterator[io.StringIO]:
     """JSON lines with the root at INFO, as boot sets them in a deployed
-    process; everything is put back after."""
+    process. The Slack SDK's loggers and the HTTP clients' start from no
+    level of their own, whatever ran before, and everything is put back
+    after."""
     root = logging.getLogger()
     handlers, level = root.handlers, root.level
+    names = {"slack_sdk", "slack_sdk.webhook.async_client", *HTTP_CLIENT_LOGGERS}
+    clients = {name: logging.getLogger(name).level for name in names}
+    for name in clients:
+        logging.getLogger(name).setLevel(logging.NOTSET)
     root.handlers = []
     written, stderr = io.StringIO(), sys.stderr
     sys.stderr = written
@@ -90,6 +100,8 @@ def deployed() -> Iterator[io.StringIO]:
     finally:
         root.handlers = handlers
         root.setLevel(level)
+        for name, was in clients.items():
+            logging.getLogger(name).setLevel(was)
 
 
 class Unreachable(AbstractResolver):
