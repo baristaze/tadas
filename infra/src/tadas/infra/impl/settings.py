@@ -69,7 +69,7 @@ class InfraSettings(BaseSettings):
     s3_presign_endpoint_url: str | None = None
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
-    s3_bucket_prefix: str = "tadas"
+    s3_bucket_prefix: str = "tadas-local"
 
     queues_backend: Literal["memory", "sqs"] = "memory"
     sqs_endpoint_url: str | None = None
