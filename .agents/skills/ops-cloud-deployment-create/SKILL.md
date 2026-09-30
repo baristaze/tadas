@@ -130,7 +130,7 @@ the names of what was written and never a value.
      person decides whether to turn it on and run the script again.
      The budget needs Budgets, turned on the same way; the script asks
      it before the apply and refuses until it answers, pointing to the
-     manual's section 8a. A local `terraform.tfstate` in the bootstrap
+     manual's "Turn on Cost Explorer and Budgets for the member accounts". A local `terraform.tfstate` in the bootstrap
      root is a first apply that stopped part way: the script applies
      against it, and it is never deleted by hand.
      For staging, whether the replication into production is on. For
@@ -167,10 +167,10 @@ the names of what was written and never a value.
      order above, because the first release waits for a replicated
      build.
    - The providers, printed for the person and never run by this
-     skill (step 7b). The first deploy makes five secrets holding
-     `off`: `tadas/<env>/workos_api_key`, `stripe_runtime_key`,
-     `stripe_webhook_secret`, `slack_client_secret`, and
-     `slack_signing_secret`.
+     skill (step 7b). The first deploy makes seven secrets holding
+     `off`: `tadas/<env>/workos_api_key`, `workos_webhook_secret`,
+     `sentry_dsn`, `stripe_runtime_key`, `stripe_webhook_secret`,
+     `slack_client_secret`, and `slack_signing_secret`.
      After it, the person makes each value in the provider's dashboard
      and writes it under their own sign-in (`tadas-staging`; in
      production `tadas-prod-power`, when authorized); the Stripe
@@ -181,16 +181,22 @@ the names of what was written and never a value.
      never the WorkOS environment's; the API refuses to start on
      another. WorkOS comes first, since the grants below sign people
      up through it and every
-     sign-in answers `503` without its key. Each environment has a
-     Slack app of its own (`deployment/slack/manifest.<env>.json`):
-     its two secrets go into the two secrets above, and its client id
-     is committed as `slack_client_id` in the environment root. Once
-     the API holds the signing secret, the person pastes the manifest
-     into the app, turns on public distribution, and installs the app
-     from the portal's Settings. The values reach the tasks at their
-     next start. Point
-     the person to `docs/runbooks/providers/` for the steps; never ask
-     for a value in the conversation, and never run a
+     sign-in answers `503` without its key. `tadas-ops workos-bootstrap`
+     proves the key and reconciles the application's redirects.
+     `workos_webhook_secret` is the signing secret of the endpoint
+     `https://<api name>/webhooks/identity` in the WorkOS dashboard;
+     until it is set, the route refuses every delivery. `sentry_dsn`
+     is the DSN of the product's one project in the error tracker.
+     Each environment has a Slack app of its own
+     (`deployment/slack/manifest.<env>.json`): its two secrets go into
+     the two secrets above, and its client id is committed as
+     `slack_client_id` in the environment root. Once the API holds the
+     signing secret, the person pastes the manifest into the app, turns
+     on public distribution, and installs the app from the portal's
+     Settings.
+     The values reach the API and the worker when their tasks next
+     start. Point the person to `docs/runbooks/providers/` for the
+     steps; never ask for a value in the conversation, and never run a
      `put-secret-value` yourself.
    - The grants, printed for the person and never run by this skill:
      the first operator, the provisioner, and the smoke identity, each
@@ -276,7 +282,7 @@ dry run's smoke test is "not yet".
 - <the next run of Order, or nothing>
 - Dispatch `grant-operator.yml` for the first operator, who enrols the second factor at the console's first sign-in and runs `uv run tadas-ops token --env <env> --identity operator` in their own terminal; grant the smoke identity and set `SMOKE_EMAIL`, so the next deploy runs the smoke test
 - Manual steps left: <the tracker's lines in the env file, or none>
-- The providers, after the first deploy: write workos_api_key, stripe_runtime_key, slack_client_secret, slack_signing_secret under <sso profile | tadas-prod-power>, commit slack_client_id, run `tadas-ops workos-bootstrap` and `tadas-ops stripe-bootstrap` (TADAS_STRIPE_BOOTSTRAP_KEY in the person's shell), then roll or wait for the next deploy; then paste the Slack manifest, turn on public distribution, and Add to Slack (docs/runbooks/providers/)
+- The providers, after the first deploy: write workos_api_key, workos_webhook_secret, sentry_dsn, stripe_runtime_key, slack_client_secret, and slack_signing_secret under <sso profile | tadas-prod-power>, commit slack_client_id, run `tadas-ops workos-bootstrap` and `tadas-ops stripe-bootstrap` (TADAS_STRIPE_BOOTSTRAP_KEY in the person's shell), then roll or wait for the next deploy; then paste the Slack manifest, turn on public distribution, and Add to Slack (docs/runbooks/providers/)
 - Hand the administrator permission set back; every later skill runs
   under tadas-<env>-investigate.
 ```

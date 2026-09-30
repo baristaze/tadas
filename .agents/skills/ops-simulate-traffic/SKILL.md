@@ -103,8 +103,9 @@ dispatch is due.
    and think time, and one sample request id of the run. A 5xx during
    the run is a
    finding with its request id; a 4xx from the generator's own
-   sessions (a conflict on a retried create, a 404 after the delete)
-   is expected where the session shape explains it.
+   sessions is expected only where the session shape explains it (a
+   `409` `idempotency_in_progress` on a task create the client sent
+   again while the first was still running, a `404` after the delete).
 4. Read one signal back to prove the run was seen: the request
    counter moved by at least the number of requests the table shows
    over the run's window (`--since-minutes`, the run's duration rounded

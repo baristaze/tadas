@@ -1,6 +1,6 @@
 ---
 name: audit-provider-calls
-description: "Audit every call to an external provider (WorkOS, Stripe, Slack, the AWS services, any HTTP to a third party), per flow: each route, inbound webhook, worker job, and boot. For each flow, the calls in order, whether they repeat or stand apart, whether they sit on the request path, how often the flow runs, whether the client is reused, the timeout times the retries, and whether the request has an overall deadline. Counts the calls through the provider twins where it can and reads the code where it cannot, then ranks fixes: remove a call, fold calls, move one off the request path, cache it, and run in parallel last. Never changes anything."
+description: "Audit every call to an external provider (WorkOS, Stripe, Slack, the AWS services, any HTTP to a third party), per flow: each route, inbound webhook, worker job, and boot. For each flow, the calls in order, whether they repeat or stand apart, whether they sit on the request path, how often the flow runs, whether the client is reused, the timeout times the retries, and whether the request has an overall deadline. Counts the calls through the provider twins where it can and reads the code where it cannot, then ranks fixes: remove a call, fold calls, defer one off the request path, cache it, and run in parallel last. Never changes anything."
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
 ---
 
@@ -41,7 +41,9 @@ real provider.
    the same suffix. Make the folder
    (`mkdir -p`). Say which commit the run read (`git rev-parse HEAD`).
 2. List the provider clients and how each is built:
-   - WorkOS: `integrations/src/tadas/integrations/identity/workos.py`;
+   - WorkOS, the identity provider:
+     `integrations/src/tadas/integrations/identity/workos.py`, with its
+     webhook's check in `identity/deliveries.py` beside it;
    - Stripe: `integrations/src/tadas/integrations/payments/stripe.py`
      and `catalog.py`;
    - Slack: `integrations/src/tadas/integrations/slack/web.py`;
@@ -68,8 +70,9 @@ real provider.
    at start (`start()`) or on first use.
 3. List the flows: every route (the routers under
    `services/api/src/tadas/services/api/routers/`), every inbound
-   webhook (Stripe's and Slack's, in `routers/webhooks.py` there), every
-   worker job
+   webhook (the identity provider's, `POST /webhooks/identity`,
+   Stripe's, and Slack's, in `routers/webhooks.py` there, and their
+   consumers), every worker job
    (`WorkKind` in `om/src/tadas/om/work/types/work_item.py`, its handler
    in `workers/maintenance/src/tadas/workers/maintenance/`, and the
    consumers of the queues there), the sweep's steps (`loop.py`,
@@ -95,15 +98,17 @@ real provider.
 
    Run the built-in flows first, as above without `--flows`, and read
    `providers`. The counter wraps the identity, payments, and Slack
-   twins and counts one call per method of the provider's interface.
+   twins and counts one call per method of the provider's interface
+   (`identity.<method>`, `payments.<method>`, `slack.<method>`).
    The real client may send more than one request for one method (a
    lookup and a create, a list read page by page): read each method in
    the real client and say how many requests it sends. The counter does
    not count AWS: locally the infra reaches no provider, so those calls
    are read from the code and marked as read. A flow of step 3 that
-   calls a provider and that no built-in flow reaches (a checkout, a
-   Slack install, a webhook, a worker job that calls Stripe) then goes
-   in a flows file of the run's own, written as
+   calls a provider and that no built-in flow reaches (a device
+   sign-in, the SSO link, a delivery to the identity webhook and its
+   consumer, a checkout, a Slack install, a worker job that calls
+   Stripe) then goes in a flows file of the run's own, written as
    `../audit-database-calls/references/flows.md`, a path from this
    skill's folder, shows (read it before writing one), run on the same database with `--only
    seed` into `calls_2.json`. A flow that fails is named, the rest run,
@@ -139,7 +144,7 @@ real provider.
      finding.
 7. Rank the fixes in this order, and propose the first that applies:
    remove the call (its answer is known, or nothing reads it); fold
-   calls into one (a batch, one read that answers two); move it off the
+   calls into one (a batch, one read that answers two); defer it off the
    request path (into a job, or after the response); cache it (with the
    TTL and what invalidates it); and last, run independent calls in
    parallel, which lowers the latency and not the load, and still waits
