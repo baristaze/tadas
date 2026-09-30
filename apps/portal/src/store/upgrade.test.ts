@@ -6,7 +6,7 @@ import { isPlanLimit, offerUpgrade, planLimitOf, useUpgradeStore } from "./upgra
 const LIMIT = { lever: "members", plan: "free", limit: 1, suggested_plan: "team" };
 
 function refusal() {
-  return new ApiError(402, "plan_limit_reached", "the free plan allows 1 member", "req_1", undefined, LIMIT);
+  return new ApiError(402, "plan_limit_reached", "the free plan allows 1 member", "req_1", undefined, null, [], LIMIT);
 }
 
 afterEach(() => useUpgradeStore.getState().close());

@@ -38,7 +38,10 @@ export interface ChannelDeps {
   requestTicket(): Promise<string>;
   openSocket(ticket: string): SocketLike;
   fetchEventsAfter(after: number, limit: number): Promise<EventView[]>;
-  /** Hands one envelope to the router; the query cache is behind it. */
+  /** Hands one envelope to the router; the query cache is behind it. A
+   * record read back from the stream (a replay, the first catch-up) comes
+   * here too, only the last record of each entity, unless `routeReplayed`
+   * takes it. */
   route(envelope: Envelope): void;
   /** Hands the router a record read back from the stream (a replay, the
    * first catch-up). Only the last record of each entity is routed, so the
@@ -165,10 +168,10 @@ export function openChannel(deps: ChannelDeps): Channel {
         }
         if (stopped) return;
         // One route per entity, not per record: routing invalidates every query
-        // the entity is read from, so a page of two hundred task records that
-        // each triggered a route would cancel and restart the list refetch two
-        // hundred times over. The last record of an entity is the one routed,
-        // and every record still moves the cursor.
+        // the entity is read from, so a page of two hundred records of one
+        // entity that each triggered a route would cancel and restart the same
+        // refetch two hundred times over. The last record of an entity is the
+        // one routed, and every record still moves the cursor.
         const last = new Map<string, Envelope>();
         for (const event of page) {
           apply(eventEnvelope(event), (routed) => {

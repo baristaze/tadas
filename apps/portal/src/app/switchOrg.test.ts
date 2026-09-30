@@ -109,7 +109,7 @@ describe("the switch against the session store", () => {
     const { forgetSession, forgetSessionIfHeld, holdSession } = await import("./forgetSession");
     const { adoptSession } = await import("./adoptSession");
     const { useSessionStore } = await import("../store/session");
-    useSessionStore.getState().setSession("ses_old", "acme");
+    useSessionStore.getState().setSession("ses_old", "ajax");
     const seen: (string | null)[] = [];
     useSessionStore.subscribe((state) => seen.push(state.token));
     const run = (exchange: SwitchEffects["exchange"]) =>
@@ -159,13 +159,13 @@ describe("chipChoices", () => {
   const place = (id: string, name: string) => ({ org: org(id, name), user, role: "member" as const });
 
   it("offers nothing with one place, or before the lists arrive", () => {
-    expect(chipChoices([place("acme", "Acme")], "acme")).toEqual({ canSwitch: false, others: [] });
-    expect(chipChoices(undefined, "acme").canSwitch).toBe(false);
-    expect(chipChoices([place("acme", "Acme")], undefined).canSwitch).toBe(false);
+    expect(chipChoices([place("ajax", "Ajax")], "ajax")).toEqual({ canSwitch: false, others: [] });
+    expect(chipChoices(undefined, "ajax").canSwitch).toBe(false);
+    expect(chipChoices([place("ajax", "Ajax")], undefined).canSwitch).toBe(false);
   });
 
   it("offers the other places by name, never the current one", () => {
-    const choices = chipChoices([place("zeta", "Zeta"), place("acme", "Acme"), place("beta", "Beta")], "acme");
+    const choices = chipChoices([place("zeta", "Zeta"), place("ajax", "Ajax"), place("beta", "Beta")], "ajax");
     expect(choices.canSwitch).toBe(true);
     expect(choices.others.map((m) => m.org.name)).toEqual(["Beta", "Zeta"]);
   });

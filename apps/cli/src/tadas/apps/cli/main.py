@@ -1,12 +1,14 @@
-"""The commands. Command mode does one thing and returns (`add`, `ls`, `edit`,
-`done`, `reopen`, `rm`, `mv`, a task's files: `attach`, `attachments`,
-`download`, `detach`, and `import`, which follows its import to the end);
-`listen` stays and prints the team's changes as they happen. Every command
-is a thin call into the client; the API decides, the CLI shows. A verb that
-changes a task reads it first and sends the version it read, so a change
-that raced another is refused (exit 1) and never overwrites it. Exit codes:
-0 done, 1 the API refused (an import that parked or failed among them), 2
-usage, 3 not signed in, 4 the API is unreachable."""
+"""The commands. Command mode does one thing and returns: sign in and out,
+the orgs, the switch between them, who the session is, the task verbs
+(`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`), a task's files
+(`attach`, `attachments`, `download`, `detach`), and `import`, which
+follows its import to the end. `listen` stays and prints every change the
+team makes to its tasks as it happens. Every command is a thin call into
+the client; the API decides, the CLI shows. A verb that changes a task
+reads it first and sends the version it read, so a change that raced
+another is refused (exit 1) and never overwrites it. Exit codes: 0 done,
+1 the API refused (an import that parked or failed among them), 2 usage,
+3 not signed in, 4 the API is unreachable."""
 
 import asyncio
 import json
@@ -76,7 +78,7 @@ def build_client(api_url: str, token: str | None) -> ApiClient:
 
 
 app = typer.Typer(
-    help="Tadas from the terminal: one command at a time, or `listen` for what the team does.",
+    help="Tadas from the terminal: one command at a time, or `listen` for what the org does.",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode=None,

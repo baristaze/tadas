@@ -100,7 +100,7 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
 
     asyncio.run(drive(mine=False))
     assert out.getvalue().splitlines() == [
-        "listening as Ann at Acme: the team's tasks",
+        "listening as Ann at Ajax: the team's tasks",
         "09:30:00  Bob created a task: Migrate DB",
         "09:30:00  Ann completed a task: Migrate DB",
         "09:30:00  Bob assigned a task to Ann: Migrate DB",
@@ -116,7 +116,7 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
     out.seek(0)
     asyncio.run(drive(mine=True))
     lines = out.getvalue().splitlines()
-    assert lines[0] == "listening as Ann at Acme: my tasks"
+    assert lines[0] == "listening as Ann at Ajax: my tasks"
     # Bob's unassigned task is not Ann's, not even when she completes it, until
     # it is assigned to her; the changelog is Bob's.
     assert [line.split("  ", 1)[1] for line in lines[1:]] == [
@@ -264,7 +264,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
 
     asyncio.run(drive())
     assert out.getvalue().splitlines() == [
-        "listening as Ann at Acme: the team's tasks",
+        "listening as Ann at Ajax: the team's tasks",
         "09:30:00  Ann updated a task: Migrate DB",
         "09:30:00  someone created a task: Onboard",
     ]
@@ -352,7 +352,7 @@ def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
     task = asyncio.run(prepare())
     asyncio.run(drive())
     assert out.getvalue().splitlines() == [
-        "listening as Ann at Acme: my tasks",
+        "listening as Ann at Ajax: my tasks",
         "09:30:00  Bob updated a task: Migrate DB",
         "09:30:00  Bob deleted a task: Migrate DB",
     ]

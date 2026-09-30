@@ -72,11 +72,13 @@ export const usePreferencesStore = create<PreferencesState>()(
       name: PREFERENCES_STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
       // A theme the stored state does not name, or names wrongly, is the
-      // system's; folds that are not an object are none.
+      // system's; a field the store does not know is dropped. A scope that is
+      // not one is the default, and folds that are not an object are none.
       merge: (stored, current) => {
         const kept = (stored ?? {}) as Partial<PreferencesState>;
+        const taskScope = kept.taskScope === "team" || kept.taskScope === "mine" ? kept.taskScope : current.taskScope;
         const folded = kept.folded && typeof kept.folded === "object" ? kept.folded : {};
-        return { ...current, ...kept, theme: parseTheme(kept.theme), folded };
+        return { ...current, theme: parseTheme(kept.theme), taskScope, folded };
       },
     },
   ),

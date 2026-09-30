@@ -2,7 +2,7 @@
 // start. The rows are read in the background; the page shows how far it is.
 import { Button, ErrorText, Muted } from "../../design/kit";
 import { tokens } from "../../design/tokens";
-import { humanSize } from "../attachments/attachmentsModel";
+import { humanSize } from "../settings/storageModel";
 import type { ImportVm } from "./useImportVm";
 
 export function ImportDialog({ vm }: { vm: ImportVm }) {

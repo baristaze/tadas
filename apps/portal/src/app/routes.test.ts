@@ -53,7 +53,7 @@ const user: UserView = { id: "u1", email: "admin@example.test", display_name: "A
 const orgOf = (id: string, name: string, slug: string): OrgView =>
   ({ id, name, slug, kind: "team", created_at: at, deleted_at: null }) as OrgView;
 const orgs = {
-  acme: orgOf("o_acme", "Acme", "acme"),
+  ajax: orgOf("o_ajax", "Ajax", "ajax"),
   beta: orgOf("o_beta", "Beta", "beta"),
   gamma: orgOf("o_gamma", "Gamma", "gamma"),
 };
@@ -74,7 +74,7 @@ function answer(path: string): unknown {
     return { app: "portal", role: "owner", permissions: ["read", "write"], user, org: orgs[slug] } satisfies MeView;
   }
   if (path.startsWith("/v1/auth/memberships")) {
-    const items: MembershipChoiceView[] = [orgs.acme, orgs.beta].map((org) => ({ org, user, role: "owner" }));
+    const items: MembershipChoiceView[] = [orgs.ajax, orgs.beta].map((org) => ({ org, user, role: "owner" }));
     return { items, next_cursor: null };
   }
   if (path.startsWith("/v1/tasks?status=open")) return { items: [taskOf(slug)], next_cursor: null };
@@ -139,7 +139,7 @@ async function open(path: string) {
 beforeEach(() => {
   queryClient.clear();
   net.calls.length = 0;
-  useSessionStore.getState().setSession(tokenOf("acme"), "acme");
+  useSessionStore.getState().setSession(tokenOf("ajax"), "ajax");
   root = createRoot(container);
 });
 afterEach(async () => {
@@ -149,7 +149,7 @@ afterEach(async () => {
 
 it("shows the new org's tasks after a switch from the chip, read once under the new session", async () => {
   await open("/");
-  expect(shownTasks()).toEqual(["Acme's task"]);
+  expect(shownTasks()).toEqual(["Ajax's task"]);
 
   await act(async () => switcher().click());
   await act(async () => button("Beta").click());
@@ -159,6 +159,8 @@ it("shows the new org's tasks after a switch from the chip, read once under the 
   expect(shownTasks()).toEqual(["Beta's task"]);
   const after = readsAfterSwitch();
   expect(after.every((read) => read.token === tokenOf("beta"))).toBe(true);
+  expect(after.filter((read) => read.path === "/v1/me")).toHaveLength(1);
+  expect(after.filter((read) => read.path.startsWith("/v1/users"))).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=open"))).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=done"))).toHaveLength(1);
 });
@@ -177,5 +179,6 @@ it("lands on the new org's tasks after creating one at /orgs/new", async () => {
   expect(shownTasks()).toEqual(["Gamma's task"]);
   const after = readsAfterSwitch();
   expect(after.every((read) => read.token === tokenOf("gamma"))).toBe(true);
+  expect(after.filter((read) => read.path === "/v1/me")).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=open"))).toHaveLength(1);
 });

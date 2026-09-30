@@ -1,8 +1,7 @@
 import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { keys } from "../queries/keys";
-import { parseEnvelope } from "./envelopes";
-import { entityOf } from "./envelopes";
+import { entityOf, parseEnvelope } from "./envelopes";
 import { isKeptFresh, PUSHED_ENTITIES, reminderOf, routeEnvelope } from "./router";
 
 function recording() {
@@ -37,14 +36,15 @@ const SERVER_KINDS = [
   "tasks.task.deleted",
   "tasks.task.restored",
   "tasks.task.archived",
-  "media.file.created",
-  "media.file.updated",
-  "media.file.deleted",
   "tasks.task.reminded",
-  "orchestrations.orchestration.updated",
   "slack.installation.created",
   "slack.installation.updated",
   "slack.installation.deleted",
+  "media.file.created",
+  "media.file.updated",
+  "media.file.deleted",
+  "orchestrations.orchestration.created",
+  "orchestrations.orchestration.updated",
   "tenancy.api_key.created",
   "tenancy.api_key.deleted",
   "tenancy.invitation.created",
@@ -83,6 +83,14 @@ describe("routeEnvelope", () => {
     expect(seen).toEqual([keys.apiKeys.all]);
   });
 
+  it("refreshes the pending invitations when an invitation changes", () => {
+    for (const kind of ["tenancy.invitation.created", "tenancy.invitation.updated"]) {
+      const { queryClient, seen } = recording();
+      expect(routeEnvelope(queryClient, pushOf(kind))).toEqual({ invalidated: [keys.invitations.all] });
+      expect(seen.every((key) => isPrefixOf(key, keys.invitations.list(50)))).toBe(true);
+    }
+  });
+
   it("refreshes a task's files and the org's usage when a file changes", () => {
     const { queryClient, seen } = recording();
     expect(routeEnvelope(queryClient, pushOf("media.file.updated"))).toEqual({ invalidated: [keys.files.all] });
@@ -92,8 +100,8 @@ describe("routeEnvelope", () => {
   });
 
   it("refreshes who the user is, their places, and the member roles when a membership changes, since the role rides all three", () => {
-    // A user demoted to viewer loses the add, edit, and drag controls on the
-    // push, not on the next reload.
+    // A member demoted to viewer loses the controls a viewer may not use on
+    // the push, not on the next reload.
     const { queryClient, seen } = recording();
     expect(routeEnvelope(queryClient, pushOf("tenancy.membership.updated"))).toEqual({
       invalidated: [keys.me, keys.myMemberships.all, keys.memberships.all],
@@ -247,8 +255,10 @@ describe("isKeptFresh", () => {
         expect(isKeptFresh(routed), `${kind} reaches ${JSON.stringify(routed)}`).toBe(true);
       }
     }
-    expect(isKeptFresh(keys.tasks.open("team"))).toBe(true);
     expect(isKeptFresh(keys.me)).toBe(true);
+    expect(isKeptFresh(keys.memberships.list(200))).toBe(true);
+    expect(isKeptFresh(keys.files.usage)).toBe(true);
+    expect(isKeptFresh(keys.tasks.open("team"))).toBe(true);
     expect(isKeptFresh(keys.billing)).toBe(true);
     expect(isKeptFresh(keys.identity)).toBe(false);
     expect(isKeptFresh(keys.files.preview("f1"))).toBe(false);

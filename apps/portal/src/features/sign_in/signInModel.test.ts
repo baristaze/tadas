@@ -19,11 +19,11 @@ const pending: PendingSignIn = {
 describe("chooseOrg", () => {
   it("picks the only org and puts the personal one first among several", () => {
     expect(chooseOrg([])).toEqual({ kind: "none" });
-    expect(chooseOrg([membership("Acme")]).kind).toBe("single");
-    const several = chooseOrg([membership("Zeta"), membership("Acme"), membership("Zed", "personal")]);
+    expect(chooseOrg([membership("Ajax")]).kind).toBe("single");
+    const several = chooseOrg([membership("Zeta"), membership("Ajax"), membership("Zed", "personal")]);
     expect(several.kind === "several" && several.memberships.map((m) => m.org.name)).toEqual([
       "Zed",
-      "Acme",
+      "Ajax",
       "Zeta",
     ]);
   });

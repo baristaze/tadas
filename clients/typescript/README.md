@@ -1,7 +1,7 @@
 # Tadas TypeScript client
 
-The one TypeScript client of the API, `@tadas/client`. Every browser app
-imports it, and nothing else in TypeScript calls `fetch` or reads the
+The one TypeScript client of the Tadas API, `@tadas/client`. Every browser
+app imports it, and nothing else in TypeScript calls `fetch` or reads the
 generated schema.
 
 - `openapi.json` is the API's committed document. `make openapi` writes

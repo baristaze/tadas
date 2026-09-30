@@ -8,7 +8,7 @@ export const keys = {
   // The person behind the session: their address and their time zone.
   identity: ["identity"] as const,
   // The person's places across orgs, read with the session under the
-  // identity stage. No push names it; a switch drops it with every other key.
+  // identity stage. A switch drops it with every other key.
   myMemberships: {
     all: ["my_membership"] as const,
     list: (limit: number) => ["my_membership", "list", limit] as const,

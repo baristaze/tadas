@@ -32,9 +32,9 @@ function AuthenticatedShell() {
   );
 }
 
-/** An address an older build linked to: it goes on to the sign-in, keeping
- * the page it was sent from. */
-function Moved({ to }: { to: string }) {
+/** A short address for the sign-in or the sign-up: it goes on to the
+ * sign-in, keeping the page it was sent from. */
+function GoOn({ to }: { to: string }) {
   const location = useLocation();
   return <Navigate to={to} replace state={location.state} />;
 }
@@ -46,8 +46,8 @@ export const routes: RouteObject[] = [
   // Where the identity provider's logout sends the browser back: a sign-in page that waits.
   { path: "/signed-out", element: <LoginPage signedOut />, errorElement: <RouteError /> },
   { path: "/auth/callback", element: <CallbackPage />, errorElement: <RouteError /> },
-  { path: "/sign-in", element: <Moved to="/login" />, errorElement: <RouteError /> },
-  { path: "/sign-up", element: <Moved to="/login?screen_hint=sign-up" />, errorElement: <RouteError /> },
+  { path: "/sign-in", element: <GoOn to="/login" />, errorElement: <RouteError /> },
+  { path: "/sign-up", element: <GoOn to="/login?screen_hint=sign-up" />, errorElement: <RouteError /> },
   {
     element: <AuthenticatedShell />,
     errorElement: <RouteError />,

@@ -4,9 +4,9 @@ import { confirmsName, mayDeleteOrg, ORG_GONE_LINE } from "./deleteOrgModel";
 
 const owner: MeView = {
   user: { id: "u1", email: "ann@example.test", display_name: "Ann", created_at: "2026-09-01T00:00:00Z" },
-  org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z" },
+  org: { id: "o1", name: "Ajax", slug: "ajax", kind: "team", created_at: "2026-09-01T00:00:00Z" },
   role: "owner",
-  permissions: ["read", "write", "manage_members", "manage_keys", "manage_billing"],
+  permissions: ["read", "write", "manage_members", "manage_keys"],
   app: "portal",
 };
 
@@ -20,11 +20,11 @@ describe("delete org model", () => {
   });
 
   it("goes on only once the org's name is typed as it is spelled", () => {
-    expect(confirmsName("", "Acme")).toBe(false);
-    expect(confirmsName("acme", "Acme")).toBe(false);
-    expect(confirmsName("Acme Inc", "Acme")).toBe(false);
-    expect(confirmsName("  Acme ", "Acme")).toBe(true);
-    expect(confirmsName("Acme", undefined)).toBe(false);
+    expect(confirmsName("", "Ajax")).toBe(false);
+    expect(confirmsName("ajax", "Ajax")).toBe(false);
+    expect(confirmsName("Ajax Inc", "Ajax")).toBe(false);
+    expect(confirmsName("  Ajax ", "Ajax")).toBe(true);
+    expect(confirmsName("Ajax", undefined)).toBe(false);
   });
 
   it("says how long the data is kept", () => {

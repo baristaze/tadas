@@ -5,7 +5,8 @@ import { errorMessage } from "../../app/errorMessage";
 import { mediaCalls, useAttachments, useRemoveAttachment } from "../../queries/attachments";
 import { keys } from "../../queries/keys";
 import { notify } from "../../store/notices";
-import { attachmentRow, humanSize } from "./attachmentsModel";
+import { humanSize } from "../settings/storageModel";
+import { attachmentRow } from "./attachmentsModel";
 import {
   downloadAttachment,
   saveBlob,

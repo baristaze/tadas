@@ -1,4 +1,4 @@
-// Design tokens: the operator console imports these from the portal.
+// Design tokens: the one set of colours, spaces, radii, and type sizes.
 // A colour or a shadow is a CSS custom property, so one inline style follows
 // the theme: `theme.css` gives each property its light and its dark value.
 const v = (name: string) => `var(--tadas-${name})`;

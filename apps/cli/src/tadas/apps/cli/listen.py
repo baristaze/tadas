@@ -2,11 +2,14 @@
 happens. The push says which task changed and who did it; the task itself
 is fetched, since a push is a hint and the record is the truth. A deleted
 task cannot be fetched, so the listener remembers every task it has seen.
-A read that fails is that change's failure, not the stream's: it is told on
-stderr, the change is skipped, and the task's next change shows its state.
-Only a dead credential (401) ends the listener. When the stream is trimmed
-past where the listener stood, the changes between are not told: stderr says
-so, the listener reads every task again, and goes on from the stream's head."""
+The actor's name comes from the org's members, read once and again when a
+push names someone new. A read that fails is that change's failure, not the
+stream's: a members read leaves the actor as someone, and a task read is
+told on stderr, the change skipped, and the task's next change shows its
+state. Only a dead credential (401) ends the listener. When the stream is
+trimmed past where the listener stood, the changes between are not told:
+stderr says so, the listener reads every task again, and goes on from the
+stream's head."""
 
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable

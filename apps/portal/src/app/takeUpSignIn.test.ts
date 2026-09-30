@@ -61,14 +61,14 @@ async function tab(end: (token: string) => Promise<unknown> = () => Promise.reso
 describe("takeUpSignIn", () => {
   it("ends nothing on a tab that held no session", async () => {
     const t = await tab();
-    await expect(t.takeUpSignIn(issued("ses_first", "acme"), t.effects)).resolves.toBe("nothing_held");
+    await expect(t.takeUpSignIn(issued("ses_first", "ajax"), t.effects)).resolves.toBe("nothing_held");
     expect(t.effects.end).not.toHaveBeenCalled();
     expect(t.useSessionStore.getState().token).toBe("ses_first");
   });
 
   it("ends the replaced session once, with its own token, after the new one is taken up", async () => {
     const t = await tab();
-    await t.takeUpSignIn(issued("ses_first", "acme"), t.effects);
+    await t.takeUpSignIn(issued("ses_first", "ajax"), t.effects);
 
     await expect(t.takeUpSignIn(issued("ses_second", "beta"), t.effects)).resolves.toBe("ended");
 
@@ -85,17 +85,17 @@ describe("takeUpSignIn", () => {
     // The modules are loaded afresh per test, so the error is the class they load.
     const { ApiError } = await import("@tadas/client");
     const t = await tab(() => Promise.reject(new ApiError(401, "not_authenticated", "Sign in first.", "req_1")));
-    t.useSessionStore.getState().setSession("ses_old", "acme");
+    t.useSessionStore.getState().setSession("ses_old", "ajax");
 
-    await expect(t.takeUpSignIn(issued("ses_new", "acme"), t.effects)).resolves.toBe("already_gone");
+    await expect(t.takeUpSignIn(issued("ses_new", "ajax"), t.effects)).resolves.toBe("already_gone");
     expect(t.useSessionStore.getState().token).toBe("ses_new");
   });
 
   it("keeps the new session when the server could not end the old one", async () => {
     const t = await tab(() => Promise.reject(new TypeError("Failed to fetch")));
-    t.useSessionStore.getState().setSession("ses_old", "acme");
+    t.useSessionStore.getState().setSession("ses_old", "ajax");
 
-    await expect(t.takeUpSignIn(issued("ses_new", "acme"), t.effects)).resolves.toBe("not_ended");
+    await expect(t.takeUpSignIn(issued("ses_new", "ajax"), t.effects)).resolves.toBe("not_ended");
     expect(t.effects.end).toHaveBeenCalledTimes(1);
     expect(t.useSessionStore.getState().token).toBe("ses_new");
   });
@@ -103,7 +103,7 @@ describe("takeUpSignIn", () => {
   it("takes up the new session before the logout is even answered", async () => {
     let answer: (value: unknown) => void = () => undefined;
     const t = await tab(() => new Promise((resolve) => (answer = resolve)));
-    t.useSessionStore.getState().setSession("ses_old", "acme");
+    t.useSessionStore.getState().setSession("ses_old", "ajax");
 
     const ending = t.takeUpSignIn(issued("ses_new", "beta"), t.effects);
     expect(t.useSessionStore.getState().token).toBe("ses_new");

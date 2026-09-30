@@ -1,7 +1,7 @@
 """Pure: how a task is shown, how a change is told, which tasks are mine,
-how a short id names a task, and which org a slug names. Values in, values
-out; no client, no clock, no terminal, so every rule is unit tested without
-either."""
+how a short id names a task, how a size reads, and which org a slug names.
+Values in, values out; no client, no clock, no terminal, so every rule is
+unit tested without either."""
 
 import re
 from collections.abc import Callable, Sequence

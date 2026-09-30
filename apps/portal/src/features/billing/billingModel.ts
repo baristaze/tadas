@@ -1,7 +1,7 @@
 // Pure: what the billing page and the upgrade dialog say. The numbers come
 // from the server's one table of plans; this file only words them.
 import { ApiError, type BillingView, type Plan, type PlanLimit, type PlanLimitsView, type PlanOfferView } from "@tadas/client";
-import { humanSize } from "../attachments/attachmentsModel";
+import { humanSize } from "../settings/storageModel";
 
 export const PLAN_NAMES: Readonly<Record<Plan, string>> = {
   free: "Free",

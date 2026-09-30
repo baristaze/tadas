@@ -51,7 +51,7 @@ describe("preferences store", () => {
     const { usePreferencesStore } = await import("./preferences");
     expect(usePreferencesStore.getState().theme).toBe("system");
     usePreferencesStore.getState().setTheme("dark");
-    expect(JSON.parse(local.getItem(KEY) as string).state.theme).toBe("dark");
+    expect(JSON.parse(local.getItem(KEY) as string).state).toEqual({ taskScope: "mine", theme: "dark", folded: {} });
   });
 
   it("reads a stored theme back, and an unknown one as the system's", async () => {
@@ -65,10 +65,22 @@ describe("preferences store", () => {
     expect(usePreferencesStore.getState().taskScope).toBe("team");
   });
 
-  it("reads the scope back on the next visit", async () => {
-    local.setItem(KEY, JSON.stringify({ state: { taskScope: "team" }, version: 0 }));
+  it("drops a stored field it does not know", async () => {
+    local.setItem(KEY, JSON.stringify({ state: { theme: "dark", other: "x" }, version: 0 }));
     const { usePreferencesStore } = await import("./preferences");
+    expect(usePreferencesStore.getState()).not.toHaveProperty("other");
+    usePreferencesStore.getState().setTheme("light");
+    expect(JSON.parse(local.getItem(KEY) as string).state).toEqual({ taskScope: "mine", theme: "light", folded: {} });
+  });
+
+  it("reads the scope back on the next visit, and a scope it does not know as the default", async () => {
+    local.setItem(KEY, JSON.stringify({ state: { taskScope: "team" }, version: 0 }));
+    let { usePreferencesStore } = await import("./preferences");
     expect(usePreferencesStore.getState().taskScope).toBe("team");
+    vi.resetModules();
+    local.setItem(KEY, JSON.stringify({ state: { taskScope: "everything" }, version: 0 }));
+    ({ usePreferencesStore } = await import("./preferences"));
+    expect(usePreferencesStore.getState().taskScope).toBe("mine");
   });
 
   it("adopts the scope an earlier build kept as a bare word, once", async () => {

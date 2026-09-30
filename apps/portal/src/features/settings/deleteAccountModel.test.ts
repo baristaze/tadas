@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@tadas/client";
 import { confirms, GONE_LINE, listed, ownedAlone, refusalText, strandedHere } from "./deleteAccountModel";
 
-const acme = { id: "o1", name: "Acme", slug: "acme" };
+const ajax = { id: "o1", name: "Ajax", slug: "ajax" };
 const globex = { id: "o2", name: "Globex", slug: "globex" };
 
-function lastOwner(...orgs: (typeof acme)[]) {
-  return new ApiError(409, "last_owner", "you are the last owner", "req_1", undefined, null, null, orgs);
+function lastOwner(...orgs: (typeof ajax)[]) {
+  return new ApiError(409, "last_owner", "you are the last owner", "req_1", undefined, null, orgs);
 }
 
 describe("delete account model", () => {
@@ -22,21 +22,21 @@ describe("delete account model", () => {
   });
 
   it("names every org the person is the last owner of, and both ways out", () => {
-    expect(refusalText(lastOwner(acme))).toBe(
-      "You are the last owner of Acme. Make someone else an owner, or delete the organization, first. " +
+    expect(refusalText(lastOwner(ajax))).toBe(
+      "You are the last owner of Ajax. Make someone else an owner, or delete the organization, first. " +
         "Both are done in that organization's Settings.",
     );
-    expect(refusalText(lastOwner(acme, globex))).toBe(
-      "You are the last owner of Acme and Globex. In each, make someone else an owner, or delete the organization, first. " +
+    expect(refusalText(lastOwner(ajax, globex))).toBe(
+      "You are the last owner of Ajax and Globex. In each, make someone else an owner, or delete the organization, first. " +
         "Both are done in that organization's Settings.",
     );
-    expect(ownedAlone(lastOwner(acme))).toEqual([acme]);
+    expect(ownedAlone(lastOwner(ajax))).toEqual([ajax]);
   });
 
   it("links to this page's ways out only when the org it is in is one of them", () => {
-    expect(strandedHere([acme, globex], "o2")).toBe(true);
-    expect(strandedHere([acme], "o2")).toBe(false);
-    expect(strandedHere([acme], undefined)).toBe(false);
+    expect(strandedHere([ajax, globex], "o2")).toBe(true);
+    expect(strandedHere([ajax], "o2")).toBe(false);
+    expect(strandedHere([ajax], undefined)).toBe(false);
   });
 
   it("says any other refusal in the server's words", () => {

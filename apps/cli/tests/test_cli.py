@@ -1,5 +1,6 @@
-"""Command mode against the whole API in-process: sign in, the task verbs,
-short ids, assignees by name, JSON output, and the exit codes."""
+"""Command mode against the whole API in-process: sign in and out, the orgs
+and the switch, the task verbs, short ids, assignees by name, a task's
+files, JSON output, and the exit codes."""
 
 import asyncio
 import json
@@ -24,7 +25,7 @@ def test_login_keeps_a_session_and_whoami_reads_it(
 ) -> None:
     signed = stack.login(monkeypatch=monkeypatch)
     assert signed.exit_code == 0, signed.output
-    # Ann belongs to Acme and to her personal org; with no --org she enters
+    # Ann belongs to Ajax and to her personal org; with no --org she enters
     # the personal one, the place every person has.
     assert signed.stdout.startswith("signed in as Ann at Ann (owner)\nsession kept in ")
     session = config.load_session()
@@ -48,11 +49,11 @@ def test_login_over_a_kept_session_ends_that_session_and_keeps_the_new_one(
     first = config.load_session()
     assert first is not None
 
-    again = stack.login("--org", "acme", monkeypatch=monkeypatch)
+    again = stack.login("--org", "ajax", monkeypatch=monkeypatch)
     assert again.exit_code == 0, again.output
     assert again.stdout.endswith("the session kept before is ended\n")
     second = config.load_session()
-    assert second is not None and second.token != first.token and second.org_slug == "acme"
+    assert second is not None and second.token != first.token and second.org_slug == "ajax"
 
     # The old token answers 401; the new one is the kept session and works.
     assert stack.tadas("whoami", token=first.token).exit_code == main.EXIT_NOT_SIGNED_IN
@@ -89,8 +90,8 @@ def test_login_keeps_the_new_session_when_the_old_ones_api_cannot_be_reached(
             token="ses_kept",
             email="ann@example.test",
             display_name="Ann",
-            org_slug="acme",
-            org_name="Acme",
+            org_slug="ajax",
+            org_name="Ajax",
         )
     )
     sent_to: list[str] = []
@@ -128,7 +129,7 @@ def test_login_naming_an_org_the_person_is_not_in_is_a_usage_error(
 ) -> None:
     out = stack.login("--org", "nope", monkeypatch=monkeypatch)
     assert out.exit_code == 2, out.output
-    assert "choose an org with --org: acme" in out.output
+    assert "choose an org with --org: ajax" in out.output
     assert config.load_session() is None
 
 
@@ -185,8 +186,8 @@ def test_logout_never_sends_the_session_to_another_api(
             token="ses_kept",
             email="ann@example.test",
             display_name="Ann",
-            org_slug="acme",
-            org_name="Acme",
+            org_slug="ajax",
+            org_name="Ajax",
         )
     )
     sent: list[httpx.Request] = []
@@ -225,8 +226,8 @@ def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
             token="ses_kept",
             email="ann@example.test",
             display_name="Ann",
-            org_slug="acme",
-            org_name="Acme",
+            org_slug="ajax",
+            org_name="Ajax",
         )
     )
 
@@ -268,12 +269,12 @@ def test_login_waits_for_the_person_to_confirm_the_code(
             stack.twin.confirm_device(user_code, BOB["email"])
 
     monkeypatch.setattr(main, "pause", confirm_on_the_second_wait)
-    signed = stack.tadas("login", "--no-browser", "--org", "acme", token=None)
+    signed = stack.tadas("login", "--no-browser", "--org", "ajax", token=None)
     assert signed.exit_code == 0, signed.output
     assert "to sign in, open https://identity.twin.invalid/device?user_code=" in signed.output
     assert opened == [] and len(asks) == 2
     session = config.load_session()
-    assert session is not None and session.email == BOB["email"] and session.org_slug == "acme"
+    assert session is not None and session.email == BOB["email"] and session.org_slug == "ajax"
 
 
 def test_login_opens_the_browser_on_the_confirmation_page(
@@ -319,9 +320,9 @@ def test_a_code_nobody_confirms_expires_with_exit_1(
 
 
 def test_the_local_sign_in_takes_an_address_alone(stack: Stack) -> None:
-    signed = stack.tadas("login", "--dev-email", BOB["email"], "--org", "acme", token=None)
+    signed = stack.tadas("login", "--dev-email", BOB["email"], "--org", "ajax", token=None)
     assert signed.exit_code == 0, signed.output
-    assert signed.output.startswith("signed in as Bob at Acme (member)\nsession kept in ")
+    assert signed.output.startswith("signed in as Bob at Ajax (member)\nsession kept in ")
 
 
 def test_a_task_that_changed_while_the_command_ran_is_refused_with_exit_1(
@@ -359,10 +360,16 @@ def test_a_task_past_the_plans_bound_is_refused_with_exit_1_and_says_who_lifts_i
 
 
 def test_not_signed_in_is_exit_3(stack: Stack) -> None:
-    result = stack.tadas("ls", token=None)
+    result = stack.tadas("whoami", token=None)
     assert result.exit_code == 3 and "run `tadas login`" in result.output
-    bad = stack.tadas("ls", token="ses_nope")
+    bad = stack.tadas("whoami", token="ses_nope")
     assert bad.exit_code == 3 and "credential was refused" in bad.output
+
+
+def test_whoami_names_the_person_the_org_and_the_role(stack: Stack) -> None:
+    assert stack.tadas("whoami").output == "Ann <ann@example.test> at Ajax (owner)\n"
+    bob = stack.session_token(BOB["email"])
+    assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Ajax (member)\n"
 
 
 def test_the_task_verbs_in_sequence(stack: Stack) -> None:
@@ -464,7 +471,7 @@ def test_a_member_sees_the_owners_tasks_and_the_api_decides_what_is_allowed(stac
     bob = stack.session_token(BOB["email"])
     listed = stack.tadas("ls", token=bob)
     assert "Owner's task" in listed.output
-    assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Acme (member)\n"
+    assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Ajax (member)\n"
 
 
 def test_the_client_is_built_with_the_timeout_from_the_environment(
@@ -533,7 +540,7 @@ def test_an_api_that_cannot_be_reached_is_exit_4(
         ),
     )
     result = CliRunner().invoke(
-        main.app, ["ls"], env={"TADAS_API_URL": "http://test", "TADAS_TOKEN": "ses_1"}
+        main.app, ["whoami"], env={"TADAS_API_URL": "http://test", "TADAS_TOKEN": "ses_1"}
     )
     assert result.exit_code == 4, result.output
     assert result.output.startswith("cannot reach the API:")
@@ -557,7 +564,7 @@ def test_a_timeout_the_environment_got_wrong_is_a_usage_error(
         "TADAS_HTTP_TIMEOUT_SECONDS": bad,
     }
     runner = CliRunner()
-    for command in (["ls"], ["listen"], ["login", "--dev-email", "a@b.test"]):
+    for command in (["whoami"], ["listen"], ["login", "--dev-email", "a@b.test"]):
         result = runner.invoke(main.app, command, env=environment, catch_exceptions=False)
         assert result.exit_code == 2, f"{command}: {result.output}"
         assert result.output.startswith("TADAS_HTTP_TIMEOUT_SECONDS"), result.output
@@ -575,8 +582,8 @@ def test_a_bad_timeout_does_not_forget_the_session_logout_could_not_revoke(
         token="ses_1",
         email="ann@example.test",
         display_name="Ann",
-        org_slug="acme",
-        org_name="Acme",
+        org_slug="ajax",
+        org_name="Ajax",
     )
     config.save_session(session)
     result = CliRunner().invoke(
@@ -597,7 +604,7 @@ def test_a_token_the_environment_got_wrong_is_a_usage_error(
     smuggled = "ses_" + chr(0x2019) + "secret"  # the quote a document turned typographic
     result = CliRunner().invoke(
         main.app,
-        ["ls"],
+        ["whoami"],
         env={"TADAS_API_URL": "http://127.0.0.1:1", "TADAS_TOKEN": smuggled},
         catch_exceptions=False,
     )
@@ -634,8 +641,8 @@ def test_a_session_that_cannot_be_forgotten_is_a_usage_error(
             token="ses_1",
             email="ann@example.test",
             display_name="Ann",
-            org_slug="acme",
-            org_name="Acme",
+            org_slug="ajax",
+            org_name="Ajax",
         )
     )
 
@@ -659,23 +666,23 @@ def test_orgs_lists_where_the_person_belongs_and_marks_the_current_one(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     second_org(stack)
-    stack.login("--org", "acme", monkeypatch=monkeypatch)
+    stack.login("--org", "ajax", monkeypatch=monkeypatch)
     listed = stack.tadas("orgs", token=None)
     assert listed.exit_code == 0, listed.output
-    acme, mine, beta = listed.output.splitlines()
-    assert acme.startswith("* acme ") and acme.endswith("  Acme (owner)")
+    ajax, mine, beta = listed.output.splitlines()
+    assert ajax.startswith("* ajax ") and ajax.endswith("  Ajax (owner)")
     assert mine.startswith("  ann-") and mine.endswith("  Ann (owner, personal)")
     assert beta.startswith("  beta ") and beta.endswith("  Beta (member)")
     as_json = stack.tadas("orgs", "--json", token=None)
     teams = [m["org"]["slug"] for m in json.loads(as_json.output) if m["org"]["kind"] == "team"]
-    assert sorted(teams) == ["acme", "beta"]
+    assert sorted(teams) == ["ajax", "beta"]
 
 
 def test_switch_moves_the_kept_session_and_ends_the_old_one(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     second_org(stack)
-    stack.login("--org", "acme", monkeypatch=monkeypatch)
+    stack.login("--org", "ajax", monkeypatch=monkeypatch)
     before = config.load_session()
     assert before is not None
     moved = stack.tadas("switch", "beta", token=None)
@@ -697,12 +704,12 @@ def test_switch_to_an_org_the_person_is_not_in_is_a_usage_error(
     before = config.load_session()
     out = stack.tadas("switch", "nope", token=None)
     assert out.exit_code == 2, out.output
-    assert "no org 'nope' to switch to; yours are: acme" in out.output
+    assert "no org 'nope' to switch to; yours are: ajax" in out.output
     assert config.load_session() == before
 
 
 def test_switch_needs_a_kept_session(stack: Stack) -> None:
-    out = stack.tadas("switch", "acme")  # TADAS_TOKEN is the environment's, not the CLI's
+    out = stack.tadas("switch", "ajax")  # TADAS_TOKEN is the environment's, not the CLI's
     assert out.exit_code == 3, out.output
     assert "no kept session to switch" in out.output
 

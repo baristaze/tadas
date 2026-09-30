@@ -38,17 +38,17 @@ describe("deleteAccount", () => {
   });
 
   it("keeps the person signed in and says why when the server refuses", async () => {
-    const refusal = new ApiError(409, "last_owner", "you are the last owner", "req_1", undefined, null, null, [
-      { id: "o1", name: "Acme", slug: "acme" },
+    const refusal = new ApiError(409, "last_owner", "you are the last owner", "req_1", undefined, null, [
+      { id: "o1", name: "Ajax", slug: "ajax" },
     ]);
     const e = effects(() => Promise.reject(refusal));
     const outcome = await deleteAccount(e);
     expect(outcome).toEqual({
       deleted: false,
       refusal:
-        "You are the last owner of Acme. Make someone else an owner, or delete the organization, first. " +
+        "You are the last owner of Ajax. Make someone else an owner, or delete the organization, first. " +
         "Both are done in that organization's Settings.",
-      stranded: [{ id: "o1", name: "Acme", slug: "acme" }],
+      stranded: [{ id: "o1", name: "Ajax", slug: "ajax" }],
     });
     expect(e.forget).not.toHaveBeenCalled();
     expect(e.note).not.toHaveBeenCalled();
