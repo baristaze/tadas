@@ -30,10 +30,17 @@ reversal in part, named below.
   write from WARNING up. Tadas's Slack lines that name an exception
   carry its frames, and a Slack transport failure names the transport's
   error by its type. (#199)
+- **A Slack reply's URL stays in the process.** The URL a command's
+  answer goes to lets whoever holds it post into the channel as the
+  app. In 0.15.0 the Slack SDK wrote it whole in a retried reply's log
+  line, and each reply's breadcrumb kept it in its path. The Slack
+  SDK's loggers now write from WARNING up, and a breadcrumb names
+  `hooks.slack.com` by its scheme and host alone. (#199)
 - **`ops-root-cause` names each read it makes.** Each read goes through
   a `jq` that keeps what the step needs and never an exception's text.
-  It reads the tracker by request id for its environment, and every
-  read by the window's bounds. (#199)
+  It reads the tracker by request id for its environment, every read by
+  the window's bounds, and a tenant's open tasks, then its done ones, a
+  page at a time. (#199)
 - **Fixed.** The `.gitignore` anchors its build and coverage folders,
   so a namespace named `reports`, `coverage`, `build`, or `dist` is no
   longer ignored. The worker loop's tests wait on what they assert, not
