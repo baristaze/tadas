@@ -10,8 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.outbox_storage import claim_all, make_row
-from contracts.task_storage import make_task
+from contracts.outbox_storage import a_user, claim_all, make_row
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id
@@ -19,7 +18,7 @@ from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
+from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 
 
 class CountedMarks(OutboxStorageMemoryImpl):
@@ -37,13 +36,13 @@ class CountedMarks(OutboxStorageMemoryImpl):
 async def landed_rows(
     outbox: OutboxStorageMemoryImpl, org: UUID, count: int, request_id: UUID
 ) -> list[OutboxRow]:
-    """`count` tasks written by one request, each with its row."""
-    tasks = TasksStorageMemoryImpl(outbox)
+    """`count` users written by one request, each with its row."""
+    tenancy = TenancyStorageMemoryImpl(outbox)
     rows: list[OutboxRow] = []
     for _ in range(count):
-        task = make_task()
-        rows.append(make_row(org, task.id).model_copy(update={"request_id": request_id}))
-        await tasks.create_task(org, task, (rows[-1],))
+        user = a_user()
+        rows.append(make_row(org, user.id).model_copy(update={"request_id": request_id}))
+        await tenancy.write_user(org, user, (rows[-1],))
     return rows
 
 
