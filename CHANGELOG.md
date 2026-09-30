@@ -4,6 +4,23 @@ Each release has an entry here, the newest first. An entry lists what
 changed since the previous tag. A project that clones Tadas at a release
 checks out its tag, such as `git clone --branch v0.7.0`.
 
+## 0.9.0 (2026-09-30)
+
+Tadas's base is the guideline's scaffold, and the pin moves to v0.40.0
+by merging it. The portal, the command line, and the API work as they
+did at 0.8.0: no route, wire type, screen, or migration changes.
+
+- **Tadas is based on the guideline's scaffold.** The branch `scaffold`
+  holds swe_guidelines' `scaffold/acme_root/` as Tadas took it, renamed
+  to `tadas`: v0.39.0, then v0.40.0. `main` merges that branch, so a
+  later release comes in by a merge, and
+  `/swe-guidelines:arch-upgrade-scaffold` makes the move. (#177)
+- **The guideline pin moves to v0.40.0.** `make arch-check` passes at
+  v0.40.0, and ADR 0082 records what the release asks: ADRs 0011, 0027,
+  and 0040 are no longer deviations, and 0041 and 0067 keep one part
+  each. (#177)
+- **The ops skills** take the scaffold's added bounds and steps. (#177)
+
 ## 0.8.0 (2026-09-29)
 
 Tadas moves to the shape of the guideline at v0.39.0. The portal, the
