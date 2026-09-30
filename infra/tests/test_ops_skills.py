@@ -12,6 +12,7 @@ break them, and this test holds them there.
 """
 
 import itertools
+import json
 import os
 import re
 import shlex
@@ -51,6 +52,18 @@ TOKEN_HOLDERS = [
     "ops-watch",
     "stress-test-run",
 ]
+# The two that drive traffic, whose `tadas-ops` command reads the provisioner's
+# file; every other token holder reads, and holds the read token alone.
+PROVISIONERS = ["ops-simulate-traffic", "stress-test-run"]
+READS = [name for name in TOKEN_HOLDERS if name not in PROVISIONERS]
+ENV_FILE = "~/.config/tadas/ops/<env>.env"
+PROVISIONER_FILE = "~/.config/tadas/ops/<env>.provisioner.env"
+# A file a shell command sources: `. <path>` or `source <path>`, first on its
+# line or after a `;`, `&&`, `|`, or `(`, where the path starts with `~`, `/`,
+# `$`, or `./`; a `jq` filter's `(. - 1)` is no path.
+SOURCED = re.compile(
+    r"(?:^[ \t]*|[;&|(][ \t]*)(?:\.|source)[ \t]+((?:[~/$]|\.{1,2}/)[^\s;&|)]*)", re.MULTILINE
+)
 # The skills that read an environment under the investigate profile.
 INVESTIGATORS = [*TOKEN_HOLDERS, "ops-infra-as-code", "audit-deploy-time", "audit-retention"]
 # The skills that run under an account's administrator.
@@ -110,9 +123,81 @@ def test_the_shared_preamble_exists_and_holds_what_moved_into_it() -> None:
     text = PREAMBLE.read_text()
     assert "deployment/cloud/environments.json" in text
     assert "aws sts get-caller-identity" in text
-    assert "~/.config/tadas/ops/<env>.env" in text
+    assert ENV_FILE in text
     assert "TADAS_PROVISIONER_TOKEN" in text
+    assert PROVISIONER_FILE in text
     assert "tadas-<env>-investigate" in text
+
+
+def test_no_skill_sources_the_provisioners_file() -> None:
+    """A command that sources a file puts every value in it into the shell.
+    The env file holds the read token, and the provisioner's `write` token
+    has a file of its own that `tadas-ops` reads for traffic and stress: every
+    file a skill or the preamble sources is the env file, and the skills
+    that read an operator's rows source it."""
+    texts = {name: _skill(name) for name in _own()}
+    texts["_shared/ops-preamble.md"] = PREAMBLE.read_text()
+    sourced = {name: SOURCED.findall(text) for name, text in texts.items()}
+    assert {path for paths in sourced.values() for path in paths} == {ENV_FILE}
+    assert sourced["ops-investigate"] and sourced["ops-root-cause"]
+
+
+@pytest.mark.parametrize("name", READS)
+def test_a_skill_that_reads_names_no_write_token(name: str) -> None:
+    """The skills that read never name the provisioner's file or its key, so
+    none of their commands can reach the one `write` token."""
+    text = _skill(name)
+    assert ".provisioner.env" not in text
+    assert "TADAS_PROVISIONER_TOKEN" not in text
+
+
+# The `tadas-ops` commands a skill that reads may run: neither loads the
+# provisioner's token, which `traffic` and `stress` do.
+READ_COMMANDS = {"size", "signals"}
+
+
+@pytest.mark.parametrize("name", READS)
+def test_a_skill_that_reads_pre_approves_only_the_read_commands_it_runs(name: str) -> None:
+    """`uv run tadas-ops:*` covers `traffic` and `stress`, which load the
+    provisioner's `write` token: a skill that reads pre-approves each read
+    command it runs by name, and nothing wider."""
+    tools = [tool.strip() for tool in _allowed_tools(name).split(",")]
+    approved = {
+        match[1]
+        for tool in tools
+        if (match := re.fullmatch(r"Bash\(uv run tadas-ops ([a-z]+):\*\)", tool))
+    }
+    assert "Bash(uv run tadas-ops:*)" not in tools
+    assert approved <= READ_COMMANDS, approved
+    assert approved == set(re.findall(r"\buv run tadas-ops (\w+)", _prose(name))) & READ_COMMANDS
+
+
+@pytest.mark.parametrize("name", READS)
+def test_a_skill_that_reads_stops_at_the_refusal_before_it_sources_the_env_file(
+    name: str,
+) -> None:
+    """`tadas-ops` refuses an env file that holds the provisioner's token, and
+    prints the line that moves it. A skill that reads stops there, before any
+    command of it sources that file."""
+    text = _prose(name)
+    stop = text.index("give the person the line it printed")
+    sourced = text.find(f". {ENV_FILE}")
+    assert sourced == -1 or stop < sourced
+
+
+def test_the_refusal_a_traffic_skill_waits_for_is_the_generators() -> None:
+    said = "holds no provisioner token"
+    assert said in _prose("ops-simulate-traffic")
+    assert said in " ".join(PREAMBLE.read_text().split())
+    assert said in (ROOT / "ops" / "src" / "tadas" / "ops" / "traffic.py").read_text()
+
+
+@pytest.mark.parametrize("name", PROVISIONERS)
+def test_a_skill_that_drives_traffic_leaves_the_provisioners_file_to_tadas_ops(name: str) -> None:
+    text = _prose(name)
+    assert PROVISIONER_FILE in text
+    assert "Never read the env file or the provisioner's file, and never source" in text
+    assert "`tadas-ops` reads both itself from `--env`." in text
 
 
 @pytest.mark.parametrize("name", READERS)
@@ -160,10 +245,9 @@ def test_a_skill_that_holds_a_token_pre_approves_the_ops_command_and_no_other(na
     is code on the operator's machine beside the env file's tokens, with
     nobody asked. The skill runs `tadas-ops` and names that."""
     tools = [tool.strip() for tool in _allowed_tools(name).split(",")]
-    assert "Bash(uv run tadas-ops:*)" in tools
-    assert not [
-        tool for tool in tools if tool.startswith("Bash(uv") and tool != "Bash(uv run tadas-ops:*)"
-    ]
+    uv = [tool for tool in tools if tool.startswith("Bash(uv")]
+    assert uv, f"{name} pre-approves no tadas-ops command"
+    assert all(re.fullmatch(r"Bash\(uv run tadas-ops(?: [a-z]+)?:\*\)", tool) for tool in uv), uv
     runs = set(re.findall(r"\buv run ([\w-]+)", _prose(name)))
     assert runs == {"tadas-ops"}, f"{name} runs uv with {sorted(runs)}"
 
@@ -193,6 +277,204 @@ def test_the_root_cause_reads_of_a_tenant_keep_no_text_the_tenant_wrote() -> Non
     assert "Bash(jq:*)" in _allowed_tools("ops-root-cause")
     assert "never run either read without its `jq`" in _prose("ops-root-cause")
     assert "**Tenant.** <kind> org" in _skill("ops-root-cause")
+
+
+# Every read of the operator plane a skill writes: a `curl` of a route under
+# `/v1/admin/`, and the `jq` it is piped through on the next line. A read with
+# no filter prints whatever the answer holds, and a read each run writes its
+# own way reads something else on each run.
+OPERATOR_READ = re.compile(
+    r'^ *curl [^\n]*"\$TADAS_API_URL/v1/admin/(?P<route>[^"]*)"'
+    r"(?P<piped> \\\n +\| jq (?:-c )?'(?P<kept>[^'\n]*)'$)?",
+    re.MULTILINE,
+)
+ROOT_CAUSE_READS = [
+    "me",
+    "orgs/<org_id>",
+    "orgs/<org_id>/members",
+    "orgs/<org_id>/members?cursor=<next_cursor>",
+    "orgs/<org_id>/events?after_seq=<n>&limit=1",
+    "orgs/<org_id>/events?after_seq=<seq>&limit=200",
+]
+
+
+@pytest.mark.parametrize("name", _own())
+def test_every_read_of_the_operator_plane_goes_through_jq(name: str) -> None:
+    for read in OPERATOR_READ.finditer(_skill(name)):
+        assert read["piped"], f"{name} prints a read of the operator plane whole: {read[0]}"
+
+
+def test_the_root_cause_writes_each_read_it_makes() -> None:
+    """The operator, the tenant, its members and their next page, a probe of
+    the feed, and a page of it: each is a command of the skill, so no run
+    writes its own."""
+    reads = [read["route"] for read in OPERATOR_READ.finditer(_skill("ops-root-cause"))]
+    assert reads == ROOT_CAUSE_READS
+
+
+def _jq(program: str, answer: object) -> object:
+    """What a read prints for an answer: one JSON value, never nothing."""
+    done = subprocess.run(
+        ["jq", "-c", program], input=json.dumps(answer), capture_output=True, text=True, check=True
+    )
+    (printed,) = done.stdout.splitlines()
+    return json.loads(printed)
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed")
+def test_the_root_cause_reads_print_what_the_report_needs() -> None:
+    """Each filter runs here as the skill writes it. The operator's address
+    leaves as its domain alone, a probe that finds no event says so, a page
+    says how long it is and where the next one starts, and every read prints a
+    refusal as its code."""
+    kept = {
+        read["route"]: read["kept"] for read in OPERATOR_READ.finditer(_skill("ops-root-cause"))
+    }
+    me = {"identity_id": "0" * 32, "email": "sam@example.test", "operator_role": "read"}
+    assert _jq(kept["me"], me) == {
+        "operator_role": "read",
+        "email_domain": "example.test",
+        "error": None,
+    }
+    event = {
+        "seq": 7,
+        "kind": "tenancy.org.updated",
+        "target_id": "1" * 32,
+        "produced_at": "2026-01-01T00:00:00Z",
+        "actor_id": "2" * 32,
+        "request_id": "3" * 32,
+        "app": "portal",
+    }
+    probe = kept["orgs/<org_id>/events?after_seq=<n>&limit=1"]
+    assert _jq(probe, [event]) == {"seq": 7, "produced_at": "2026-01-01T00:00:00Z"}
+    assert _jq(probe, []) == {"seq": None, "produced_at": None}
+    page = kept["orgs/<org_id>/events?after_seq=<seq>&limit=200"]
+    assert _jq(page, [event]) == {"count": 1, "last_seq": 7, "events": [event]}
+    assert _jq(page, []) == {"count": 0, "last_seq": None, "events": []}
+    # A 401 prints as its code, which is how the run knows its token expired.
+    for code in ("not_found", "not_authenticated"):
+        refusal = {"error": {"code": code, "message": code, "request_id": "4" * 32}}
+        for route, program in kept.items():
+            printed = _jq(program, refusal)
+            assert isinstance(printed, dict) and printed["error"] == code, route
+
+
+# The two reads of the error tracker a pass makes: the issues of the request,
+# and the events of each issue. An issue's title and an event's exception carry
+# the exception's text, which can quote what the tenant sent.
+TRACKER_READ = re.compile(
+    r'^ +"\$TADAS_ERROR_TRACKER_URL/api/0/(?P<route>[^"]*)"'
+    r"(?P<piped> \\\n +\| jq (?:-c )?'(?P<kept>[^'\n]*)'$)?",
+    re.MULTILINE,
+)
+ISSUES = "projects/$TADAS_ERROR_TRACKER_ORG/$TADAS_ERROR_TRACKER_PROJECT/issues/"
+EVENTS = "issues/<issue id>/events/"
+
+
+def test_the_root_cause_reads_the_tracker_through_jq_for_this_request_alone() -> None:
+    reads = list(TRACKER_READ.finditer(_skill("ops-root-cause")))
+    assert [read["route"] for read in reads] == [ISSUES, EVENTS]
+    for read in reads:
+        assert read["piped"], f"a read of the tracker is printed whole: {read[0]}"
+    # Sentry answers a page of the issue's events: the two filters put this
+    # request's event on it, and `full=true` puts its stack in it.
+    assert (
+        '--data-urlencode "environment=<env>" --data-urlencode "query=request_id:<id>"'
+        in _skill("ops-root-cause")
+    )
+    assert '--data-urlencode "full=true"' in _skill("ops-root-cause")
+
+
+def _tracker_event(request_id: str, environment: str, said: str) -> dict[str, object]:
+    """An event as the tracker answers it with `full=true`: four frames of the
+    product's code under one of a library's, and the exception's text."""
+    frames = [
+        {"filename": f"app/{name}.py", "lineNo": line, "function": name, "inApp": True}
+        for line, name in enumerate("abcd", start=1)
+    ]
+    frames.append({"filename": "lib/e.py", "lineNo": 5, "function": "e", "inApp": False})
+    tags = {"request_id": request_id, "environment": environment, "release": "api@1"}
+    exception = {"type": "ValidationError", "value": said, "stacktrace": {"frames": frames}}
+    return {
+        "eventID": f"{request_id}-{environment}",
+        "dateCreated": "2026-01-01T00:00:00Z",
+        "tags": [{"key": key, "value": value} for key, value in tags.items()],
+        "entries": [{"type": "exception", "data": {"values": [exception]}}],
+    }
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed")
+def test_the_root_cause_tracker_reads_keep_no_text_of_the_exception() -> None:
+    """The issues keep their id, when they were last seen, and how often; the
+    events keep the one of this request in this environment, its type, and
+    the last three frames of the product's code. A refusal prints as itself."""
+    kept = {
+        read["route"]: read["kept"].replace("<id>", "r-1").replace("<env>", "local")
+        for read in TRACKER_READ.finditer(_skill("ops-root-cause"))
+    }
+    said = "1 validation error, input_value={'email': 'sam@example.test'}"
+    issue = {
+        "id": "7",
+        "title": f"ValidationError: {said}",
+        "culprit": said,
+        "metadata": {"value": said},
+        "lastSeen": "2026-01-01T00:00:00Z",
+        "count": "4",
+    }
+    assert _jq(kept[ISSUES], [issue]) == {
+        "issues": [{"id": "7", "lastSeen": "2026-01-01T00:00:00Z", "count": "4"}]
+    }
+    page = [
+        _tracker_event("r-1", "local", said),
+        _tracker_event("r-1", "production", said),
+        _tracker_event("r-2", "local", said),
+    ]
+    frames = [
+        {"filename": f"app/{name}.py", "lineNo": line, "function": name}
+        for line, name in enumerate("bcd", start=2)
+    ]
+    assert _jq(kept[EVENTS], page) == {
+        "events": [
+            {
+                "id": "r-1-local",
+                "at": "2026-01-01T00:00:00Z",
+                "release": "api@1",
+                "exception": [{"type": "ValidationError", "frames": frames}],
+            }
+        ]
+    }
+    assert _jq(kept[EVENTS], []) == {"events": []}
+    for program in kept.values():
+        assert _jq(program, {"detail": "Unauthorized"}) == {"error": "Unauthorized"}
+
+
+# Where two runs of the root cause could read two things or end two ways:
+# each is a sentence of the skill.
+ROOT_CAUSE_DECIDES = [
+    "The tracker holds no tenant",
+    "never an org id, so it is never read by the tenant or by a tag guessed for one",
+    "Without `--request-id`, when the window's events hold no request tied to the symptom, "
+    "the run makes no pass",
+    "so a run whose only such events are writes that landed still makes its passes",
+    "which a read through its `jq` prints as the error code `not_authenticated`",
+    'The pass writes its error leg as "not read", with which of the three it was, '
+    "and goes on to the logs",
+    "--since <start_at> --until <end_at> api maintenance",
+    "so `<n>` is the minutes from the window's `start` of step 3 to now, rounded up",
+    "with the request id the tenant saw as `--request-id`",
+    "The run never widens the window itself",
+    "The next page reads from the page's `last_seq`, until a page's `count` is under 200",
+    "The run goes on only on `operator_role: read`.",
+    "The window ends when this step starts and begins `--since` before it, both read once",
+    "carry the exception's text, which can quote what the tenant sent, "
+    "so the `jq` keeps the issue's `id`, `lastSeen`, and `count` alone",
+    "the last three frames of the product's code, never the exception's text",
+]
+
+
+@pytest.mark.parametrize("sentence", ROOT_CAUSE_DECIDES)
+def test_the_root_cause_leaves_no_read_to_the_run(sentence: str) -> None:
+    assert sentence in _prose("ops-root-cause"), f"ops-root-cause no longer says: {sentence}"
 
 
 def test_the_audits_are_the_skills_named_for_one() -> None:

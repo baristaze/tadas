@@ -19,7 +19,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import ClassVar
 
-from tadas.infra.observability import OUTCOMES
+from tadas.infra.observability import OUTCOMES, described
 from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import NotFound, PreconditionFailed
 from tadas.om.orchestrations import OrchestrationsManagerInterface
@@ -86,9 +86,7 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
             log.exception(
                 "%s %s failed on the last attempt of %s", record.kind.value, record.id, item.id
             )
-            await self._orchestrations.fail(
-                ctx, record, FailReason.DEFECT, f"{type(error).__name__}: {error}"
-            )
+            await self._orchestrations.fail(ctx, record, FailReason.DEFECT, described(error))
             return
         log.info(
             "%s %s at %d of %s: %s",

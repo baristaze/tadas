@@ -85,10 +85,11 @@ the repository's environments and their variables.
 
 No env file is read. The script writes one, the file the preamble
 describes: `~/.config/tadas/ops/<env>.env`, owner-only, with
-`TADAS_API_URL` set and the lines `TADAS_OPERATOR_TOKEN`,
-`TADAS_PROVISIONER_TOKEN`, and the tracker's left empty, because no
-operator exists until `grant-operator.yml` has run and the operator
-has enrolled a second factor. The script prints the two tracker lines,
+`TADAS_API_URL` set and the lines `TADAS_OPERATOR_TOKEN` and the
+tracker's left empty, because no operator exists until
+`grant-operator.yml` has run and the operator has enrolled a second
+factor. It writes no provisioner's file: `tadas-ops token --identity
+provisioner` makes that one when the person copies the token. The script prints the two tracker lines,
 `TADAS_ERROR_TRACKER_URL` and `TADAS_ERROR_TRACKER_TOKEN`, as the one
 part of the file a person fills by hand, once the product's project
 exists in the error tracker; it writes `TADAS_ERROR_TRACKER_ORG` and

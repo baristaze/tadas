@@ -540,9 +540,10 @@ if [ "$environment" = "staging" ]; then
 fi
 
 say "== 6. The operator's env file for $environment"
-# The two operator tokens are empty: no operator exists until the
+# The operator's token is empty: no operator exists until the
 # grant-operator workflow has run, and a token is minted, never typed. The
-# file never holds a password or a TOTP secret.
+# file never holds a password, a TOTP secret, or the provisioner's write
+# token, which has a file of its own that `tadas-ops token` writes.
 api_url="https://$api_domain_name"
 ops_dir="$HOME/.config/tadas/ops"
 ops_file="$ops_dir/$environment.env"
@@ -552,18 +553,18 @@ else
   say "+ write $ops_file (mode 600):"
   say "  TADAS_API_URL=$api_url"
   say "  TADAS_OPERATOR_TOKEN=         # read; uv run tadas-ops token --env $environment --identity operator"
-  say "  TADAS_PROVISIONER_TOKEN=      # write; uv run tadas-ops token --env $environment --identity provisioner"
   say "  TADAS_ERROR_TRACKER_URL="
   say "  TADAS_ERROR_TRACKER_TOKEN="
   say "  TADAS_ERROR_TRACKER_ORG=tadas          # the product's one project, the same"
   say "  TADAS_ERROR_TRACKER_PROJECT=tadas      # in every environment; the read filters on environment:$environment"
   if ! $dry_run; then
     mkdir -p "$ops_dir"
-    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_PROVISIONER_TOKEN=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\nTADAS_ERROR_TRACKER_ORG=tadas\nTADAS_ERROR_TRACKER_PROJECT=tadas\n' "$api_url" > "$ops_file")
+    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\nTADAS_ERROR_TRACKER_ORG=tadas\nTADAS_ERROR_TRACKER_PROJECT=tadas\n' "$api_url" > "$ops_file")
     chmod 600 "$ops_file"
   fi
 fi
 say "Filled by hand, once the product's project exists in the error tracker (one project for every environment): TADAS_ERROR_TRACKER_URL and TADAS_ERROR_TRACKER_TOKEN in $ops_file."
+say "The provisioner's write token goes in $ops_dir/$environment.provisioner.env, never in $ops_file, which every skill that reads sources: step 8's token command writes it there."
 
 say "== 7. The first deploy, through the pipeline like every other"
 case "$environment" in
