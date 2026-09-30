@@ -65,15 +65,14 @@ of deleted tasks has an order by its retention column. The
 idempotency purge and the trim keep generic plans that read their
 indexes.
 
-## Alternatives
-
-An order by the retention column keeps the generic plan on the index,
-since an index walk gives that order and stops at the limit. It does not
-keep a backlog's custom plan there. The system scope's policy makes the
-planner count about 22 rows where 95,000 are past the cut. With 22 rows
-to sort, a scan and a sort look cheap, so the planner sorts the whole
-backlog to take one batch. On the seed's outbox that batch takes 51 ms,
-with a sort spilled to disk, where the index walk takes 2.2 ms. The
+**The plan takes its values, never an order by the retention column.**
+An order keeps the generic plan on the index, since an index walk gives
+that order and stops at the limit. It does not keep a backlog's custom
+plan there. The system scope's policy makes the planner count about 22
+rows where 95,000 are past the cut. With 22 rows to sort, a scan and a
+sort look cheap, so the planner sorts the whole backlog to take one
+batch. On the seed's outbox that batch takes 51 ms, with a sort spilled
+to disk, where the index walk takes 2.2 ms. The
 order is kept only where it was: the read of deleted tasks, whose
 partial index holds deleted rows alone.
 
