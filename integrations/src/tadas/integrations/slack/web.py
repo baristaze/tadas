@@ -188,7 +188,7 @@ class SlackWebImpl(SlackInterface):
         try:
             answer = await hook.send(text=text, response_type="ephemeral")
         except Exception as error:
-            raise SlackFailed(type(error).__name__, str(error)) from error
+            raise SlackFailed(type(error).__name__) from error
         if answer.status_code >= 400:
             raise SlackFailed(f"http_{answer.status_code}", answer.body)
 
@@ -223,7 +223,7 @@ class SlackWebImpl(SlackInterface):
         except SlackError:
             raise
         except Exception as error:
-            raise SlackFailed(type(error).__name__, str(error)) from error
+            raise SlackFailed(type(error).__name__) from error
 
     def describe(self) -> str:
         return "slack=web"

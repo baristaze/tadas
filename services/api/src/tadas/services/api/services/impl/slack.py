@@ -91,7 +91,9 @@ class SlackServiceImpl(SlackServiceInterface):
             # failed, and installs again.
             if unanswered.code != InfraUnavailable.code:
                 raise
-            log.warning("slack install could not keep its token: %s", unanswered.message)
+            log.warning(
+                "slack install could not keep its token: %s", unanswered, exc_info=unanswered
+            )
             return "failed"
         return "installed"
 

@@ -401,12 +401,15 @@ class SlackInboundConsumer:
             except (SlackError, PlatformException) as error:
                 if not settled(error):
                     log.warning(
-                        "slack inbound: %s met %s; the queue hands it back", delivery.key, error
+                        "slack inbound: %s met %s; the queue hands it back",
+                        delivery.key,
+                        error,
+                        exc_info=error,
                     )
                     OUTCOMES.labels(subsystem="slack_inbound", outcome="failed").inc()
                     continue
                 # A refusal no retry changes is said in the log; the call is done.
-                log.warning("slack inbound: %s answered %s", delivery.key, error)
+                log.warning("slack inbound: %s answered %s", delivery.key, error, exc_info=error)
                 OUTCOMES.labels(subsystem="slack_inbound", outcome="refused").inc()
             except Exception:
                 log.exception("slack inbound: %s failed; the queue hands it back", delivery.key)
