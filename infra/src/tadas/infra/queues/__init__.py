@@ -9,7 +9,7 @@ from tadas.infra.base import InfraModel
 
 
 class Queues(StrEnum):
-    WEBHOOKS = "webhooks"
+    WEBHOOKS = "webhooks"  # what a provider sends the API, verified there, handled by maintenance
     SLACK = "slack"  # what Slack sends the API, acknowledged there, handled by maintenance
 
 
