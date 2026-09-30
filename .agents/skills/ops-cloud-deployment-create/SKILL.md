@@ -218,8 +218,9 @@ the names of what was written and never a value.
    not exist yet.
 
 5. Write the report. Its Next is the person's to run, never the
-   session's: the next run of Order acts on another account, and
-   `grant-operator.yml` grants an operator.
+   session's: the next run of Order acts on another account,
+   `grant-operator.yml` grants an operator, and the providers' secrets
+   are written under the person's own sign-in.
 
 ## What it never does
 

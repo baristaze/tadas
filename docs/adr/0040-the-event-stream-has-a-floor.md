@@ -30,7 +30,12 @@ The guideline gives the shape of the answer twice. "The stream is a
 stream of hints", and "Replay from storage is the durability
 mechanism", so a client that cannot replay reads the records instead.
 And a topic payload carries `truncated`, "set by a bus that trims; the
-consumer re-reads the record". It names no retention for the stream.
+consumer re-reads the record". NET-22 ("Realtime at the Edge") keeps
+the stream for a retention, the trim moves a floor, and a read below
+the floor is `410 stream_truncated`, naming the floor and the head;
+DEL-18 lets an exception no shape fits set its own status and code
+under the root. It leaves the numbers, the batch, and the client's
+resync to the system.
 
 ## Decision
 

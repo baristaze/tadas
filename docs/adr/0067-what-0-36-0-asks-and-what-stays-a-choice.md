@@ -65,12 +65,12 @@ environment, calls no real provider, and writes to no shared database.
 A count is a fact where a reading is an estimate, and each row of the
 report says which it is.
 
-**The recheck's interval is a realtime setting.** OpContext, Stages
-names it `session_recheck_interval`. Here it is
-`realtime_recheck_seconds` (`TADAS_REALTIME_RECHECK_SECONDS`), beside
-the realtime service's other bounds, 300 seconds by default. The
-interval, its default, and the bound it states are the guideline's.
-Only the name differs.
+**The recheck's interval is a realtime setting.** TenantContext, Stages
+names it `realtime_recheck_seconds`, a setting of the realtime service
+beside its other bounds. Here it is `realtime_recheck_seconds`
+(`TADAS_REALTIME_RECHECK_SECONDS`), 300 seconds by default. The
+interval, its default, its name, and the bound it states are the
+guideline's.
 
 ## Consequences
 

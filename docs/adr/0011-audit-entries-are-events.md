@@ -4,13 +4,10 @@
 
 ## Context
 
-OM-16 (Namespaces as Swimlanes) says: "Cross-cutting namespaces are
-namespaces like any other. Tenancy (organizations, users, memberships,
-credentials) and audit (who did what, when, from which app) are
-first-class swimlanes with their own types, managers, and storage, not
-utilities hanging off the root." "Realtime at the Edge" gives the shape:
-"A manager records one event per write through the outbox of Database
-Roles; an audit entry is the same shape plus the principal and the app."
+OM-16 (Namespaces as Swimlanes) makes audit, who did what, when, and
+from which app, a kind of event: an audit entry is an `Event` with an
+audit kind, in the events namespace's stream, until audit gains a
+reader of its own or must be kept longer than the stream.
 
 Tadas has no `audit` namespace. An audit entry is an `Event` in the
 `events` namespace with an audit kind (`work.item.failed`,
@@ -52,9 +49,8 @@ event's plus the facts.
 
 ## Consequences
 
-OM-16's "first-class swimlane" is met by the events namespace and this
-record: a review that looks for an audit namespace and finds none
-cites it. What Tadas gives up is a place to query audit alone: an
+The events namespace is audit's swimlane, as OM-16 states, and this
+record names its kinds and who writes each. What Tadas gives up is a place to query audit alone: an
 audit entry is read by replaying the stream, and the kind is the
 filter. The events table's retention is the audit retention, and a
 purge of the stream is a purge of the audit; an audit namespace with

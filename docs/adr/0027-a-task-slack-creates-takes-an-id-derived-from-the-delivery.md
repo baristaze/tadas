@@ -7,7 +7,9 @@ from Slack's own id; see the note at the end.
 ## Context
 
 "Identifiers" says every id is a `uuid_v7` minted above storage with
-`new_id()`. "Idempotency on the Consumer Side" says a message from
+`new_id()`, or with `derived_id()` from a key that names the record, so
+a second run makes the same id: what an outside delivery creates, or
+what a step of an orchestration makes. "Idempotency on the Consumer Side" says a message from
 outside carries a key derived from the provider's delivery, and the
 handler dedupes on it: the key lives on the row the effect produces,
 or the marker and the effect are one atomic write.
