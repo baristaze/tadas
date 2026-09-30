@@ -1,62 +1,42 @@
 # ADR 0015: The event keeps `produced_at`, because its public record carries no id
 
-**Status**: superseded (2026-09-29). Guideline v0.39.0 reverses OM-06:
-an append-only record carries its time in a field of its own, such as
-`produced_at`, and its time is never read out of its id. `Event` keeps
-`produced_at`, as this record decided, and that is the rule now, so the
-route out below is not taken ([ADR 0081](0081-what-0-39-0-asks.md)).
-The record stays for the interval it covers.
+**Status**: accepted (2026-09-20). A deviation until guideline v0.39.0
+reversed OM-06 (2026-09-29): an append-only record carries its time in
+a field of its own, such as `produced_at`, and its time is never read
+out of its id. `Event` keeps `produced_at`, as this record decided, and
+that is the rule now, so the route out it named is not taken
+([ADR 0081](0081-what-0-39-0-asks.md)).
 
 ## Context
 
-"Naming Entities" says an append-only record such as an audit entry or
-a ledger line is `Identifiable` and nothing else: never updated, so no
-`updated_at`; never hidden, so no `deleted_at`; and "its birth time is
-the one in its id, since every id is a `uuid_v7` with the millisecond
-in front, so the 'when' of an audit entry costs no column".
+Naming Entities says an append-only record such as an event is
+`Identifiable` and carries its time in a field of its own, `created_at`
+or a name of its own: never updated, so no `updated_at`; never hidden,
+so no `deleted_at`. An id is not a clock (Identifiers), so a record's
+time is never read out of its id.
 
-Tadas's `Event` is `Identifiable` and carries an explicit
-`produced_at`. The rule's premise holds here: every construction of an
-`Event` sets `produced_at` to the moment its own id was minted. The
-relay appends under the outbox row's id and passes that row's
-`created_at`, and both the second relay path and `audit_event` pair a
-fresh id with the same `utcnow()`. Nothing orders or filters on the
-column; the stream is ordered by `seq`. So inside the object model the
-column is redundant, exactly as the rule says.
+`Event` is `Identifiable` and carries an explicit `produced_at`. Every
+construction sets it to the moment its id was minted, so inside the
+object model the value is the id's millisecond.
 
 It is not redundant at the edge. `EventView`, the public record of the
-stream, is `{seq, kind, target_id, produced_at, actor_id}` and
-**publishes no `id`**. The rule pays for itself only where the id
-travels. Dropping the column would leave the published record with no
-time and no id to derive one from, which is a loss of information at
-the wire rather than the removal of a duplicate. The same field is
-also an infra contract: the topic envelope carries `produced_at`, so
-the object model would have to derive a moment from an id to keep it,
-and no such rule exists in the repository.
+stream, is `{seq, kind, target_id, produced_at, actor_id}` and publishes
+no `id`. Dropping the column would leave the published record with no
+time and no id to derive one from. The topic envelope carries
+`produced_at` too. And two readers filter on the column through
+`ix_events_produced_at`: the trim of the stream
+([ADR 0040](0040-the-event-stream-has-a-floor.md)) and the count of the
+day's events behind the platform's size
+([ADR 0074](0074-the-platforms-size-is-a-tally-the-sweep-keeps.md)).
 
 ## Decision
 
-`Event` keeps `produced_at` for now, and this record is the deviation.
-
-The route out is named, so this is a deferral and not a disagreement.
-In order: give `EventView` the record's `id`, which is the field the
-rule assumes a reader has; add one pure rule that reads the moment out
-of a `uuid_v7`, beside the one that already builds a bound from a
-moment; derive the wire's `produced_at` from the id at the service
-impl's translation; then drop the field and the column. The middle
-steps are worth doing on their own, because they are what make the
-rule's premise true at the edge rather than only inside.
+`Event` keeps `produced_at`, the time field of its own that Naming
+Entities asks of an append-only record, under the event's own name, and
+indexed.
 
 ## Consequences
 
-A review that reads "Naming Entities" against `om/events/types/event.py`
-finds an append-only record with a birth-time column and cites this
-record. What Tadas carries meanwhile is one redundant column on the
-`activity` role and a value that is the id's millisecond either way, so
-nothing reads differently.
-
-The last step is irreversible in one direction: a down migration can
-re-add the column but not its values. That is another reason the id
-reaches the wire first, on its own, before anything is dropped, so the
-information exists in the published record before it stops existing in
-the row.
+A review that reads Naming Entities against
+`om/src/tadas/om/events/types/event.py` finds the field the rule asks
+for. The cost is one column and its index on the `activity` role.
