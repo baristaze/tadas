@@ -99,7 +99,7 @@ reason = "the unique index is (org_id, idempotency_key), led by the tenant as th
 # position names, until the column goes.
 [[tool.arch-check.exception]]
 rule = "STO-05"
-path = "om/migrations/sql/core/202610120000_task_rank.up.sql"
+path = "om/migrations/sql/core/202610200100_the_core_role.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
 reason = "a trigger copies a task's position into its rank on a row written without one; it goes with the position's column"
 
@@ -107,7 +107,7 @@ reason = "a trigger copies a task's position into its rank on a row written with
 # its rank's float, until the column goes.
 [[tool.arch-check.exception]]
 rule = "STO-05"
-path = "om/migrations/sql/core/202610200000_task_position_unmapped.up.sql"
+path = "om/migrations/sql/core/202610200100_the_core_role.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
 reason = "a trigger copies a task's rank into its position, which no statement writes; it goes with the column"
 
