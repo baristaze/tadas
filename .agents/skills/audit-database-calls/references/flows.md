@@ -52,16 +52,21 @@ What a flow has on `w`, the `World`:
   and `s` (the run's suffix, to keep made names unique).
 - `w.container` (the API's managers and services), `w.worker` (the
   worker's container), `w.loop` (the worker loop: `_try_claim`,
-  `_sweep_once`), `w.idp` (the identity twin: `issue_code`,
-  `confirm_device`), `w.integrations` (the payments and Slack twins:
+  `_sweep_once`), `w.idp` (the identity provider's twin: `issue_code`,
+  `confirm_device`, `accept_invitation`, and `signed_event`, which
+  answers the body and the `WorkOS-Signature` header of a delivery to
+  `POST /webhooks/identity`), and `w.integrations` (the integrations
+  root over that twin and the payments and Slack twins:
   `get_payments()`, which is also `w.container.payments`, and
   `get_slack()`; the twins' tests under `integrations/tests/` show
   their helpers, such as `complete_checkout` and `signed`). A billing
   `return_url` is on an origin the API allows (`cors_origins`,
-  `http://localhost:5173`); a sign-in's redirect is on `55173`. A
-  queue's consumer runs through the worker's
-  `build_consumer(w.worker)` and `build_inbound(w.worker)` (in
-  `workers/maintenance/src/tadas/workers/maintenance/main.py`).
+  `http://localhost:5173`); a sign-in's redirect is on `55173`. The
+  webhooks' queue consumer runs through the worker's
+  `build_consumer(w.worker)`, and Slack's through
+  `build_inbound(w.worker)` (both in
+  `workers/maintenance/src/tadas/workers/maintenance/main.py`), one
+  message at a time with its `handle`.
 - `await w.sql("<statement>")`: a statement as the superuser on the
   audit database, uncounted, for setup no route makes, such as aging
   rows past a retention or making an item ready now.
@@ -69,14 +74,13 @@ What a flow has on `w`, the `World`:
   window)`, to count a span by hand; `drain(w)` in the built-in flows is
   the example (a claim, its handler, and its settle as one count).
 
-The helpers `headers`, `login`, `session`, `make_tasks`, and
-`worker_request` import from `dbcalls_flows`, and the API tests' own
-helpers from `api_support` (`services/api/tests/api_support.py`, on the
-path once `dbcalls_flows` is imported): `add_member`, `on_plan`,
-`seed_request`, and `enrol_operator(w.client, w.container, email,
-OperatorRole.READ)` for the operator plane's routes, with `OperatorRole`
-from `tadas.om.context`. The built-in `sweep` flow measures a pass at
-two tenant counts, so a pass's cost per tenant is a measure, not a
-guess. A flow that raises is named
-in the run's output and the next one runs; write each flow so it stands
-on what `seed` made, not on another flow of the file.
+The helpers `headers`, `login`, `session`, `make_tasks`, `drain`,
+and `worker_request` import from `dbcalls_flows`, and the API tests' own helpers from
+`api_support` (`services/api/tests/api_support.py`, on the path once
+`dbcalls_flows` is imported): `add_member`, `on_plan`, `seed_request`, and
+`enrol_operator(w.client, w.container, email, OperatorRole.READ)` for the
+operator plane's routes, with `OperatorRole` from `tadas.om.context`.
+The built-in `sweep` flow measures a pass at two tenant counts, so a
+pass's cost per tenant is a measure, not a guess. A flow that raises is
+named in the run's output and the next one runs; write each flow so it
+stands on what `seed` made, not on another flow of the file.
