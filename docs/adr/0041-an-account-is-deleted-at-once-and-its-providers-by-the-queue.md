@@ -5,7 +5,10 @@ that refuses the call fails the item at once, and an operator requeues
 it; amended (2026-09-26): the last owner's two ways out are in Settings,
 so no account waits on an operator
 ([ADR 0042](0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
-A deviation from STO-32, and from CTX-34 for the unassignment.
+A deviation from CTX-34 for the unassignment. Since v0.40.0 it is no
+longer one from STO-32, which names an account deleted at once as the
+one hard delete outside the sweep
+([ADR 0082](0082-what-0-40-0-asks.md)).
 
 ## Context
 

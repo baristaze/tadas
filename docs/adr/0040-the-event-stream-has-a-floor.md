@@ -7,7 +7,11 @@ the trim is amended (2026-09-26) by
 once a pass for every org, in one statement that moves each org's
 floor with its own events. A portal session lasts up to 30 days since
 [ADR 0063](0063-sessions-last-weeks.md), not 12 hours; a tab still
-cannot live 90 days, so the argument for the rollout holds.
+cannot live 90 days, so the argument for the rollout holds. No longer
+a deviation since v0.40.0: NET-22 keeps the stream for a retention
+above a floor, a read below it is `410 stream_truncated` naming the
+floor and the head, and DEL-18 lets that exception set its own status
+([ADR 0082](0082-what-0-40-0-asks.md)).
 
 ## Context
 

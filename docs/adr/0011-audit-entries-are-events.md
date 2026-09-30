@@ -1,6 +1,9 @@
 # ADR 0011: An audit entry is an event with an audit kind
 
-**Status**: accepted (2026-09-19)
+**Status**: accepted (2026-09-19). No longer a deviation since
+v0.40.0: OM-16 makes an audit entry an `Event` with an audit kind in
+the events stream, as Tadas does
+([ADR 0082](0082-what-0-40-0-asks.md)).
 
 ## Context
 

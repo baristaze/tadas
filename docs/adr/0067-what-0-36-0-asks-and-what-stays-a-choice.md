@@ -2,8 +2,10 @@
 
 **Status**: accepted (2026-09-26). Its first decision is no longer a
 deviation: since v0.37.0, STO-20 marks a work row done once its item is
-queued, as Tadas does ([ADR 0079](0079-what-0-37-0-asks.md)). The other
-two stay choices.
+queued, as Tadas does ([ADR 0079](0079-what-0-37-0-asks.md)). Its third
+is not either: since v0.40.0, CTX-27 names the recheck's setting
+`realtime_recheck_seconds`, as Tadas does
+([ADR 0082](0082-what-0-40-0-asks.md)). The second stays a choice.
 
 ## Context
 
