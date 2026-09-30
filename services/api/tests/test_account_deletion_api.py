@@ -18,9 +18,9 @@ async def org_of(client: httpx.AsyncClient, headers: dict[str, str]) -> UUID:
 async def test_the_confirmation_must_be_the_accounts_email(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    acme = await org_of(client, owner)
-    await add_member(container, acme, "bob@example.test", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", acme)
+    ajax = await org_of(client, owner)
+    await add_member(container, ajax, "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", ajax)
     wrong = await client.post("/v1/me/deletion", headers=bob, json={"email": OWNER["email"]})
     assert wrong.status_code == 422
     assert wrong.json()["error"]["code"] == "validation_failed"
@@ -32,13 +32,13 @@ async def test_the_confirmation_must_be_the_accounts_email(
 async def test_the_last_owner_is_refused_with_the_orgs_named(
     client: httpx.AsyncClient, owner: dict[str, str]
 ) -> None:
-    acme = await org_of(client, owner)
+    ajax = await org_of(client, owner)
     refused = await client.post("/v1/me/deletion", headers=owner, json={"email": OWNER["email"]})
     assert refused.status_code == 409
     error = refused.json()["error"]
     assert error["code"] == "last_owner"
-    assert error["last_owner"] == {"orgs": [{"id": str(acme), "name": "Acme", "slug": "acme"}]}
-    assert "Acme" in error["message"]
+    assert error["last_owner"] == {"orgs": [{"id": str(ajax), "name": "Ajax", "slug": "ajax"}]}
+    assert "Ajax" in error["message"]
     UUID(error["request_id"])
     assert (await client.get("/v1/me", headers=owner)).status_code == 200
 
@@ -46,9 +46,9 @@ async def test_the_last_owner_is_refused_with_the_orgs_named(
 async def test_an_operator_is_refused_until_the_role_is_off(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    acme = await org_of(client, owner)
-    await add_member(container, acme, "ops@example.test", Role.MEMBER)
-    ops = await sign_in_as(client, "ops@example.test", acme)
+    ajax = await org_of(client, owner)
+    await add_member(container, ajax, "ops@example.test", Role.MEMBER)
+    ops = await sign_in_as(client, "ops@example.test", ajax)
     tenancy = container.managers.tenancy
     await tenancy.grant_operator(seed_request(), "ops@example.test", OperatorRole.READ)
     refused = await client.post("/v1/me/deletion", headers=ops, json={"email": "ops@example.test"})
@@ -60,9 +60,9 @@ async def test_an_operator_is_refused_until_the_role_is_off(
 async def test_a_deleted_account_is_signed_out_everywhere_and_can_start_again(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    acme = await org_of(client, owner)
-    bob_user = await add_member(container, acme, "bob@example.test", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", acme)
+    ajax = await org_of(client, owner)
+    bob_user = await add_member(container, ajax, "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", ajax)
     places = await client.get(
         "/v1/auth/memberships",
         headers={"Authorization": f"Bearer {await dev_login(client, 'bob@example.test')}"},
@@ -82,7 +82,7 @@ async def test_a_deleted_account_is_signed_out_everywhere_and_can_start_again(
 
     for headers in (bob, at_home, {"Authorization": f"Bearer {key.json()['key']}"}):
         assert (await client.get("/v1/me", headers=headers)).status_code == 401
-    # In Acme the person no longer resolves: no user by that id, no member.
+    # In Ajax the person no longer resolves: no user by that id, no member.
     users = await client.get("/v1/users", headers=owner)
     assert str(bob_user.id) not in [u["id"] for u in users.json()["items"]]
     members = await client.get("/v1/memberships", headers=owner)

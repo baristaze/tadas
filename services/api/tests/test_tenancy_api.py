@@ -46,7 +46,7 @@ async def test_sign_in_round_trip(client: httpx.AsyncClient, owner: dict[str, st
     assert [u["email"] for u in users.json()["items"]] == [OWNER["email"]]
     assert users.json()["next_cursor"] is None
     org = await client.get("/v1/orgs/current", headers=owner)
-    assert org.json()["slug"] == "acme"
+    assert org.json()["slug"] == "ajax"
 
 
 async def test_error_envelope_carries_the_request_id(client: httpx.AsyncClient) -> None:
@@ -416,7 +416,7 @@ async def test_operator_routes_need_an_operator_sign_in(
     admitted = await client.get("/v1/admin/orgs", headers=admin)
     assert admitted.status_code == 200
     teams = [o["slug"] for o in admitted.json()["items"] if o["kind"] == "team"]
-    assert sorted(teams) == ["acme", "root"]
+    assert sorted(teams) == ["ajax", "root"]
 
 
 async def test_operators_delete_an_org(
@@ -468,7 +468,7 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     run(on_plan(container, org.id, Plan.TEAM))

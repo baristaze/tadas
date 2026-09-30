@@ -18,17 +18,17 @@ async def org_of(client: httpx.AsyncClient, headers: dict[str, str]) -> UUID:
 async def test_only_the_owner_deletes_and_only_by_the_orgs_name(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    acme = await org_of(client, owner)
-    await add_member(container, acme, "bob@example.test", Role.MEMBER)
-    await add_member(container, acme, "cid@example.test", Role.ADMIN)
+    ajax = await org_of(client, owner)
+    await add_member(container, ajax, "bob@example.test", Role.MEMBER)
+    await add_member(container, ajax, "cid@example.test", Role.ADMIN)
     for email in ("bob@example.test", "cid@example.test"):
-        other = await sign_in_as(client, email, acme)
+        other = await sign_in_as(client, email, ajax)
         refused = await client.post(
-            "/v1/orgs/current/deletion", headers=other, json={"name": "Acme"}
+            "/v1/orgs/current/deletion", headers=other, json={"name": "Ajax"}
         )
         assert refused.status_code == 403
         assert refused.json()["error"]["code"] == "not_authorized"
-    wrong = await client.post("/v1/orgs/current/deletion", headers=owner, json={"name": "acme"})
+    wrong = await client.post("/v1/orgs/current/deletion", headers=owner, json={"name": "ajax"})
     assert wrong.status_code == 422
     assert wrong.json()["error"]["code"] == "validation_failed"
     assert (await client.get("/v1/orgs/current", headers=owner)).status_code == 200
@@ -49,13 +49,13 @@ async def test_a_personal_org_is_refused_on_this_route(client: httpx.AsyncClient
 async def test_everyone_is_out_at_once_and_the_owner_lands_at_home(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    acme = await org_of(client, owner)
-    await add_member(container, acme, "bob@example.test", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", acme)
+    ajax = await org_of(client, owner)
+    await add_member(container, ajax, "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", ajax)
     key = await client.post("/v1/api-keys", headers=bob, json={"name": "ci", "role": "member"})
     assert key.status_code == 201, key.text
 
-    deleted = await client.post("/v1/orgs/current/deletion", headers=owner, json={"name": "Acme"})
+    deleted = await client.post("/v1/orgs/current/deletion", headers=owner, json={"name": "Ajax"})
     assert deleted.status_code == 200, deleted.text
     body = deleted.json()
     assert body["deleted_at"]
@@ -67,13 +67,13 @@ async def test_everyone_is_out_at_once_and_the_owner_lands_at_home(
     home = {"Authorization": f"Bearer {landing['token']}"}
     me = await client.get("/v1/me", headers=home)
     assert me.status_code == 200 and me.json()["org"]["id"] == landing["org"]["id"]
-    # Nobody's picker offers Acme any more.
+    # Nobody's picker offers Ajax any more.
     for email in (OWNER["email"], "bob@example.test"):
         login = await dev_login(client, email)
         places = await client.get(
             "/v1/auth/memberships", headers={"Authorization": f"Bearer {login}"}
         )
-        assert str(acme) not in [p["org"]["id"] for p in places.json()["items"]]
-    # The owner, last owner of Acme a moment ago, deletes their account now.
+        assert str(ajax) not in [p["org"]["id"] for p in places.json()["items"]]
+    # The owner, last owner of Ajax a moment ago, deletes their account now.
     gone = await client.post("/v1/me/deletion", headers=home, json={"email": OWNER["email"]})
     assert gone.status_code == 200, gone.text

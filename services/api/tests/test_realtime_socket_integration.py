@@ -57,7 +57,7 @@ async def serving(container: AppContainer) -> AsyncIterator[Serving]:
     bound of its own builds the container and opens this itself; the fixture
     below is the same thing over the plain test container."""
     _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
     )
     await on_plan(container, org.id, Plan.TEAM)
     port = free_port()

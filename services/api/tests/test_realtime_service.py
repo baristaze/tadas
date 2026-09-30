@@ -34,7 +34,7 @@ from tadas.services.api.types.tasks import AddTaskRequest
 async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await on_plan(container, org.id, Plan.TEAM)
     bob = await add_member(container, org.id, "bob@example.test", Role.MEMBER)
 
@@ -89,7 +89,7 @@ async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Pat
 
     # Another tenant's frame with the same ids ends nothing; nor does a change of another kind.
     await announce("tenancy.session.revoked", ann_first.ctx.credential_id, org_id=new_id())
-    await announce("tasks.task.updated", ann_first.ctx.credential_id)
+    await announce("media.file.updated", ann_first.ctx.credential_id)
     # A membership's change names the membership, never the user.
     await announce("tenancy.membership.updated", bob.id)
     assert all(reasons == [] for reasons in ended.values())
@@ -139,7 +139,7 @@ async def test_a_change_of_role_ends_the_members_sockets_to_reconnect(tmp_path: 
     member's; another member's socket stays."""
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await on_plan(container, org.id, Plan.TEAM)
     bob = await add_member(container, org.id, "bob@example.test", Role.ADMIN)
     owner = await tenancy.authenticate(
@@ -169,7 +169,7 @@ async def test_the_recheck_answers_what_the_redemption_would(tmp_path: Path) -> 
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
     storage = container.storage.get_tenancy_storage()
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await on_plan(container, org.id, Plan.TEAM)
     bob = await add_member(container, org.id, "bob@example.test", Role.ADMIN)
     realtime = container.services.get_realtime_service()
@@ -231,7 +231,7 @@ async def test_the_recheck_refuses_a_key_its_plan_no_longer_allows(tmp_path: Pat
     plan with keys."""
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await on_plan(container, org.id, Plan.TEAM)
     token = await session_of(container, org.id, OWNER["email"])
     key = await tenancy.create_api_key(
@@ -255,7 +255,7 @@ async def test_a_change_of_the_account_wakes_the_recheck_of_key_sockets(tmp_path
     no session's socket and no other org's."""
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await on_plan(container, org.id, Plan.TEAM)
     token = await session_of(container, org.id, OWNER["email"])
     owner = await tenancy.authenticate(seed_request(), token)
@@ -301,7 +301,7 @@ async def test_the_recheck_is_not_a_use_of_the_session(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
     storage = container.storage.get_tenancy_storage()
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     token = await session_of(container, org.id, OWNER["email"])
     principal = await principal_of(container, token)
     found = await storage.read_session_by_digest(hash_token(token))
@@ -355,7 +355,7 @@ class Heads:
 
 async def owner_socket(container: AppContainer) -> tuple[TenantContext, SocketPrincipal]:
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     token = await session_of(container, org.id, OWNER["email"])
     owner = await tenancy.authenticate(seed_request(), token)
     return owner, await principal_of(container, token)
@@ -375,7 +375,7 @@ async def append_unheard(container: AppContainer, owner: TenantContext) -> None:
         Event(
             id=new_id(),
             org_id=owner.org_id,
-            kind="tasks.task.updated",
+            kind="media.file.updated",
             target_id=new_id(),
             produced_at=utcnow(),
             actor_id=owner.user_id,
@@ -465,7 +465,7 @@ async def test_the_pong_never_answers_below_what_it_heard(tmp_path: Path) -> Non
                 idempotency_key=new_id(),
                 produced_at=utcnow(),
                 org_id=owner.org_id,
-                kind="tasks.task.updated",
+                kind="media.file.updated",
                 target_id=new_id(),
                 seq=1,
                 actor_id=owner.user_id,

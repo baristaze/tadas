@@ -102,7 +102,7 @@ async def serving(
     suffix = new_id().hex[-8:]  # the random tail; a uuid7 leads with the clock
     email = f"ann-{suffix}@example.test"
     _, org = await a.managers.tenancy.bootstrap(
-        seed_request(), "Acme", f"acme-{suffix}", email, OWNER["name"]
+        seed_request(), "Ajax", f"ajax-{suffix}", email, OWNER["name"]
     )
     port = free_port()
     config = uvicorn.Config(create_app(b), host="127.0.0.1", port=port, **server_options(settings))

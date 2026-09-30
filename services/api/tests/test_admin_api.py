@@ -41,7 +41,8 @@ async def reader(client: httpx.AsyncClient, container: AppContainer) -> dict[str
 
 @pytest.fixture
 async def org_id(client: httpx.AsyncClient, owner: dict[str, str]) -> str:
-    """The seeded tenant, with two open tasks and one done, over its owner."""
+    """The seeded tenant, with two open tasks and one done, over its owner:
+    four records on its stream."""
     current = await client.get("/v1/orgs/current", headers=owner)
     for title in ("first", "second", "third"):
         created = await client.post("/v1/tasks", headers=owner, json={"title": title})
@@ -128,7 +129,7 @@ async def test_every_route_is_held_to_its_permission(
     orgs = {
         o["slug"]: o for o in (await client.get("/v1/admin/orgs", headers=reader)).json()["items"]
     }
-    assert orgs["acme"]["deleted_at"] is None and orgs["other"]["deleted_at"] is None
+    assert orgs["ajax"]["deleted_at"] is None and orgs["other"]["deleted_at"] is None
     members = await client.get(f"/v1/admin/orgs/{org_id}/members", headers=reader)
     assert members.json()["items"] == []
 
@@ -142,7 +143,7 @@ async def test_an_operator_reads_one_tenant_and_leaves_a_trail(
 ) -> None:
     with caplog.at_level(logging.INFO, logger=OPERATOR_LOG):
         org = await client.get(f"/v1/admin/orgs/{org_id}", headers=reader)
-        assert org.status_code == 200 and org.json()["slug"] == "acme", org.text
+        assert org.status_code == 200 and org.json()["slug"] == "ajax", org.text
         unknown = await client.get(f"/v1/admin/orgs/{UUID(int=7)}", headers=reader)
         assert unknown.status_code == 404
 

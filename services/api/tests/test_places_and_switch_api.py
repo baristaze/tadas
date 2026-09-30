@@ -27,32 +27,32 @@ async def enter(client: httpx.AsyncClient, token: str, org_id: str) -> str:
 
 
 async def two_orgs(client: httpx.AsyncClient, container: AppContainer) -> tuple[str, str]:
-    """Ann owns Acme and is a member of Beta; returns both org ids."""
+    """Ann owns Ajax and is a member of Beta; returns both org ids."""
     tenancy = container.managers.tenancy
-    _, acme = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, ajax = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await tenancy.bootstrap(seed_request(), "Beta", "beta", "bea@example.test", "Bea")
     await tenancy.add_member(seed_request(), "beta", OWNER["email"], OWNER["name"], Role.MEMBER)
     beta = await container.storage.get_tenancy_storage().read_org_by_slug("beta")
     assert beta is not None
-    for org_id in (acme.id, beta.id):
+    for org_id in (ajax.id, beta.id):
         await on_plan(container, org_id, Plan.TEAM)
-    return str(acme.id), str(beta.id)
+    return str(ajax.id), str(beta.id)
 
 
 async def test_the_memberships_are_read_with_the_sign_in_or_a_session(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
-    acme, beta = await two_orgs(client, container)
+    ajax, beta = await two_orgs(client, container)
     login = await client.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})
     token = login.json()["token"]
     by_login = await client.get("/v1/auth/memberships", headers=bearer(token))
     assert by_login.status_code == 200, by_login.text
     places = by_login.json()["items"]
-    assert {m["org"]["id"] for m in places if m["org"]["kind"] == "team"} == {acme, beta}
+    assert {m["org"]["id"] for m in places if m["org"]["kind"] == "team"} == {ajax, beta}
     assert [m["org"]["kind"] for m in places].count("personal") == 1
     assert by_login.json()["next_cursor"] is None
     # The same list, with the one bearer a signed-in app holds.
-    session = await enter(client, token, acme)
+    session = await enter(client, token, ajax)
     by_session = await client.get("/v1/auth/memberships", headers=bearer(session))
     assert by_session.json() == by_login.json()
     # A page at a time.
@@ -78,8 +78,8 @@ async def test_the_memberships_are_read_with_the_sign_in_or_a_session(
 async def test_a_switch_ends_the_session_it_was_presented_with(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
-    acme, beta = await two_orgs(client, container)
-    held = await sign_in_as(client, OWNER["email"], UUID(acme))
+    ajax, beta = await two_orgs(client, container)
+    held = await sign_in_as(client, OWNER["email"], UUID(ajax))
     held_token = held["Authorization"].removeprefix("Bearer ")
     switched = await enter(client, held_token, beta)
     me = await client.get("/v1/me", headers=bearer(switched))
@@ -88,24 +88,24 @@ async def test_a_switch_ends_the_session_it_was_presented_with(
     gone = await client.get("/v1/me", headers=held)
     assert gone.status_code == 401
     again = await client.post(
-        "/v1/auth/sessions", json={"org_id": acme}, headers=bearer(held_token)
+        "/v1/auth/sessions", json={"org_id": ajax}, headers=bearer(held_token)
     )
     assert again.status_code == 401
     # Switching back works from the new session, and ends it in turn.
-    back = await enter(client, switched, acme)
-    assert (await client.get("/v1/me", headers=bearer(back))).json()["org"]["id"] == acme
+    back = await enter(client, switched, ajax)
+    assert (await client.get("/v1/me", headers=bearer(back))).json()["org"]["id"] == ajax
     assert (await client.get("/v1/me", headers=bearer(switched))).status_code == 401
 
 
 async def test_a_sign_in_is_exchanged_once(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
-    acme, beta = await two_orgs(client, container)
+    ajax, beta = await two_orgs(client, container)
     login = (await client.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})).json()
-    session = await enter(client, login["token"], acme)
+    session = await enter(client, login["token"], ajax)
     # Again with the same sign-in, for the same org or another: 401, and no
     # second session. A retry after a lost answer meets the same refusal.
-    for org_id in (acme, beta):
+    for org_id in (ajax, beta):
         again = await client.post(
             "/v1/auth/sessions", json={"org_id": org_id}, headers=bearer(login["token"])
         )
@@ -125,11 +125,11 @@ async def test_exchanges_of_one_sign_in_at_once_make_one_session(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
     """Three clicks on the picker, delivered together: one session, and two 401s."""
-    acme, _ = await two_orgs(client, container)
+    ajax, _ = await two_orgs(client, container)
     login = (await client.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})).json()
     answers = await asyncio.gather(
         *(
-            client.post("/v1/auth/sessions", json={"org_id": acme}, headers=bearer(login["token"]))
+            client.post("/v1/auth/sessions", json={"org_id": ajax}, headers=bearer(login["token"]))
             for _ in range(3)
         )
     )

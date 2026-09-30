@@ -147,7 +147,7 @@ async def test_a_person_the_seeding_made_is_linked_by_the_verified_email(
     client: httpx.AsyncClient, container: AppContainer, twin: IdentityProviderTwinImpl
 ) -> None:
     _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
     )
     signed_in = await client.post(
         "/v1/auth/callback",
@@ -347,7 +347,7 @@ def test_a_deployed_environment_refuses_the_local_sign_in(environment: str) -> N
 @pytest.mark.parametrize(
     "redirect",
     [
-        "http://app.staging.tadas.fyi/auth/callback",
+        "http://app.staging.tadas.example/auth/callback",
         "https://localhost:55173/auth/callback",
         "https://127.0.0.1/auth/callback",
     ],
@@ -361,23 +361,23 @@ def test_a_deployed_environments_sign_in_comes_back_to_its_own_https_address(
                 "_env_file": None,
                 "environment": "staging",
                 "sign_in_redirect_uris": [redirect],
-                "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"],
+                "sign_out_return_uris": ["https://app.staging.tadas.example/signed-out"],
             }
         )
     allowed = ApiSettings.model_validate(
         {
             "_env_file": None,
             "environment": "staging",
-            "sign_in_redirect_uris": ["https://app.staging.tadas.fyi/auth/callback"],
-            "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"],
+            "sign_in_redirect_uris": ["https://app.staging.tadas.example/auth/callback"],
+            "sign_out_return_uris": ["https://app.staging.tadas.example/signed-out"],
         }
     )
-    assert allowed.sign_in_redirect_uris == ["https://app.staging.tadas.fyi/auth/callback"]
+    assert allowed.sign_in_redirect_uris == ["https://app.staging.tadas.example/auth/callback"]
 
 
 @pytest.mark.parametrize(
     "return_to",
-    ["http://app.staging.tadas.fyi/signed-out", "https://localhost:55173/signed-out"],
+    ["http://app.staging.tadas.example/signed-out", "https://localhost:55173/signed-out"],
 )
 def test_a_deployed_environments_sign_out_comes_back_to_its_own_https_address(
     return_to: str,
@@ -385,14 +385,14 @@ def test_a_deployed_environments_sign_out_comes_back_to_its_own_https_address(
     deployed = {
         "_env_file": None,
         "environment": "staging",
-        "sign_in_redirect_uris": ["https://app.staging.tadas.fyi/auth/callback"],
+        "sign_in_redirect_uris": ["https://app.staging.tadas.example/auth/callback"],
     }
     with pytest.raises(ValidationError, match="TADAS_SIGN_OUT_RETURN_URIS"):
         ApiSettings.model_validate({**deployed, "sign_out_return_uris": [return_to]})
     allowed = ApiSettings.model_validate(
-        {**deployed, "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"]}
+        {**deployed, "sign_out_return_uris": ["https://app.staging.tadas.example/signed-out"]}
     )
-    assert allowed.sign_out_return_uris == ["https://app.staging.tadas.fyi/signed-out"]
+    assert allowed.sign_out_return_uris == ["https://app.staging.tadas.example/signed-out"]
 
 
 def test_the_settings_choose_the_provider_and_a_deployed_one_refuses_the_twin() -> None:
@@ -422,8 +422,8 @@ def test_the_settings_choose_the_provider_and_a_deployed_one_refuses_the_twin() 
             "_env_file": None,
             "environment": "staging",
             "identity_provider": "twin",
-            "sign_in_redirect_uris": ["https://app.staging.tadas.fyi/auth/callback"],
-            "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"],
+            "sign_in_redirect_uris": ["https://app.staging.tadas.example/auth/callback"],
+            "sign_out_return_uris": ["https://app.staging.tadas.example/signed-out"],
         }
     )
     with pytest.raises(UnsafeIntegration, match="TADAS_IDENTITY_PROVIDER=twin"):

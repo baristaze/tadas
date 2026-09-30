@@ -6,7 +6,6 @@ read as text, the way a reviewer reads them. A field the cloud leaves at its
 default is listed here with the reason, so a new field needs a decision."""
 
 import re
-import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -91,14 +90,10 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
 
 
 def repository_root() -> Path:
-    top = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=Path(__file__).parent,
-    ).stdout.strip()
-    return Path(top)
+    """The checkout this test runs in: the nearest folder above it with an
+    `.env.example`, so a copy that is not yet a repository reads its own."""
+    here = Path(__file__).resolve().parent
+    return next(p for p in (here, *here.parents) if (p / ".env.example").is_file())
 
 
 def documented_knobs(env_example: str) -> set[str]:

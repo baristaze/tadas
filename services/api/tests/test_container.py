@@ -59,7 +59,7 @@ def test_add_member_refuses_a_role_no_membership_can_take(
             [
                 "add-member",
                 "--slug",
-                "acme",
+                "ajax",
                 "--email",
                 "a@b.test",
                 "--name",
