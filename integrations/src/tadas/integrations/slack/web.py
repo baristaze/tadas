@@ -48,6 +48,14 @@ from tadas.integrations.slack.requests import verify
 
 log = logging.getLogger(__name__)
 
+REPLY_LOG = logging.getLogger(f"{__name__}.reply")
+"""The logger a command's reply writes to, from WARNING up. The reply's URL is
+a credential: whoever holds it posts into the channel as the app. The SDK's
+webhook client writes the whole URL in a retry's line and in its debug lines,
+and writes them whenever its logger's own level is DEBUG or below, NOTSET
+included."""
+REPLY_LOG.setLevel(logging.WARNING)
+
 AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 
 DEFAULT_RETRY_AFTER = timedelta(seconds=30)
@@ -184,7 +192,9 @@ class SlackWebImpl(SlackInterface):
     async def respond(self, response_url: str, text: str) -> None:
         if not is_response_url(response_url):
             raise SlackFailed("invalid_response_url", "a response_url that is not Slack's")
-        hook = AsyncWebhookClient(response_url, session=self._session, timeout=self._whole_seconds)
+        hook = AsyncWebhookClient(
+            response_url, session=self._session, timeout=self._whole_seconds, logger=REPLY_LOG
+        )
         try:
             answer = await hook.send(text=text, response_type="ephemeral")
         except Exception as error:

@@ -345,13 +345,21 @@ def outgoing_breadcrumb(crumb: Any, hint: Any) -> Any:
     return crumb
 
 
+PATH_IS_A_CREDENTIAL = frozenset({"hooks.slack.com"})
+"""Hosts whose URL path is a credential, so a breadcrumb names them by their
+scheme and host alone. Tadas's: Slack's reply URL lets whoever holds it post
+into the channel as the app."""
+
+
 def _where_to(url: str) -> str | None:
-    """`url` without its credentials, its query, and its fragment."""
+    """`url` without its credentials, its query, and its fragment, and without
+    its path on a host of `PATH_IS_A_CREDENTIAL`."""
     try:
         parts = urlsplit(url)
     except ValueError:
         return None
-    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", ""))
+    path = "" if parts.hostname in PATH_IS_A_CREDENTIAL else parts.path
+    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], path, "", ""))
 
 
 def configure_error_reporting(
