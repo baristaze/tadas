@@ -54,15 +54,15 @@ async def bob_signs_in(
     await tenancy.add_member(request(), "ajax", "bob@example.test", "Bob", Role.MEMBER)
     through = signing(container, container.identity_provider)
     places: list[TenantContext] = []
-    login = await through.sign_in_with_code(
+    login = await through.sign_in.sign_in_with_code(
         request(), identity_of(container).issue_code("bob@example.test")
     )
     home = next(m.org.id for m in login.memberships if m.org.personal)
     for target in (org_id, home):
         code = identity_of(container).issue_code("bob@example.test")
-        login = await through.sign_in_with_code(request(), code)
+        login = await through.sign_in.sign_in_with_code(request(), code)
         identity = await tenancy.authenticate_login(request(), login.token)
-        issued = await tenancy.exchange_login(identity, target)
+        issued = await tenancy.sign_in.exchange_login(identity, target)
         places.append(await tenancy.authenticate(request(), issued.token))
     return places[0], places[1]
 
@@ -120,7 +120,7 @@ async def test_a_deleted_account_leaves_nothing_of_its_person_behind(tmp_path: P
     ann = await owner_of(container, "ajax")
     await on_team(container, ann)
     bob, home = await bob_signs_in(container, ann.org_id)
-    subject = (await tenancy.get_identity(bob)).subject
+    subject = (await tenancy.org.get_identity(bob)).subject
     assert subject is not None and subject in identity_of(container).users
 
     # In Ajax, a file Bob stored, a task assigned to him, one he made and left
@@ -149,7 +149,7 @@ async def test_a_deleted_account_leaves_nothing_of_its_person_behind(tmp_path: P
     await install(container, slack, home)
     assert await container.managers.slack.get_installation(home) is not None
 
-    await tenancy.delete_account(bob, "bob@example.test")
+    await tenancy.org.delete_account(bob, "bob@example.test")
     ran = await run(container)
     assert {item.kind for item in ran} >= {WorkKind.DELETE_ACCOUNT, WorkKind.UNASSIGN_TASKS}
 
@@ -188,14 +188,14 @@ async def test_a_deleted_account_leaves_nothing_of_its_person_behind(tmp_path: P
     assert (await tasks.get_task(ann, anns.id)).assignee_id == ann.user_id
     assert (await tasks.get_task(ann, done.id)).assignee_id == bob.user_id, "only open tasks"
     with pytest.raises(Exception):  # noqa: B017 (no user by that id any more)
-        await tenancy.get_user(ann, bob.user_id)
+        await tenancy.members.get_user(ann, bob.user_id)
 
 
 async def test_a_provider_that_is_down_parks_the_work_until_it_answers(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ann = await owner_of(container, "ajax")
     bob, home = await bob_signs_in(container, ann.org_id)
-    await container.managers.tenancy.delete_account(bob, "bob@example.test")
+    await container.managers.tenancy.org.delete_account(bob, "bob@example.test")
     identity_of(container).unavailable_for = 1
     handlers = build_loop(container)._handlers  # pyright: ignore[reportPrivateUsage]
     ctx, item = await claim_deletion(container)
@@ -234,7 +234,7 @@ async def test_a_refusal_of_the_call_fails_and_one_that_may_pass_parks(
     container = build_container(tmp_path)
     ann = await owner_of(container, "ajax")
     bob, home = await bob_signs_in(container, ann.org_id)
-    await container.managers.tenancy.delete_account(bob, "bob@example.test")
+    await container.managers.tenancy.org.delete_account(bob, "bob@example.test")
     ctx, item = await claim_deletion(container)
 
     async def answer(user_id: str) -> None:
@@ -267,7 +267,7 @@ async def test_the_processor_refusing_the_call_fails_it_and_its_key_parks_it(
     bob, home = await bob_signs_in(container, ann.org_id)
     payload = await checkout(container, home, Plan.PRO, 1)
     assert await consumer_of(container).handle(await queued(container, payload)) == "applied"
-    await container.managers.tenancy.delete_account(bob, "bob@example.test")
+    await container.managers.tenancy.org.delete_account(bob, "bob@example.test")
     ctx, item = await claim_deletion(container)
 
     async def answer(customer_id: str) -> None:

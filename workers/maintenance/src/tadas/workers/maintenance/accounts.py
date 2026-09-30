@@ -77,7 +77,7 @@ class DeleteAccountHandlerImpl(WorkHandlerInterface):
         user_id = payload.provider_user_id
         identity_step = None if user_id is None else lambda: self._identity.delete_user(user_id)
         await end_providers(ctx, identity_step, self._billing, self._slack)
-        await self._tenancy.delete_personal_org(ctx)
+        await self._tenancy.org.delete_personal_org(ctx)
         log.info("the personal org %s of a deleted account is deleted", ctx.org_id)
 
 
@@ -105,7 +105,7 @@ class DeleteOrgHandlerImpl(WorkHandlerInterface):
             None if org_id is None else lambda: self._identity.delete_organization(org_id)
         )
         await end_providers(ctx, identity_step, self._billing, self._slack)
-        await self._tenancy.delete_closed_org(ctx)
+        await self._tenancy.org.delete_closed_org(ctx)
         log.info("the closed team org %s is deleted", ctx.org_id)
 
 
