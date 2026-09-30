@@ -88,8 +88,8 @@ def build_services(
     portal_url: str,
     head_max_age: timedelta,
 ) -> ServicesInterface:
-    """In-process impls only: the remote impl of each interface is the typed
-    Python client, which arrives with the first Python consumer (ADR 0004)."""
+    """In-process impls only: a Python caller outside the process reaches the
+    same services through the typed client under `clients/python`."""
     return ServicesImpl(
         tasks=TasksServiceImpl(managers.tasks),
         tenancy=TenancyServiceImpl(managers.tenancy),
