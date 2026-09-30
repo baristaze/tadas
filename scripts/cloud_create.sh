@@ -26,7 +26,8 @@
 # writes the operator's env file with its two token lines empty; starts the
 # first deploy through the pipeline, which is how every later commit reaches
 # the cloud; prints the provider steps a person takes after that deploy (the
-# WorkOS and error tracker values written into the secrets it made); and
+# WorkOS, error tracker, Stripe, and Slack values written into the secrets it
+# made); and
 # prints the grants that come after them, the first operator's among them,
 # which the grant-operator workflow runs. It checks the
 # account again before every apply. It prints every command before it runs
@@ -592,7 +593,9 @@ case "$environment" in
 esac
 cluster="tadas-$environment"
 say "Written under $writer_profile, with AWS_ACCESS_KEY_ID and its siblings unset, one value at a time, read with read -rs so none is shown:"
-for secret in workos_api_key workos_webhook_secret sentry_dsn; do
+# Each environment has a Slack app of its own, since an app has one set of
+# request URLs, so each writes both of its app's secrets.
+for secret in workos_api_key workos_webhook_secret sentry_dsn stripe_runtime_key slack_client_secret slack_signing_secret; do
   say "  aws secretsmanager put-secret-value --profile $writer_profile --region $region --secret-id tadas/$environment/$secret --secret-string \"\$VALUE\""
 done
 say "  WorkOS first: the grants below sign people up through it. workos_api_key is the Tadas App application's API key (Applications, Tadas App, API keys), never the environment's; the API refuses to start on another. The bootstrap proves the key, adds https://$app_domain_name/auth/callback to the application's redirects, and names the Redirects tab's checks (the default redirect, https://$app_domain_name/login as the initiate login URI):"
@@ -602,11 +605,15 @@ case "$environment" in
 esac
 say "  workos_webhook_secret is the signing secret of the endpoint https://$api_domain_name/webhooks/identity, from its page under Webhooks in the WorkOS dashboard."
 say "  sentry_dsn is the DSN of the product's one project in the error tracker, the same value in every environment."
+say "  Stripe: stripe_runtime_key takes the environment's runtime key. The bootstrap runs under a second restricted key, held by you and never written to the cloud. With TADAS_STRIPE_BOOTSTRAP_KEY exported, it makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
+say "    uv run tadas-ops stripe-bootstrap --env $environment --profile $writer_profile --dry-run, then without --dry-run, then again for \"no changes\""
+say "  Slack: the environment's own app, from deployment/slack/manifest.$environment.json (production's app is made when production opens). From its Basic Information page, the signing secret and the client secret are slack_signing_secret and slack_client_secret above; its client id is committed as slack_client_id in $environment_root/main.tf, and that commit deploys."
 say "  Then the tasks read the values at their next start: the next deploy, or now:"
 for service in api maintenance; do
   say "    aws ecs update-service --profile $writer_profile --region $region --cluster $cluster --service $service --force-new-deployment"
 done
-say "  The steps, the key permissions, and the checks: docs/runbooks/providers/workos.md."
+say "  Slack, once the API holds its signing secret: paste deployment/slack/manifest.$environment.json into the app's App Manifest page and save, and Slack checks https://$api_domain_name/webhooks/slack/events until it says verified. Turn on public distribution under Manage Distribution. Then, at https://$app_domain_name, Settings, Slack, Add to Slack; /invite @tadas and /tadas connect in a channel; try /tadas, /tadas team, and /tadas add."
+say "  The steps, the key permissions, and the checks: docs/runbooks/providers/{workos,stripe,slack}.md."
 
 case "$environment" in
   staging) grant_branch=main ;;
