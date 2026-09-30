@@ -14,8 +14,7 @@ outside the tree holds a field the tree stopped sending.
 
 While Tadas has no customer, the API keeps `/v1`, and a field may leave
 it one release after it is marked deprecated, where NET-23 asks for
-`/v2`. A task's `position`, marked deprecated, is the field that leaves
-next ([ADR 0050](0050-a-move-writes-one-row.md)).
+`/v2`.
 
 The first customer, or the first client outside this repository, ends
 it: from then on NET-23 holds, and a removal or a rename is `/v2`.
