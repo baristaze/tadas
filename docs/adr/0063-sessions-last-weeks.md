@@ -59,7 +59,7 @@ runbook says where they are. WorkOS's settings never end Tadas's
 session early or keep it alive: Tadas reads the access token once, for
 its session id, and never refreshes it.
 
-**Every other bound is its own.**
+**Nothing else moves.**
 
 - A revoked session is refused at its next request, since every request
   reads it. An open socket closes at once when the bus carries the
