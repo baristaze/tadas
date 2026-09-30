@@ -1,49 +1,50 @@
 # ADR 0002: Technology choices as adopted
 
-Date: 2026-09-16
+**Status**: accepted (2026-09-16), amended (2026-09-29): the company
+site is a substitution since v0.39.0, which tags Client App
+Architecture, Stack `default`. Valkey was recorded here as a substitute
+for Redis until guideline v0.4.0 named Valkey as the cache and the topic
+bus.
 
 ## Context
 
-The guideline names technologies as defaults and asks a project to
+The guideline names technologies as defaults. It asks a project to
 record, once, every technology it uses and every substitution it makes.
 
 ## Decision
 
-Tadas adopts every technology the guideline names, with the one
-substitution recorded below the table:
+Tadas adopts every technology the guideline names, save one substitution:
 
-| Choice in the guideline               | Adopted                         |
-|---------------------------------------|---------------------------------|
-| Object model language and validation  | Python 3.14, Pydantic 2         |
+| Choice in the guideline | Adopted |
+|-------------------------|---------|
+| Object model language and validation | Python 3.14, Pydantic 2 |
 | Relational store, ORM, migration runner | Postgres 18, SQLAlchemy 2 (asyncpg), Alembic (runner only) |
-| Cache                                 | Valkey 9.1 (ElastiCache in the cloud), GLIDE client |
-| Object store                          | S3 (MinIO locally)              |
-| Inbound queue                         | SQS (ElasticMQ locally)         |
-| Topic bus                             | Valkey pub/sub (in-process dispatcher in tests) |
-| Secret store                          | AWS Secrets Manager (env and file locally) |
-| Browser apps                          | React, TypeScript, Vite, TanStack Query, Zustand; served from S3 through CloudFront in the cloud |
-| Workspaces                            | uv, pnpm                        |
-| Local stack                           | Docker Compose                  |
-| Cloud and infrastructure as code      | AWS, Terraform                  |
-| Traces and metrics                    | OpenTelemetry, Prometheus client (CloudWatch and X-Ray through an ADOT collector in the cloud; Prometheus, Grafana, and Jaeger locally) |
-| Logging                               | Python `logging`; errors to a Sentry-compatible backend through the Sentry SDK (GlitchTip locally) |
+| Cache | Valkey 9.1 (ElastiCache in the cloud), GLIDE client |
+| Object store | S3 (MinIO locally) |
+| Inbound queue | SQS (ElasticMQ locally) |
+| Topic bus | Valkey pub/sub (an in-process dispatcher in tests) |
+| Secret store | AWS Secrets Manager (the environment and a file locally) |
+| Browser apps | React, TypeScript, Vite, TanStack Query, Zustand; served from S3 through CloudFront in the cloud |
+| Workspaces | uv, pnpm |
+| Local stack | Docker Compose |
+| Cloud and infrastructure as code | AWS, Terraform |
+| Traces and metrics | OpenTelemetry, the Prometheus client (CloudWatch and X-Ray through an ADOT collector in the cloud; Prometheus, Grafana, and Jaeger locally) |
+| Logging | Python `logging`; errors to a Sentry-compatible backend through the Sentry SDK (GlitchTip locally) |
 
-Substitutions. One, since v0.39.0 tags Client App Architecture, Stack
-`default` (amended 2026-09-29):
+The substitution:
 
 | Choice in the guideline | Substitute | Reason | Rules it still satisfies |
 |-------------------------|------------|--------|--------------------------|
-| React and TypeScript on Vite, for every browser app | The company site, `apps/site`: HTML and CSS on Vite, with no script ([ADR 0030](0030-the-company-site-is-html-and-css-not-react.md)) | One page with no state, no API call, and no socket, so nothing to render in a client | Vite builds it to static files behind CloudFront; it reaches no origin but its own; every app that holds state or calls the platform stays React on Vite |
+| Browser apps are React on Vite (DEL-12) | The company site, `apps/site`: HTML and CSS on Vite, with no script | A page with no state, no API call, and no socket has nothing to render in a client ([ADR 0030](0030-the-company-site-is-html-and-css-not-react.md)) | Vite builds it into static files behind CloudFront; it reaches no origin but its own; its look is the portal's `theme.css`; every app that holds state or calls the platform stays React on Vite |
 
-Valkey was recorded here as a substitute for Redis
-(ElastiCache offers no Redis OSS past 7.1; Valkey is its current engine,
-protocol-compatible, and open source) until guideline v0.4.0 named
-Valkey as the cache and the topic bus; from that release on it is an
-adopted name, and the GLIDE client is a plain library choice. A future
-substitution gets a row here naming the choice, the substitute, the
-reason, and the rules the substitute must still satisfy.
+One name differs and is not a substitution. The guideline writes
+`rediss://` for TLS to the cache. The cache URL here uses `valkeys://`,
+the Valkey client's TLS scheme: the same transport under the client's
+own name.
 
 ## Consequences
 
-Reviews treat the names above as the guideline's names. A change of
-shape, not of name, is a deviation and is recorded separately.
+Reviews treat the names above as the guideline's names. A substitution
+gets a row here: the choice, the substitute, the reason, and the rules
+the substitute must still satisfy. A change of shape, not of name, is a
+deviation and gets an ADR of its own.
