@@ -18,6 +18,7 @@ from tadas.om.orchestrations.rules import (
     stagger,
     with_row_errors,
 )
+from tadas.om.orchestrations.steps import CREATED, UPDATED, step_rows
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
@@ -36,6 +37,7 @@ from tadas.om.tasks.rules import (
     parse_import,
     room_for,
 )
+from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
@@ -61,11 +63,11 @@ def a_record(**fields: object) -> Orchestration:
 
 
 def test_a_step_moves_the_cursor_counts_its_skips_and_ends_the_record_when_last() -> None:
-    record = a_record(skipped=1, row_errors=[{"row": 1, "reason": "no title"}])
+    record = a_record(skipped=1, row_errors=[{"row": 1, "reason": "malformed"}])
     now = utcnow()
     after = advanced(
         record, now, record.created_by, cursor=5, total=5,
-        skipped=[RowError(row=4, reason="no title")], finished=True,
+        skipped=[RowError(row=4, reason="malformed")], finished=True,
     )  # fmt: skip
     assert (after.cursor, after.total, after.skipped) == (5, 5, 2)
     assert [e.row for e in after.row_errors] == [1, 4]
@@ -90,9 +92,9 @@ def test_a_guard_parks_the_record_at_its_cursor_keeping_what_it_made() -> None:
 def test_a_bound_fails_the_record_and_names_why() -> None:
     record = a_record()
     now = utcnow()
-    ended = failed(record, now, record.created_by, FailReason.TOO_MANY_ROWS)
+    ended = failed(record, now, record.created_by, FailReason.DEFECT)
     assert ended.status is OrchestrationStatus.FAILED
-    assert ended.fail_reason is FailReason.TOO_MANY_ROWS and ended.finished_at == now
+    assert ended.fail_reason is FailReason.DEFECT and ended.finished_at == now
 
 
 def test_the_skipped_rows_named_are_bounded() -> None:
@@ -168,9 +170,9 @@ class World:
         self.managers: Managers = build_managers(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
 
     async def org(self) -> TenantContext:
-        slug = f"acme-{new_id().hex[-8:]}"
+        slug = f"ajax-{new_id().hex[-8:]}"
         owner, _ = await self.managers.tenancy.bootstrap(
-            RequestContext(request_id=new_id(), app=APP), "Acme", slug, f"a-{slug}@x.test", "Ann"
+            RequestContext(request_id=new_id(), app=APP), "Ajax", slug, f"a-{slug}@x.test", "Ann"
         )
         return owner
 
@@ -196,6 +198,18 @@ async def test_start_holds_the_input_to_its_kind_and_answers_a_retry_as_stored(
         1,
     )
     assert await orchestrations.start(ctx, record) == started
+
+
+async def test_a_records_hint_names_the_version_its_write_left(world: World) -> None:
+    """The push of a record's change names the version it wrote (ADR 0061),
+    and a running record's write asks for its next step beside it."""
+    ctx = await world.org()
+    record = a_record(version=3)
+    hint, work = step_rows(ctx, record, created=True)
+    assert (hint.kind, hint.target_id, hint.payload) == (CREATED, record.id, {"version": 3})
+    assert work.kind == work_row_kind(WorkKind.ORCHESTRATION)
+    settled = a_record(version=4, status=OrchestrationStatus.SUCCEEDED)
+    assert [(r.kind, r.payload) for r in step_rows(ctx, settled)] == [(UPDATED, {"version": 4})]
 
 
 async def test_wake_resumes_only_the_records_parked_for_the_reason(world: World) -> None:
