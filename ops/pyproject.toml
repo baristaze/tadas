@@ -1,6 +1,6 @@
 [project]
 name = "tadas-ops"
-version = "0.10.0"
+version = "0.11.0"
 description = "The Tadas operations package: the traffic generator, the stress test, and the signal readers."
 requires-python = ">=3.14"
 dependencies = [
