@@ -40,7 +40,8 @@ changes.
   scaffold's: an older `.env` takes `TADAS_S3_SECRET_KEY` and
   `TADAS_S3_BUCKET_PREFIX` from `.env.example`. The local TOTP key is
   the scaffold's too: a local operator enrolled under the old key
-  enrols again, or keeps that key in `.env`. (#181, #184)
+  keeps that key in `.env`, or makes the local database again with
+  `make reset`. (#181, #184)
 - **The deployment** takes the scaffold's text. Each root's sign-in
   client id is a variable that defaults to the real id, and the
   dashboard's `SEARCH` quotes its namespace. (#181)
