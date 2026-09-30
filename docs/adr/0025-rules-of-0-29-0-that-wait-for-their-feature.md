@@ -7,8 +7,9 @@ covers a handler's calls (`WORK_ENQUEUE_PERMISSIONS`, held by the
 worker's tests since the first user-caused kinds) hold now and
 are gone from the list; trimmed (2026-09-26): the work queue's and the
 outbox's alarms (`OPS-15`) hold, from the gauges the worker's sweep
-writes; trimmed (2026-09-29): the release push (`DEL-38`) and the kept
-build (`DEL-31`) are the deviations of
+writes; trimmed (2026-09-29): the release push by the workflow token
+while no ruleset locks `release` (`DEL-38`), and the kept build
+(`DEL-31`), are the deviations of
 [ADR 0024](0024-what-staging-hands-production-is-recorded-and-verified.md).
 Each item left names what closes it.
 
