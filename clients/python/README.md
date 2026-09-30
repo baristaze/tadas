@@ -15,7 +15,7 @@ it, and nothing else in Python calls `/v1/*`.
   stream order.
 
 ```python
-async with ApiClient(url, app="cli", app_version="cli@0.11.0", token=token) as api:
+async with ApiClient(url, app="cli", app_version="cli@0.12.0", token=token) as api:
     stored = await api.attach(task_id, "spec.pdf", "application/pdf", data)
     async for change in Channel(api):
         print(change.kind, change.target_id, change.actor_id)
