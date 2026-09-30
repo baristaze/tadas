@@ -1,5 +1,5 @@
-"""The handlers of a deleted account, and of a deleted team org: what each
-one commit could not do.
+"""The handlers of a deleted account, and of a deleted team org: what one
+commit could not do.
 
 The account's own rows go in the request that deleted it, so the person is
 gone the moment it answers and nothing below can bring them back. What is
@@ -9,7 +9,7 @@ in, and the queue carries it to the end.
 `DELETE_ACCOUNT` runs in the person's personal org. It deletes the person at
 the identity provider, ends the org's subscription and deletes its customer
 at the payment processor, removes the org's Slack app, and deletes the org
-last, which the sweep then purges whole. Every step is one a rerun finds
+last, which the sweep then purges whole. Each step is one a rerun finds
 done, so a run that stopped halfway is finished by the next. A provider that
 cannot be reached, or that refuses the process's own key, parks the item,
 spending no attempt: nothing about the call has failed, and the work waits
