@@ -2873,12 +2873,6 @@ export interface components {
             /** Notes */
             notes: string;
             /**
-             * Position
-             * @deprecated
-             * @description The rank as a float, for a client of the release before, which requires it. Order by `rank`: no client reads this, and it leaves the wire in the release after this one.
-             */
-            position?: number | null;
-            /**
              * Rank
              * @description Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text.
              */
