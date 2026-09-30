@@ -9,8 +9,7 @@ defaults now, not shorter.
 
 A session ends at whichever comes first: its absolute lifetime, counted
 from its exchange, or its idle lifetime, counted from its last use. Both
-are settings (CTX-36). The guideline's scaffold defaults them to 24 hours
-idle and 7 days absolute.
+are settings (CTX-36), and the guideline names no value for either.
 
 A task list holds a team's work, not its money or its secrets. A
 person who meets a sign-in every Monday morning, or after every
@@ -30,7 +29,12 @@ GitHub, or the team's own single sign-on.
 `TADAS_SESSION_IDLE_LIFETIME_SECONDS` to 1209600, in the settings, in
 `.env.example`, and in the tenancy manager's own options. A person who
 uses Tadas signs in once a month. One who stays away for two weeks signs
-in when they come back.
+in when they come back. The bounds are weeks, never hours or days: with
+a day idle and a week in all, a person who takes a weekend off signs in
+on Monday, for no assurance AAL1 asks for. The idle lifetime stays,
+though AAL1 asks for none: a session nobody used for two weeks is more
+likely a forgotten laptop than a person, and the idle clock costs one
+write a minute at most.
 
 **Only a person's requests move the idle clock.** `authenticate` and
 `authenticate_login` record a use, at most once a minute. The socket's
@@ -62,19 +66,6 @@ its session id, and never refreshes it.
   (`TADAS_LOGIN_LIFETIME_SECONDS`).
 - The token stays in the tab's session storage, so a closed tab forgets
   it whatever its lifetime.
-
-## Alternatives
-
-- **The guideline's defaults, 24 hours idle and 7 days absolute.** A
-  person who takes a weekend off signs in on Monday, for no assurance
-  AAL1 asks for.
-- **No idle lifetime.** AAL1 asks for none. But a session nobody used
-  for two weeks is more likely a forgotten laptop than a person, and the
-  idle clock costs one write a minute at most.
-- **Keep the token across tabs, in local storage.** Then a new tab would
-  need no sign-in at all. But every tab and every later visit would read
-  it, and a shared computer would keep it after the tab closed. The
-  tab's own storage stays; AuthKit's session covers the new tab.
 
 ## Consequences
 
