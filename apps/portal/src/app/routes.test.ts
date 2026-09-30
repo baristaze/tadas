@@ -159,6 +159,8 @@ it("shows the new org's tasks after a switch from the chip, read once under the 
   expect(shownTasks()).toEqual(["Beta's task"]);
   const after = readsAfterSwitch();
   expect(after.every((read) => read.token === tokenOf("beta"))).toBe(true);
+  expect(after.filter((read) => read.path === "/v1/me")).toHaveLength(1);
+  expect(after.filter((read) => read.path.startsWith("/v1/users"))).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=open"))).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=done"))).toHaveLength(1);
 });
@@ -177,5 +179,6 @@ it("lands on the new org's tasks after creating one at /orgs/new", async () => {
   expect(shownTasks()).toEqual(["Gamma's task"]);
   const after = readsAfterSwitch();
   expect(after.every((read) => read.token === tokenOf("gamma"))).toBe(true);
+  expect(after.filter((read) => read.path === "/v1/me")).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=open"))).toHaveLength(1);
 });

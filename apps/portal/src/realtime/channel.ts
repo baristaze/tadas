@@ -38,7 +38,10 @@ export interface ChannelDeps {
   requestTicket(): Promise<string>;
   openSocket(ticket: string): SocketLike;
   fetchEventsAfter(after: number, limit: number): Promise<EventView[]>;
-  /** Hands one envelope to the router; the query cache is behind it. */
+  /** Hands one envelope to the router; the query cache is behind it. A
+   * record read back from the stream (a replay, the first catch-up) comes
+   * here too, only the last record of each entity, unless `routeReplayed`
+   * takes it. */
   route(envelope: Envelope): void;
   /** Hands the router a record read back from the stream (a replay, the
    * first catch-up). Only the last record of each entity is routed, so the

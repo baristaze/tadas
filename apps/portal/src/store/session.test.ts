@@ -44,31 +44,31 @@ afterEach(() => {
 describe("session store", () => {
   it("persists the token in session storage and never in local storage", async () => {
     const { useSessionStore } = await import("./session");
-    useSessionStore.getState().setSession("tok_1", "acme");
+    useSessionStore.getState().setSession("tok_1", "ajax");
 
     const stored = session.getItem(KEY);
     expect(stored).not.toBeNull();
-    expect(JSON.parse(stored as string).state).toEqual({ token: "tok_1", orgSlug: "acme" });
+    expect(JSON.parse(stored as string).state).toEqual({ token: "tok_1", orgSlug: "ajax" });
     expect(local.getItem(KEY)).toBeNull();
     expect(local.length).toBe(0);
   });
 
   it("reads the session back from session storage on load", async () => {
-    session.setItem(KEY, JSON.stringify({ state: { token: "tok_2", orgSlug: "acme" }, version: 0 }));
+    session.setItem(KEY, JSON.stringify({ state: { token: "tok_2", orgSlug: "ajax" }, version: 0 }));
     const { useSessionStore } = await import("./session");
     expect(useSessionStore.getState().token).toBe("tok_2");
-    expect(useSessionStore.getState().orgSlug).toBe("acme");
+    expect(useSessionStore.getState().orgSlug).toBe("ajax");
   });
 
   it("clears the persisted session on sign-out", async () => {
     const { useSessionStore } = await import("./session");
-    useSessionStore.getState().setSession("tok_3", "acme");
+    useSessionStore.getState().setSession("tok_3", "ajax");
     useSessionStore.getState().clear();
     expect(JSON.parse(session.getItem(KEY) as string).state).toEqual({ token: null, orgSlug: null });
   });
 
   it("drops a session an earlier build left in local storage and does not sign in from it", async () => {
-    local.setItem(KEY, JSON.stringify({ state: { token: "tok_old", orgSlug: "acme" }, version: 0 }));
+    local.setItem(KEY, JSON.stringify({ state: { token: "tok_old", orgSlug: "ajax" }, version: 0 }));
     const { useSessionStore } = await import("./session");
     expect(local.getItem(KEY)).toBeNull();
     expect(useSessionStore.getState().token).toBeNull();
