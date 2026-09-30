@@ -82,7 +82,7 @@ class World:
 
     async def run(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         while record.status is OrchestrationStatus.RUNNING:
-            record = await self.managers.tasks.step_cleanup(ctx, record)
+            record = await self.managers.tasks.cleanup.step_cleanup(ctx, record)
         return await self.managers.orchestrations.get(ctx, record.id)
 
     async def done_titles(self, ctx: TenantContext) -> list[str]:
@@ -110,7 +110,7 @@ async def test_the_cleanup_archives_done_tasks_past_ninety_days_and_keeps_the_re
     await world.done(ctx, "a year ago", 365)
     await world.done(ctx, "91 days ago", 91)
     kept = await world.done(ctx, "89 days ago", 89)
-    record = await world.managers.tasks.open_cleanup(ctx)
+    record = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None and record.kind is OrchestrationKind.TASK_CLEANUP
     assert record.input["older_than_days"] == 90
     finished = await world.run(ctx, record)
@@ -127,10 +127,10 @@ async def test_the_days_record_opens_once_and_only_with_something_to_archive(
     world: World,
 ) -> None:
     ctx = await world.org()
-    assert await world.managers.tasks.open_cleanup(ctx) is None
+    assert await world.managers.tasks.cleanup.open_cleanup(ctx) is None
     await world.done(ctx, "old", 120)
-    first = await world.managers.tasks.open_cleanup(ctx)
-    second = await world.managers.tasks.open_cleanup(ctx)
+    first = await world.managers.tasks.cleanup.open_cleanup(ctx)
+    second = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert first is not None and second is not None and first.id == second.id
     assert first.period == utcnow().date().isoformat()
     page = await world.managers.orchestrations.get_recent(ctx, OrchestrationKind.TASK_CLEANUP, 10)
@@ -154,7 +154,7 @@ async def test_once_the_days_cleanup_ran_the_org_has_no_chore_due_until_the_next
     await world.done_at(ctx, "crossed this morning", noon - timedelta(days=90, hours=5))
     await world.done_at(young, "young", noon - timedelta(days=10))
     assert await tasks.tenants_with_chores(None, 10) == [ctx.org_id]
-    record = await tasks.open_cleanup(ctx)
+    record = await tasks.cleanup.open_cleanup(ctx)
     assert record is not None
     await world.run(ctx, record)
     assert await world.archived_titles(ctx) == ["old"]
@@ -168,9 +168,9 @@ async def test_the_cleanup_steps_a_batch_at_a_time(tmp_path: Path) -> None:
     ctx = await world.org()
     for n in range(CLEANUP_BATCH + 3):
         await world.done(ctx, f"old {n}", 100)
-    record = await world.managers.tasks.open_cleanup(ctx)
+    record = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None
-    first = await world.managers.tasks.step_cleanup(ctx, record)
+    first = await world.managers.tasks.cleanup.step_cleanup(ctx, record)
     assert first.status is OrchestrationStatus.RUNNING
     assert (first.cursor, first.applied) == (CLEANUP_BATCH, CLEANUP_BATCH)
     finished = await world.run(ctx, first)
@@ -203,7 +203,7 @@ async def test_a_task_reopened_mid_run_is_left_alone(tmp_path: Path) -> None:
     ctx = await world.org()
     await world.done(ctx, "archived", 100)
     reopened = await world.done(ctx, "reopened", 100)
-    record = await world.managers.tasks.open_cleanup(ctx)
+    record = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None
     racing.target, racing.manager, racing.ctx = reopened.id, world.managers, ctx
     finished = await world.run(ctx, record)
@@ -229,10 +229,10 @@ async def test_a_cleanup_step_that_errors_leaves_the_record_at_its_cursor(tmp_pa
     world = World(tmp_path, storage)
     ctx = await world.org()
     await world.done(ctx, "old", 100)
-    record = await world.managers.tasks.open_cleanup(ctx)
+    record = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None
     with pytest.raises(TimeoutError):
-        await world.managers.tasks.step_cleanup(ctx, record)
+        await world.managers.tasks.cleanup.step_cleanup(ctx, record)
     # Nothing moved: the work queue retries the item, and the retry starts
     # at the same cursor.
     same = await world.managers.orchestrations.get(ctx, record.id)
@@ -245,7 +245,7 @@ async def test_an_archived_task_is_read_restored_and_reopened(world: World) -> N
     ctx = await world.org()
     old = await world.done(ctx, "old", 100)
     other = await world.done(ctx, "other", 100)
-    record = await world.managers.tasks.open_cleanup(ctx)
+    record = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None
     await world.run(ctx, record)
     archived = await world.managers.tasks.get_task(ctx, old.id)

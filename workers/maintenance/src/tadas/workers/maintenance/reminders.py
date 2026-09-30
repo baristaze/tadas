@@ -33,7 +33,7 @@ class TaskReminderHandlerImpl(WorkHandlerInterface):
         self._tasks = tasks
 
     async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
-        due = await self._tasks.get_due_reminder(ctx, item.target_id)
+        due = await self._tasks.reminders.get_due_reminder(ctx, item.target_id)
         if due is None:
             log.info("reminder %s for task %s is stale; nothing sent", item.id, item.target_id)
             return
@@ -41,7 +41,7 @@ class TaskReminderHandlerImpl(WorkHandlerInterface):
         if early.total_seconds() > 0:
             # Before the person's morning: the item waits in the queue for it.
             raise WorkParked("the reminder is not due yet", early)
-        fired = await self._tasks.fire_reminder(ctx, item.target_id, due.due_on)
+        fired = await self._tasks.reminders.fire_reminder(ctx, item.target_id, due.due_on)
         if fired is None:
             log.info("reminder %s for task %s is stale; nothing sent", item.id, item.target_id)
             return

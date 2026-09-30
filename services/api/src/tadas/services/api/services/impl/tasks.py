@@ -201,22 +201,22 @@ class TasksServiceImpl(TasksServiceInterface):
             size_bytes=body.size_bytes,
             purpose=FilePurpose.TASK_IMPORT,
         )
-        return file_view(await self._tasks.create_import_file(ctx, file))
+        return file_view(await self._tasks.imports.create_import_file(ctx, file))
 
     async def start_import(
         self, ctx: TenantContext, body: StartImportRequest, import_id: UUID
     ) -> ImportView:
-        return import_view(await self._tasks.start_import(ctx, import_id, body.file_id))
+        return import_view(await self._tasks.imports.start_import(ctx, import_id, body.file_id))
 
     async def get_imports(self, ctx: TenantContext, limit: int) -> ImportPageView:
-        page = await self._tasks.get_imports(ctx, clamp_limit(limit))
+        page = await self._tasks.imports.get_imports(ctx, clamp_limit(limit))
         return ImportPageView(items=[import_view(r) for r in page.items])
 
     async def get_import(self, ctx: TenantContext, import_id: UUID) -> ImportView:
-        return import_view(await self._tasks.get_import(ctx, import_id))
+        return import_view(await self._tasks.imports.get_import(ctx, import_id))
 
     async def resume_import(self, ctx: TenantContext, import_id: UUID) -> ImportView:
-        return import_view(await self._tasks.resume_import(ctx, import_id))
+        return import_view(await self._tasks.imports.resume_import(ctx, import_id))
 
     async def create_task(
         self, ctx: TenantContext, body: AddTaskRequest, task_id: UUID
@@ -279,17 +279,19 @@ class TasksServiceImpl(TasksServiceInterface):
             purpose=FilePurpose.TASK_ATTACHMENT,
             subject_id=task_id,
         )
-        return file_view(await self._tasks.attach_file(ctx, task_id, file))
+        return file_view(await self._tasks.attachments.attach_file(ctx, task_id, file))
 
     async def get_attachments(
         self, ctx: TenantContext, task_id: UUID, cursor: str | None, limit: int
     ) -> FilePageView:
         after = decode_file_cursor(cursor) if cursor else None
-        page = await self._tasks.get_attachments(ctx, task_id, after, clamp_limit(limit))
+        page = await self._tasks.attachments.get_attachments(
+            ctx, task_id, after, clamp_limit(limit)
+        )
         return FilePageView(
             items=[file_view(f) for f in page.items],
             next_cursor=encode_file_cursor(page.items[-1].id) if page.has_more else None,
         )
 
     async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> FileView:
-        return file_view(await self._tasks.remove_attachment(ctx, task_id, file_id))
+        return file_view(await self._tasks.attachments.remove_attachment(ctx, task_id, file_id))

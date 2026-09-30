@@ -51,6 +51,6 @@ class SyncSeatsHandlerImpl(WorkHandlerInterface):
         self._billing = billing
 
     async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
-        seats = await self._tenancy.count_members(ctx)
+        seats = await self._tenancy.members.count_members(ctx)
         async with provider_calls():
             await self._billing.sync_seats(ctx, seats, f"tadas-seats-{item.id}-{seats}")

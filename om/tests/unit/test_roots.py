@@ -20,9 +20,22 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import StorageSettings
-from tadas.om.tasks import TasksManagerInterface
+from tadas.om.tasks import (
+    TasksAttachmentsManagerInterface,
+    TasksCleanupManagerInterface,
+    TasksImportsManagerInterface,
+    TasksManagerInterface,
+    TasksRemindersManagerInterface,
+)
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
+from tadas.om.tenancy import (
+    TenancyCredentialsManagerInterface,
+    TenancyManagerInterface,
+    TenancyMembersManagerInterface,
+    TenancyOperatorManagerInterface,
+    TenancyOrgManagerInterface,
+    TenancySignInManagerInterface,
+)
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.work import WorkManagerInterface, WorkOperatorManagerInterface
 from tadas.om.work.storage import WorkStorageInterface
@@ -105,6 +118,32 @@ def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     assert isinstance(managers.orchestrations, OrchestrationsManagerInterface)
     assert isinstance(managers.billing, BillingManagerInterface)
     assert isinstance(managers.billing_operator, BillingOperatorManagerInterface)
+
+
+def test_the_tenancy_manager_carries_each_delegate(tmp_path: Path) -> None:
+    """A delegate is built by the root and reached through its manager."""
+    tenancy = build_managers(
+        StorageMemoryImpl(),
+        InfraLocalImpl(tmp_path),
+        integrations=absent_integrations(),
+    ).tenancy
+    assert isinstance(tenancy.sign_in, TenancySignInManagerInterface)
+    assert isinstance(tenancy.org, TenancyOrgManagerInterface)
+    assert isinstance(tenancy.members, TenancyMembersManagerInterface)
+    assert isinstance(tenancy.credentials, TenancyCredentialsManagerInterface)
+
+
+def test_the_tasks_manager_carries_each_delegate(tmp_path: Path) -> None:
+    """A delegate is built by the root and reached through its manager."""
+    tasks = build_managers(
+        StorageMemoryImpl(),
+        InfraLocalImpl(tmp_path),
+        integrations=absent_integrations(),
+    ).tasks
+    assert isinstance(tasks.attachments, TasksAttachmentsManagerInterface)
+    assert isinstance(tasks.imports, TasksImportsManagerInterface)
+    assert isinstance(tasks.cleanup, TasksCleanupManagerInterface)
+    assert isinstance(tasks.reminders, TasksRemindersManagerInterface)
 
 
 def test_the_system_scope_is_the_same_value_on_both_sides() -> None:

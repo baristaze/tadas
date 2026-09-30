@@ -27,7 +27,8 @@ and its manager: `start`, `get`, `get_recent`, `resume`, `wake`,
 `fail`, and the purges. Both features are kinds of it, `task_import`
 and `task_cleanup`. Each declares an input shape in
 `ORCHESTRATION_INPUTS` and a step in the namespace whose rows it
-changes: the tasks manager steps both.
+changes: the tasks manager's `imports` delegate steps an import, and
+its `cleanup` delegate a cleanup.
 
 **A step is one commit.** A step's effect (the tasks an import creates,
 the tasks a cleanup archives), the record's next cursor, and the work

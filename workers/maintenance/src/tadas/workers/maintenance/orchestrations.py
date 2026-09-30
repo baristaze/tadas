@@ -37,7 +37,8 @@ from tadas.om.work.types.work_item import WakeParkedPayload, WorkItem
 log = logging.getLogger(__name__)
 
 StepFn = Callable[[TenantContext, Orchestration], Awaitable[Orchestration]]
-"""One step of a kind: `TasksManagerInterface.step_import`, `step_cleanup`."""
+"""One step of a kind: `TasksImportsManagerInterface.step_import`,
+`TasksCleanupManagerInterface.step_cleanup`."""
 
 
 class OrchestrationHandlerImpl(WorkHandlerInterface):

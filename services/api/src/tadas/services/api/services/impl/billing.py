@@ -73,8 +73,8 @@ class BillingServiceImpl(BillingServiceInterface):
 
     async def start_checkout(self, ctx: TenantContext, body: StartCheckoutRequest) -> RedirectView:
         back = portal_url(body.return_url, self._origins)
-        org = await self._tenancy.get_org(ctx)
-        seats = await self._tenancy.count_members(ctx)
+        org = await self._tenancy.org.get_org(ctx)
+        seats = await self._tenancy.members.count_members(ctx)
         start = await self._billing.start_checkout(
             ctx,
             body.plan,
@@ -98,7 +98,7 @@ class BillingServiceImpl(BillingServiceInterface):
 
     async def _view(self, ctx: TenantContext, billing: Billing) -> BillingView:
         account = billing.account
-        seats = await self._tenancy.count_members(ctx)
+        seats = await self._tenancy.members.count_members(ctx)
         usage = await self._media.get_usage(ctx)
         paid = billing.paid_plan
         return BillingView(

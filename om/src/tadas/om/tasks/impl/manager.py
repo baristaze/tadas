@@ -1,11 +1,11 @@
 import logging
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import PROVENANCE_FIELDS, Platform, derived_id, utcnow
+from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import limits_of, refuse_past
 from tadas.om.billing.types.plan import Lever, Plan
@@ -18,77 +18,37 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.media import MediaManagerInterface
-from tadas.om.media.rules import BOUNDS
-from tadas.om.media.types.file import File, FilePurpose, FileStatus
-from tadas.om.media.types.page import FilePage
-from tadas.om.orchestrations import OrchestrationsManagerInterface
-from tadas.om.orchestrations.rules import advanced
-from tadas.om.orchestrations.steps import step_rows
-from tadas.om.orchestrations.types.orchestration import (
-    FailReason,
-    Orchestration,
-    OrchestrationKind,
-    OrchestrationPage,
-    ParkReason,
-    RowError,
-    Step,
-    TaskCleanupInput,
-    TaskImportInput,
-)
+from tadas.om.media.types.file import FilePurpose
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, versioned_row
+from tadas.om.outbox.types.row import OutboxRow, versioned_row
 from tadas.om.slack import SlackManagerInterface
-from tadas.om.slack.types.installation import SlackInstallationStatus
+from tadas.om.tasks.attachments import TasksAttachmentsManagerInterface
+from tadas.om.tasks.cleanup import TasksCleanupManagerInterface
+from tadas.om.tasks.impl.shared import everyone, reminder_rows, room_left, slack_rows
+from tadas.om.tasks.imports import TasksImportsManagerInterface
 from tadas.om.tasks.manager import TasksManagerInterface
+from tadas.om.tasks.reminders import TasksRemindersManagerInterface
 from tadas.om.tasks.rules import (
     BULK_BATCH,
     BULK_MAX_IDS,
     BULK_REPORT_CAP,
-    CLEANUP_BATCH,
-    IMPORT_BATCH,
     RESPACE_REACH,
-    ImportedTask,
-    ImportFileRefused,
     Place,
     archive_cutoff,
     bulk_ranks,
     bulk_skip,
-    cleanup_part,
-    cleanup_period,
-    earliest_reminder_time,
-    import_refusal,
-    import_row_part,
-    imported,
-    parse_import,
     rank_after,
-    reminder_person,
-    reminder_time,
     respace_run,
     respaced,
-    room_for,
-    spread,
     top_rank,
 )
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.types.bulk import (
-    BulkAction,
-    BulkOutcome,
-    PlanBound,
-    SkippedTask,
-    SkipReason,
-)
+from tadas.om.tasks.types.bulk import BulkAction, BulkOutcome, PlanBound, SkippedTask, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
-from tadas.om.tasks.types.task import DueReminder, Task, TaskScope, TaskStatus
+from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.tenancy.rules import fold_email
-from tadas.om.work.types.work_item import (
-    SlackPostEvent,
-    SlackPostPayload,
-    TaskReminderPayload,
-    WorkKind,
-    work_row_kind,
-)
+from tadas.om.work.types.work_item import SlackPostEvent
 
 log = logging.getLogger(__name__)
 
@@ -155,9 +115,11 @@ class TasksManagerImpl(TasksManagerInterface):
         options: TasksOptions,
         *,
         entitlements: EntitlementsInterface,
-        orchestrations: OrchestrationsManagerInterface,
+        attachments: TasksAttachmentsManagerInterface,
+        imports: TasksImportsManagerInterface,
+        cleanup: TasksCleanupManagerInterface,
+        reminders: TasksRemindersManagerInterface,
     ) -> None:
-        self._orchestrations = orchestrations
         self._storage = storage
         self._tenancy = tenancy
         self._media = media
@@ -165,6 +127,12 @@ class TasksManagerImpl(TasksManagerInterface):
         self._slack = slack
         self._options = options
         self._entitlements = entitlements
+        # The delegates: the root builds each one and hands it over, and
+        # nothing sets one again.
+        self.attachments = attachments
+        self.imports = imports
+        self.cleanup = cleanup
+        self.reminders = reminders
 
     async def get_open_tasks(
         self, ctx: TenantContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
@@ -246,8 +214,8 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         rows = (
             versioned_row(ctx, "tasks.task.created", created.id, created.version),
-            *self._reminder_rows(ctx, created),
-            *await self._slack_rows(ctx, created.id, SlackPostEvent.CREATED),
+            *reminder_rows(ctx, created),
+            *await slack_rows(self._slack, ctx, created.id, SlackPostEvent.CREATED),
         )
         if not await self._storage.create_task(ctx.org_id, created, rows):
             # Ids are minted above storage, so the only way to present one twice
@@ -292,12 +260,12 @@ class TasksManagerImpl(TasksManagerInterface):
         work: list[OutboxRow] = []
         # A reminder already waiting keeps the morning of the person it read
         # when it ran; one for the new assignee asks again. The two converge
-        # on the one write that lands (`fire_reminder`).
+        # on the one write that lands (`reminders.fire_reminder`).
         reassigned = updated.assignee_id != current.assignee_id and updated.reminded_at is None
         if rescheduled or reassigned:
-            work.extend(self._reminder_rows(ctx, updated))
+            work.extend(reminder_rows(ctx, updated))
         if current.status == TaskStatus.OPEN and updated.status == TaskStatus.DONE:
-            work.extend(await self._slack_rows(ctx, updated.id, SlackPostEvent.COMPLETED))
+            work.extend(await slack_rows(self._slack, ctx, updated.id, SlackPostEvent.COMPLETED))
         await self._write(ctx, updated, expected_version, "updated", tuple(work))
         return updated
 
@@ -382,7 +350,9 @@ class TasksManagerImpl(TasksManagerInterface):
         if action is not BulkAction.REOPEN:
             return _BulkChange(action, None, None)
         entitlements = await self._entitlements.get_entitlements(ctx)
-        return _BulkChange(action, await self._room(ctx), entitlements.plan)
+        return _BulkChange(
+            action, await room_left(self._storage, self._entitlements, ctx), entitlements.plan
+        )
 
     async def _change_batch(
         self, ctx: TenantContext, bulk: _BulkChange, batch: Sequence[tuple[UUID, Task | None]]
@@ -505,266 +475,12 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._write(ctx, restored, expected_version, "restored")
         return restored
 
-    # The import.
-
-    async def create_import_file(self, ctx: TenantContext, file: File) -> File:
-        ctx.require(Permission.WRITE)
-        upload = file.model_copy(update={"purpose": FilePurpose.TASK_IMPORT, "subject_id": None})
-        return await self._media.create_file(ctx, upload)
-
-    async def start_import(
-        self, ctx: TenantContext, import_id: UUID, file_id: UUID
-    ) -> Orchestration:
-        ctx.require(Permission.WRITE)
-        file = await self._media.get_file(ctx, file_id)
-        if file.purpose is not FilePurpose.TASK_IMPORT:
-            raise ValidationFailed(f"file {file_id} was not uploaded to be imported")
-        if file.status is not FileStatus.STORED:
-            raise ValidationFailed(f"file {file_id} has not been uploaded")
-        now = utcnow()
-        record = Orchestration(
-            id=import_id,
-            created_at=now,
-            updated_at=now,
-            created_by=ctx.user_id,
-            updated_by=ctx.user_id,
-            kind=OrchestrationKind.TASK_IMPORT,
-            input=TaskImportInput(file_id=file_id).model_dump(mode="json"),
-        )
-        return await self._orchestrations.start(ctx, record)
-
-    async def get_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
-        record = await self._orchestrations.get(ctx, import_id)
-        if record.kind is not OrchestrationKind.TASK_IMPORT:
-            raise NotFound(f"import {import_id} not found")
-        return record
-
-    async def get_imports(self, ctx: TenantContext, limit: int) -> OrchestrationPage:
-        return await self._orchestrations.get_recent(ctx, OrchestrationKind.TASK_IMPORT, limit)
-
-    async def resume_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
-        await self.get_import(ctx, import_id)
-        return await self._orchestrations.resume(ctx, import_id)
-
-    async def step_import(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
-        ctx.require(Permission.WRITE)
-        file_id = TaskImportInput.model_validate(dict(record.input)).file_id
-        try:
-            file = await self._media.get_file(ctx, file_id)
-        except NotFound:
-            return await self._orchestrations.fail(ctx, record, FailReason.FILE_GONE)
-        if file.status is not FileStatus.STORED:
-            return await self._orchestrations.fail(ctx, record, FailReason.FILE_GONE)
-        data = await self._media.get_content(ctx, file_id)
-        try:
-            rows = parse_import(data, BOUNDS[FilePurpose.TASK_IMPORT].max_bytes)
-        except ImportFileRefused as refused:
-            return await self._orchestrations.fail(ctx, record, FailReason(refused.reason))
-        batch = rows[record.cursor : record.cursor + IMPORT_BATCH]
-        members = await self._members(ctx) if any(r.assignee_email for r in batch) else {}
-        room = await self._room(ctx)
-        made: list[ImportedTask] = []
-        skipped: list[RowError] = []
-        cursor = record.cursor
-        park: ParkReason | None = None
-        for row in batch:
-            refusal = import_refusal(row, members)
-            if refusal is not None:
-                skipped.append(RowError(row=row.number, reason=refusal))
-            elif room is not None and len(made) >= room:
-                # The guard: this row would take the org past its plan. The
-                # record parks with the cursor on it, keeping every task the
-                # rows before it made.
-                park = ParkReason.PLAN_LIMIT
-                break
-            else:
-                made.append(imported(row, members))
-            cursor += 1
-        now = utcnow()
-        after = advanced(
-            record,
-            now,
-            ctx.user_id,
-            cursor=cursor,
-            total=len(rows),
-            skipped=skipped,
-            finished=cursor >= len(rows),
-            park=park,
-        )
-        tasks = await self._imported_tasks(ctx, record, made, now)
-        rows_after = step_rows(ctx, after)
-        written = await self._storage.create_tasks_in_step(
-            ctx.org_id, tasks, Step(record=after, expected_version=record.version), rows_after
-        )
-        # The step's tasks relay together: their events take one run of
-        # numbers under one hold of the tenant's cursor, not one hold each.
-        landed_rows = [
-            row
-            for (_, task_rows), landed in zip(tasks, written, strict=True)
-            if landed
-            for row in task_rows
-        ]
-        await self._relay_all(ctx, landed_rows)
-        await self._relay_all(ctx, rows_after)
-        return after.model_copy(update={"applied": record.applied + sum(written)})
-
-    async def _imported_tasks(
-        self, ctx: TenantContext, record: Orchestration, made: Sequence[ImportedTask], now: datetime
-    ) -> list[tuple[Task, tuple[OutboxRow, ...]]]:
-        """The tasks a step makes, with the rows that announce them and
-        schedule their reminders. They go to the bottom of the open list, in
-        the file's order: an import adds to the list and does not reorder
-        what the team placed. A task's id is derived from the import and its
-        row, so a step run twice presents the same ids, and it is the task
-        of the person who started the import. An imported task
-        posts nothing to Slack: a file of a thousand rows is not a thousand
-        messages."""
-        if not made:
-            return []
-        last = await self._storage.read_last_place(ctx.org_id)
-        ranks = spread(last[0] if last is not None else None, None, len(made))
-        tasks: list[tuple[Task, tuple[OutboxRow, ...]]] = []
-        for rank, row in zip(ranks, made, strict=True):
-            task = Task(
-                id=derived_id(record.id, record.created_at, import_row_part(row.number)),
-                created_at=now,
-                updated_at=now,
-                # The person who started the import, whoever runs the step.
-                created_by=record.created_by,
-                updated_by=record.created_by,
-                title=row.title,
-                notes=row.notes,
-                assignee_id=row.assignee_id,
-                due_on=row.due_on,
-                rank=rank,
-            )
-            rows = (
-                versioned_row(ctx, "tasks.task.created", task.id, task.version),
-                *self._reminder_rows(ctx, task),
-            )
-            tasks.append((task, rows))
-        return tasks
-
-    async def _members(self, ctx: TenantContext) -> dict[str, UUID]:
-        """The org's members by address, folded: whom a row may assign."""
-        members: dict[str, UUID] = {}
-        after: UUID | None = None
-        while True:
-            page = await self._tenancy.get_users(ctx, after, self._options.max_limit)
-            for user in page.items:
-                if user.deleted_at is None:
-                    members[fold_email(user.email)] = user.id
-            if not page.has_more or not page.items:
-                return members
-            after = page.items[-1].id
-
-    async def _room(self, ctx: TenantContext) -> int | None:
-        """How many more tasks the plan lets the org open now; None when it
-        has no bound. Read at each step, so a plan raised between two steps
-        lets the next one go further."""
-        entitlements = await self._entitlements.get_entitlements(ctx)
-        bound = entitlements.limits.active_tasks
-        if bound is None:
-            return None
-        return room_for(
-            bound, await self._storage.count_open_tasks(ctx.org_id, self._everyone(ctx))
-        )
-
-    # The cleanup.
-
-    async def open_cleanup(self, ctx: TenantContext) -> Orchestration | None:
-        ctx.require(Permission.WRITE)
-        now = utcnow()
-        before = archive_cutoff(now, self._options.archive_after)
-        if not await self._storage.read_archivable(ctx.org_id, before, 1):
-            return None
-        period = cleanup_period(now)
-        day = datetime.combine(date.fromisoformat(period), time(), tzinfo=UTC)
-        record_id = derived_id(ctx.org_id, day, cleanup_part(period))
-        try:
-            return await self._orchestrations.get(ctx, record_id)
-        except NotFound:
-            pass
-        record = Orchestration(
-            id=record_id,
-            created_at=now,
-            updated_at=now,
-            created_by=ctx.user_id,
-            updated_by=ctx.user_id,
-            kind=OrchestrationKind.TASK_CLEANUP,
-            input=TaskCleanupInput(
-                older_than_days=self._options.archive_after.days, before=before
-            ).model_dump(mode="json"),
-            period=period,
-        )
-        return await self._orchestrations.start(ctx, record)
-
-    async def step_cleanup(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
-        ctx.require(Permission.WRITE)
-        before = TaskCleanupInput.model_validate(dict(record.input)).before
-        ids = await self._storage.read_archivable(ctx.org_id, before, CLEANUP_BATCH)
-        now = utcnow()
-        after = advanced(
-            record,
-            now,
-            ctx.user_id,
-            cursor=record.cursor + len(ids),
-            total=None,
-            finished=len(ids) < CLEANUP_BATCH,
-        )
-        candidates = [
-            (task_id, (outbox_row(ctx, "tasks.task.archived", task_id, {}),)) for task_id in ids
-        ]
-        rows_after = step_rows(ctx, after)
-        archived = await self._storage.update_archived_in_step(
-            ctx.org_id,
-            candidates,
-            before,
-            now,
-            ctx.user_id,
-            Step(record=after, expected_version=record.version),
-            rows_after,
-        )
-        landed_rows = [
-            row
-            for (_, task_rows), landed in zip(candidates, archived, strict=True)
-            if landed
-            for row in task_rows
-        ]
-        await self._relay_all(ctx, landed_rows)
-        await self._relay_all(ctx, rows_after)
-        if any(archived):
-            log.info("archived %d done tasks in org %s", sum(archived), ctx.org_id)
-        return after.model_copy(update={"applied": record.applied + sum(archived)})
-
     async def _relay_all(self, ctx: TenantContext, rows: Sequence[OutboxRow]) -> None:
         await self._relay.relay_all(ctx.org_id, rows)
 
     async def count_active_tasks(self, ctx: TenantContext) -> int:
         ctx.require(Permission.READ)
-        return await self._storage.count_open_tasks(ctx.org_id, self._everyone(ctx))
-
-    async def attach_file(self, ctx: TenantContext, task_id: UUID, file: File) -> File:
-        ctx.require(Permission.WRITE)
-        await self.get_task(ctx, task_id)  # a live task of this tenant, or NotFound
-        attached = file.model_copy(
-            update={"purpose": FilePurpose.TASK_ATTACHMENT, "subject_id": task_id}
-        )
-        return await self._media.create_file(ctx, attached)
-
-    async def get_attachments(
-        self, ctx: TenantContext, task_id: UUID, after: UUID | None, limit: int
-    ) -> FilePage:
-        await self.get_task(ctx, task_id)
-        return await self._media.get_files(ctx, FilePurpose.TASK_ATTACHMENT, task_id, after, limit)
-
-    async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> File:
-        ctx.require(Permission.WRITE)
-        await self.get_task(ctx, task_id)
-        file = await self._media.get_file(ctx, file_id)
-        if file.purpose is not FilePurpose.TASK_ATTACHMENT or file.subject_id != task_id:
-            raise NotFound(f"file {file_id} is not attached to task {task_id}")
-        return await self._media.delete_file(ctx, file_id)
+        return await self._storage.count_open_tasks(ctx.org_id, everyone(ctx))
 
     async def _detach_all(self, ctx: TenantContext, task_id: UUID) -> None:
         """The attachments go after the task, in writes of their own: the task
@@ -778,32 +494,6 @@ class TasksManagerImpl(TasksManagerInterface):
         except Exception:
             log.exception("the attachments of deleted task %s were left live", task_id)
             OUTCOMES.labels(subsystem="tasks", outcome="detach_failed").inc()
-
-    async def get_due_reminder(self, ctx: TenantContext, task_id: UUID) -> DueReminder | None:
-        ctx.require(Permission.READ)
-        task = await self._storage.read_task(ctx.org_id, task_id)
-        if (
-            task is None
-            or task.deleted_at is not None
-            or task.status is not TaskStatus.OPEN
-            or task.due_on is None
-            or task.reminded_at is not None
-        ):
-            return None
-        zone = await self._tenancy.get_time_zone(ctx, reminder_person(task))
-        return DueReminder(due_on=task.due_on, at=reminder_time(task.due_on, zone))
-
-    async def fire_reminder(self, ctx: TenantContext, task_id: UUID, due_on: date) -> Task | None:
-        ctx.require(Permission.WRITE)
-        rows = (
-            outbox_row(ctx, "tasks.task.reminded", task_id, {}),
-            *await self._slack_rows(ctx, task_id, SlackPostEvent.REMINDED),
-        )
-        reminded = await self._storage.mark_reminded(ctx.org_id, task_id, due_on, utcnow(), rows)
-        if reminded is None:
-            return None
-        await self._relay.relay_all(ctx.org_id, rows)
-        return reminded
 
     async def respace_ranks(self, ctx: TenantContext) -> int:
         ctx.require(Permission.WRITE)
@@ -905,15 +595,10 @@ class TasksManagerImpl(TasksManagerInterface):
         if entitlements.limits.active_tasks is None:
             return await self._top_rank(ctx, exclude)
         count, top = await self._storage.count_open_and_read_places(
-            ctx.org_id, self._everyone(ctx), exclude, NEIGHBOURS
+            ctx.org_id, everyone(ctx), exclude, NEIGHBOURS
         )
         refuse_past(entitlements.plan, Lever.ACTIVE_TASKS, count)
         return top_rank(top)
-
-    @staticmethod
-    def _everyone(ctx: TenantContext) -> TaskFilter:
-        """Every open task of the org: what a plan's bound counts."""
-        return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
     def _clamp(self, limit: int) -> int:
         """The page size a caller gets, at most `max_limit`."""
@@ -966,7 +651,7 @@ class TasksManagerImpl(TasksManagerInterface):
         assigned = task.assignee_id
         if assigned is not None and (current is None or assigned != current.assignee_id):
             try:
-                await self._tenancy.get_user(ctx, assigned)
+                await self._tenancy.members.get_user(ctx, assigned)
             except NotFound:
                 raise ValidationFailed("the assignee is not a member of this org") from None
 
@@ -990,32 +675,3 @@ class TasksManagerImpl(TasksManagerInterface):
         rows = (versioned_row(ctx, f"tasks.task.{action}", task.id, task.version), *work)
         await self._storage.update_task(ctx.org_id, task, expected_version, rows)
         await self._relay.relay_all(ctx.org_id, rows)
-
-    @staticmethod
-    def _reminder_rows(ctx: TenantContext, task: Task) -> tuple[OutboxRow, ...]:
-        """The work row that schedules the reminder of the task's due date,
-        or none when it has none. The item waits in the queue until the
-        first moment any zone's morning of that date comes, and its handler
-        waits the rest from the person's zone (`get_due_reminder`)."""
-        if task.due_on is None:
-            return ()
-        payload = TaskReminderPayload(not_before=earliest_reminder_time(task.due_on))
-        kind = work_row_kind(WorkKind.TASK_REMINDER)
-        return (outbox_row(ctx, kind, task.id, payload.model_dump(mode="json")),)
-
-    async def _slack_rows(
-        self, ctx: TenantContext, task_id: UUID, event: SlackPostEvent
-    ) -> tuple[OutboxRow, ...]:
-        """The work row that posts the event to the org's Slack channel, or
-        none when the org has not installed Slack, bound no channel, or its
-        installation is broken."""
-        installation = await self._slack.get_installation(ctx)
-        if (
-            installation is None
-            or installation.channel_id is None
-            or installation.status is not SlackInstallationStatus.OK
-        ):
-            return ()
-        payload = SlackPostPayload(event=event)
-        kind = work_row_kind(WorkKind.SLACK_POST)
-        return (outbox_row(ctx, kind, task_id, payload.model_dump(mode="json")),)

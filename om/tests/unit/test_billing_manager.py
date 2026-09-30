@@ -44,10 +44,10 @@ from tadas.om.exceptions import (
     SubscriptionExists,
     ValidationFailed,
 )
-from tadas.om.root import Managers, build_managers
+from tadas.om.root import Managers, build_managers, build_tenancy
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task, TaskStatus
-from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
@@ -93,9 +93,9 @@ class World:
 
     async def signed_in(self, email: str, org_id: UUID) -> TenantContext:
         tenancy = self.managers.tenancy
-        login = await tenancy.dev_sign_in(request(), email)
+        login = await tenancy.sign_in.dev_sign_in(request(), email)
         identity = await tenancy.authenticate_login(request(), login.token)
-        session = await tenancy.exchange_login(identity, org_id)
+        session = await tenancy.sign_in.exchange_login(identity, org_id)
         return await tenancy.authenticate(request(), session.token)
 
     async def deliver(self, delivery: tuple[bytes, str]) -> bool:
@@ -380,7 +380,7 @@ async def test_removing_a_member_of_a_max_org_asks_for_the_seat_count_in_its_com
     _, bob, _ = await world.managers.tenancy.add_member(
         request(), "acme", "bob@acme.test", "Bob", Role.MEMBER
     )
-    await world.managers.tenancy.remove_member(ctx, bob.id)
+    await world.managers.tenancy.members.remove_member(ctx, bob.id)
     claimed = await world.storage.get_work_storage().claim_next(
         "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
     )
@@ -395,7 +395,7 @@ async def test_removing_a_member_of_a_team_org_asks_for_nothing(world: World) ->
     _, bob, _ = await world.managers.tenancy.add_member(
         request(), "acme", "bob@acme.test", "Bob", Role.MEMBER
     )
-    await world.managers.tenancy.remove_member(ctx, bob.id)
+    await world.managers.tenancy.members.remove_member(ctx, bob.id)
     assert (
         await world.storage.get_work_storage().claim_next(
             "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
@@ -458,10 +458,10 @@ async def test_the_first_api_key_on_free_is_refused_and_a_kept_key_is_refused_af
     owner = await world.signed_in("owner@acme.test", ctx.org_id)
     tenancy = world.managers.tenancy
     with pytest.raises(PlanLimitReached) as refused:
-        await tenancy.create_api_key(owner, "ci", Role.MEMBER)
+        await tenancy.credentials.create_api_key(owner, "ci", Role.MEMBER)
     assert (refused.value.lever, refused.value.suggested_plan) == ("api_keys", "pro")
     subscription = await world.buy(ctx, Plan.PRO)
-    issued = await tenancy.create_api_key(owner, "ci", Role.MEMBER)
+    issued = await tenancy.credentials.create_api_key(owner, "ci", Role.MEMBER)
     assert (await tenancy.authenticate(request(), issued.key)).org_id == ctx.org_id
     world.twin.move(subscription, status="canceled")
     await world.deliver(
@@ -470,7 +470,7 @@ async def test_the_first_api_key_on_free_is_refused_and_a_kept_key_is_refused_af
     # Kept, and refused while the org is on a plan without keys.
     with pytest.raises(PlanLimitReached):
         await tenancy.authenticate(request(), issued.key)
-    listed = await tenancy.get_api_keys(owner, None, 10)
+    listed = await tenancy.credentials.get_api_keys(owner, None, 10)
     assert [k.id for k in listed.items] == [issued.api_key.id]
     await world.buy(ctx, Plan.TEAM)
     assert (await tenancy.authenticate(request(), issued.key)).org_id == ctx.org_id
@@ -487,7 +487,7 @@ class Plane:
     def __init__(self, world: World, tmp_path: Path) -> None:
         self.clock = SteppingClock()
         storage = world.storage
-        self.tenancy = TenancyManagerImpl(
+        self.tenancy = build_tenancy(
             storage.get_tenancy_storage(),
             world.managers.outbox,
             InfraLocalImpl(tmp_path / "plane").get_cache(CacheScope.REALTIME_TICKET),

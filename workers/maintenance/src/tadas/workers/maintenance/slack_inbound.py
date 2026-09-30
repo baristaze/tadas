@@ -234,7 +234,7 @@ class SlackInboundHandler:
         if email is not None:
             person = await self._tenancy.member_context(self._request(), org_ctx.org_id, email)
         if person is None:
-            org = await self._tenancy.get_org(org_ctx)
+            org = await self._tenancy.org.get_org(org_ctx)
             await self._client.respond(response_url, unknown_person(org.name, email))
             return
         if command.verb is Verb.MINE:

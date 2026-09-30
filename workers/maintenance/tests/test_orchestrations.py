@@ -82,7 +82,7 @@ async def test_an_import_parks_at_the_plan_and_the_processors_delivery_wakes_it(
     ctx = await sign_in(container)
     started = await start_import(container, ctx, 50)
     await drain(container, handlers_of(container))
-    parked = await container.managers.tasks.get_import(ctx, started.id)
+    parked = await container.managers.tasks.imports.get_import(ctx, started.id)
     assert parked.status is OrchestrationStatus.PARKED
     assert parked.park_reason is ParkReason.PLAN_LIMIT
     assert (parked.applied, parked.cursor) == (10, 10)
@@ -93,7 +93,7 @@ async def test_an_import_parks_at_the_plan_and_the_processors_delivery_wakes_it(
     assert await consumer.handle(await queued(container, paid)) == "applied"
     ran = await drain(container, handlers_of(container))
     assert ran[0].kind is WorkKind.WAKE_PARKED
-    done = await container.managers.tasks.get_import(ctx, started.id)
+    done = await container.managers.tasks.imports.get_import(ctx, started.id)
     assert done.status is OrchestrationStatus.SUCCEEDED
     assert (done.applied, done.cursor, done.total) == (50, 50, 50)
     assert await container.managers.tasks.count_active_tasks(ctx) == 50
@@ -113,7 +113,7 @@ class Flaky:
     async def __call__(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         if self.failing:
             raise ConnectionResetError("the database went away")
-        return await self.container.managers.tasks.step_import(ctx, record)
+        return await self.container.managers.tasks.imports.step_import(ctx, record)
 
 
 async def test_a_step_that_errors_is_the_queues_to_retry_and_goes_on_from_its_cursor(
