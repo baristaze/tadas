@@ -149,7 +149,7 @@ class DeleteOrgRequest(BaseModel):
 
 class DeliveryReceivedView(BaseModel):
     """
-    The delivery checked out and is queued; the processor stops retrying.
+    The delivery checked out and is queued; the provider stops retrying.
     """
     received: Annotated[bool, Field(title='Received')]
 
@@ -238,8 +238,9 @@ class FailReason(StrEnum):
 
 class FilePurpose(StrEnum):
     """
-    Which domain context a file came from. The purpose decides the bounds an
-    upload is held to and what `subject_id` names.
+    Which context a file came from. The purpose decides the bounds an
+    upload is held to and what `subject_id` names. A product adds a purpose
+    per kind of file it keeps, with its bounds (`media.rules.BOUNDS`).
     """
     task_attachment = 'task_attachment'
     voice_dictation = 'voice_dictation'
@@ -855,9 +856,9 @@ class TotpConfirmedView(BaseModel):
 class UpdateIdentityRequest(BaseModel):
     """
     Where the person is, as an IANA name ("Europe/Istanbul"): the portal
-    sends the browser's own on sign-in. A due date's reminder goes out at
-    nine in the morning in it; with none sent, in UTC. A name that is not
-    one is 422.
+    sends the browser's own on sign-in, and a time shown or sent to the
+    person is in it (a due date's reminder goes out at nine in the morning
+    there); with none sent, in UTC. A name that is not one is 422.
     """
     model_config = ConfigDict(
         extra='forbid',
