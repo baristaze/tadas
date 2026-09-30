@@ -50,16 +50,6 @@ Unicode 16.0. So the digest the process computes and the one the database
 computes agree for any spelling. A writer that does not fold meets the
 unique index with a second spelling instead of making a second person.
 
-**A migration folds the stored addresses and stops on two that fold to
-one** (`202610200100`). It folds every identity, user, and invitation,
-and then computes the digest from the folded address. Before it changes
-anything, it looks for two identities, or two pending invitations of one
-org, whose addresses fold to one. If there are any, it fails, naming
-their ids, and changes nothing. Which of two people is the real one is a
-person's call, never a migration's. The downgrade puts the digest back
-on the address as stored; the addresses stay folded, since their case is
-gone.
-
 ## Consequences
 
 - One address is one identity, one pending invitation in an org, and one

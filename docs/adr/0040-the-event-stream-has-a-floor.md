@@ -1,18 +1,6 @@
 # ADR 0040: The event stream has a floor, and a read below it is gone
 
-**Status**: accepted (2026-09-26). Both steps of the rollout are done:
-the 410 and the resync in both clients shipped one release before the
-trim, and the worker keeps 90 days of events by default. Where the
-sweep runs the trim is amended (2026-09-26) by
-[ADR 0045](0045-retention-purges-run-once-a-pass-across-tenants.md):
-once a pass for every org, in one statement that moves each org's
-floor with its own events. A portal session lasts up to 30 days since
-[ADR 0063](0063-sessions-last-weeks.md), not 12 hours; a tab still
-cannot live 90 days, so no tab older than the 410 meets the trim. No
-longer a deviation since v0.40.0: NET-22 keeps the stream for a
-retention above a floor, a read below it is `410 stream_truncated`
-naming the floor and the head, and DEL-18 lets that exception set its
-own status ([ADR 0082](0082-what-0-40-0-asks.md)).
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -53,9 +41,8 @@ batch of at most 1,000 events, and skips a cursor an append holds
 `stream_truncated`, with `{"floor", "head"}` under `stream` in the
 error envelope. The floor is read after the page, so a trim that
 commits in between is seen. It is 410, not 409: asking again never
-succeeds, and the client must not retry the same read. The guideline's
-exception shapes have no 410, so `StreamTruncated` carries its own
-status.
+succeeds, and the client must not retry the same read. `StreamTruncated`
+carries its own status, as DEL-18 lets an exception no shape fits.
 
 **A client resyncs on it, once.** It reads afresh what it shows, then
 moves its cursor to the head the refusal named. The portal refreshes

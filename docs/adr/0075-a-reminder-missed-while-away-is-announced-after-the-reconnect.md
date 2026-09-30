@@ -1,6 +1,6 @@
 # ADR 0075: A reminder missed while away is announced after the reconnect
 
-**Status**: accepted (2026-09-26).
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -20,9 +20,10 @@ The replay routes a page one record per entity, the last one. Routing
 invalidates every query the entity is read from, so a page of two
 hundred task records would otherwise restart the list refetch two
 hundred times. The collapse is right for the cache and wrong for a
-reminder. A reminder was announced only when it was the last task record
-of its page. Any later record of any task (the same task edited, another
-completed) hid it. The badge still showed, but nobody was told.
+reminder. Under the collapse alone, a reminder is announced only when
+it is the last task record of its page. Any later record of any task
+(the same task edited, another completed) hides it. The badge shows,
+but nobody is told.
 
 ## Decision
 
@@ -31,7 +32,7 @@ completed) hid it. The badge still showed, but nobody was told.
 **The collapse keeps a reminder.** The replay still routes one record
 per entity. Beside that, it keeps every record a person is told about,
 whatever record of its entity follows it. The channel asks the provider
-which those are (`isAnnounced`). Today that is `tasks.task.reminded`.
+which those are (`isAnnounced`). That is `tasks.task.reminded`.
 The channel stays generic, and the guideline's rule holds: a client that
 cares about some kinds filters after it has ordered, never before.
 
@@ -61,7 +62,8 @@ nothing.
 ## Consequences
 
 A person who comes back to the portal learns what came due while they
-were away. That is what ADR 0064 already said a paused tab would do.
+were away, as a paused tab does
+([ADR 0064](0064-a-hidden-tab-pauses-its-socket.md)).
 
 A replay with more than three reminders costs no extra read. One with
 three or fewer costs a read of each task, the read a live reminder makes
@@ -71,6 +73,5 @@ A degraded channel polls by replaying every thirty seconds, so a
 reminder that fires while it is degraded is announced by the next poll.
 
 A reload inside the first catch-up's window (fifteen seconds, and the
-page's own load) announces a reminder that fired in it again. That was
-already so when the reminder was the last task record, and a notice
+page's own load) announces a reminder that fired in it again. A notice
 twice beats a notice never.

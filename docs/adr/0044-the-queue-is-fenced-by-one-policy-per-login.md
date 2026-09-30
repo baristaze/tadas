@@ -1,11 +1,6 @@
 # ADR 0044: The queue is fenced by one policy per login
 
-**Status**: accepted (2026-09-25). Follows the guideline since v0.35.0:
-The Second Fence lets a table that plans badly under the one policy
-carry one policy per login, kept where a measurement shows it, and
-STO-28 names the split's shape. It is not a deviation. The measurement
-is this record's table; the migration that makes the split names this
-record, and an applied migration is never edited.
+**Status**: accepted (2026-09-25)
 
 ## Context
 

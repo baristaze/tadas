@@ -34,8 +34,8 @@ wire type, screen, or migration changes.
   holds every `SEARCH` schema the two skills write to the ones the
   dashboard module writes. (#187)
 - **The guideline pin moves to v0.42.0.** `main` merges the `scaffold`
-  branch at v0.42.0. `make arch-check` passes at v0.42.0, and ADR 0084
-  records what the release asks: nothing of it is a deviation. (#187)
+  branch at v0.42.0. `make arch-check` passes at v0.42.0, and nothing
+  the release asks is a deviation. (#187)
 
 ## 0.10.0 (2026-09-30)
 

@@ -92,7 +92,7 @@ reason = "an api key hash digests a fresh random secret and the lookup reads rev
 [[tool.arch-check.exception]]
 rule = "ASY-16"
 path = "om/src/tadas/om/work/storage/tables/work_items.py"
-adr = "docs/adr/0026-what-0-31-0-leaves-as-a-choice.md"
+adr = "docs/adr/0026-a-work-items-key-is-unique-within-its-tenant.md"
 reason = "the unique index is (org_id, idempotency_key), led by the tenant as the lens asks"
 
 # A build before the rank writes a task's position and cannot write its rank;

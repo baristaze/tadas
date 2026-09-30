@@ -1,9 +1,6 @@
 # ADR 0053: The scope rides in the message that begins
 
-**Status**: accepted (2026-09-26). Deviates from the example of The
-Second Fence, which sets the scope with bind parameters. The rule the
-example serves stands: the settings are set before the first statement
-and die with the transaction.
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -74,10 +71,11 @@ needs the unit of work STO-02 names as the violation.
 
 Every transaction costs two round trips before its work, not three. A
 read of one statement is three round trips. Across the database-call
-harness, every flow it runs went from 14,734 round trips to 11,504
-(22 % fewer), with the same 3,230 transactions.
+harness, the flows it runs cost 11,504 round trips where the scope as a
+statement of its own costs 14,734 (22 % fewer), with the same 3,230
+transactions.
 
-| Flow | Round trips | Transactions |
+| Flow | Round trips, a statement of its own → with `BEGIN` | Transactions |
 |---|---|---|
 | A plain authenticated read (`GET /v1/tasks/{id}`) | 14 → 11 | 3 → 3 |
 | `POST /v1/tasks` | 35 → 27 | 8 → 8 |
@@ -97,7 +95,6 @@ invalidated as a whole.
 tenant: the scope is set again as a statement of its own, with bind
 parameters.
 
-A create still reads the plan, the top place, and the Slack
-installation in three transactions, and `GET /v1/billing` still makes
-four reads. Folding them is a decision about STO-02, not about the
-funnel.
+A create reads the plan, the top place, and the Slack installation in
+three transactions, and `GET /v1/billing` makes four reads. Folding
+them is a decision about STO-02, not about the funnel.

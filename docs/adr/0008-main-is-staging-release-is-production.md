@@ -13,11 +13,6 @@ plans production, waits for a person's approval of that plan, and
 applies it, promoting what staging built for that commit. A commit
 staging never built is refused.
 
-Before this record one workflow did both: it paused for an approval
-before the smaller environment's apply and again before production's,
-in the same run, so every merge to `main` needed a person twice and
-production could only ever be the commit that had just merged.
-
 ## Decision
 
 The convention is adopted as written.
@@ -52,8 +47,7 @@ Two choices the guideline leaves open are made here.
 
 Every migration is compatible with the release before it (expand and
 contract). The old tasks serve the new schema until the roll ends, and
-an earlier release runs against a newer schema after a rollback. ADR
-0006's one-step renames end with the first deployment.
+an earlier release runs against a newer schema after a rollback.
 
 A rollback to the previous release is the fast rollback of ADR 0024.
 Anything older rolls forward through a revert on `main`.

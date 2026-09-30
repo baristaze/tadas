@@ -14,13 +14,9 @@ The two need different answers. The first is not the call's fault. The
 same call goes through once a person fixes the key, so work that made
 it must wait, not fail. The second gets the same answer every time.
 NET-33 says only a failure that can differ is retried, so work that
-made it must fail at once.
-
-The WorkOS client already reads a refused key as unavailable. The Stripe
-client read both as one `PaymentsRefused` (`502`), except on the way to
-ending a deleted account, where a rule of its own told them apart. So
-`SYNC_SEATS` could not tell them apart: it either failed for good on a
-key a person could fix, or retried a request that could never pass.
+made it must fail at once. A client that reads both as one refusal
+leaves work no way to tell them apart: it either fails for good on a
+key a person could fix, or retries a request that can never pass.
 
 ## Decision
 
@@ -72,9 +68,9 @@ A checkout, the portal, a cancel, or a resume under a refused key
 answers `503` `payments_key_refused`, not `502` `payments_refused`. The
 portal says billing is unavailable right now, with the request's
 reference. A throttle answers `503` `unavailable`, not `500`
-`backend_failed`. A refusal of the request answers `502` as before. The
-billing read asks Stripe nothing and is unchanged. The webhook consumer
-leaves a delivery on the queue for any failure, as before.
+`backend_failed`. A refusal of the request answers `502`. The billing
+read asks Stripe nothing. The webhook consumer leaves a delivery on the
+queue for any failure.
 
 An item under a refused key parks until a person fixes the key, and
 then finishes. An item whose request the provider refused fails at

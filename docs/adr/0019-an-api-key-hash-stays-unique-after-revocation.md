@@ -1,7 +1,6 @@
 # ADR 0019: An API key's hash stays unique after the key is revoked
 
-**Status**: accepted (2026-09-21), amended (2026-09-22): the lookup
-is `read_api_key_by_digest`.
+**Status**: accepted (2026-09-21)
 
 ## Context
 

@@ -1,10 +1,6 @@
 # ADR 0061: A task's push names the version it wrote
 
-**Status**: accepted (2026-09-26). Follows the guideline since v0.36.0:
-Realtime at the Edge lets a push carry one field of the entity, its
-compare-and-set `version`, which the write's outbox row carries and the
-relay copies onto the event and the publish, and NET-30 names it. It is
-not a deviation.
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -52,7 +48,7 @@ it. The reminder and the daily archive write the version in storage,
 so the manager does not know it, and their pushes name none.
 
 **A client that holds the record at that version need not read it.** A
-push that names no version is read as before.
+push that names no version is read.
 
 **A tab reads a task only when it does not hold the version the push
 names.** It holds a task when it placed a write's answer or a read's at
@@ -81,7 +77,7 @@ erasure has to find.
 
 A record's event keeps its version too, since the event's payload is
 the row's. The replay (`GET /v1/events`) does not serve the payload, so
-the wire changes only on the socket.
+the version is on the wire only on the socket.
 
 The frame's field is optional. A client that does not know it ignores
 it and reads.

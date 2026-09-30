@@ -1,43 +1,33 @@
-# ADR 0006: Renames under `/v1` and one-step migrations until the first deployment
+# ADR 0006: While Tadas has no customer, a deprecated field leaves `/v1`
 
-**Status**: accepted (2026-09-18), amended (2026-09-29). The migration
-half ended with the first deployment, staging's, on 2026-09-22. The last
-rename in one migration, `202609202100_operator_role`, came before it,
-and a column has moved in two releases since
-([ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md),
-[ADR 0050](0050-a-move-writes-one-row.md)). The wire half stays open
-while Tadas has no customer: the API keeps `/v1`, and a field may leave
-it one release after it is marked deprecated, where NET-23 asks for
-`/v2`. A task write's `version` ([ADR 0009](0009-tasks-carry-a-version.md))
-and `remind_at` ([ADR 0034](0034-a-task-is-due-on-a-date.md)) left that
-way, and `position` goes next ([ADR 0050](0050-a-move-writes-one-row.md)).
-The first customer, or the first client outside this repository, ends
-it: from then on NET-23 holds, and a removal or a rename is `/v2`.
+**Status**: accepted (2026-09-18)
 
 ## Context
 
-The guideline (v0.4.0, Public Types and Migrations) says a view inside
-`/v1` only gains fields and a rename is a new prefix, and that a
-migration is compatible with the release before it because a rollout
-runs both at once (expand and contract). Adopting v0.4.0 renames
-`EventView` (`entity`, `entity_id`, `action` become `kind`,
-`target_id`), the socket's `EntityChangedView` with it, and the columns
-behind them (`events.entity` to `kind`, `work_items.queue` to `lane`),
-each in one step.
+NET-23 (The Network Layer, Public Types) says a view inside `/v1` only
+gains fields, and a removal or a rename is a new prefix. The API's only
+consumers are the clients in this repository: the portal, the command
+line, and the Python client. Each ships with the API, so no caller
+outside the tree holds a field the tree stopped sending.
 
 ## Decision
 
-Until the first environment is deployed (the deploy workflow skips the
-cloud while its variables are empty), a rename lands under `/v1` and a
-migration renames in one step. The API's only consumer is the portal in
-this repository and the version is 0.1.0; there is no release to run
-beside. From the first deployment on, both rules apply as written: a
-removal or a rename is `/v2`, and a column moves by add, backfill,
-switch, drop across releases.
+While Tadas has no customer, the API keeps `/v1`, and a field may leave
+it one release after it is marked deprecated, where NET-23 asks for
+`/v2`. A task's `position`, marked deprecated, is the field that leaves
+next ([ADR 0050](0050-a-move-writes-one-row.md)).
+
+The first customer, or the first client outside this repository, ends
+it: from then on NET-23 holds, and a removal or a rename is `/v2`.
+
+A migration has no such room. Every migration is compatible with the
+release before it, and a column moves by add, backfill, switch, and
+drop across releases
+([ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md)).
 
 ## Consequences
 
-Reviews treat the `EventView` shape and the two rename migrations as
-the recorded exceptions, not as the pattern. The next incompatible wire
-change opens `/v2`; the next column rename ships as two migrations in
-two releases.
+`EventView` names an event by `kind` and `target_id` under `/v1`.
+Reviews treat a field that leaves `/v1` as the recorded exception, not
+as the pattern: it is marked deprecated for a release first, and the
+clients in the tree stop reading it in that release.
