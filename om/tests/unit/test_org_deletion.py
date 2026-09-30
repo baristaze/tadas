@@ -135,16 +135,16 @@ async def dev(manager: TenancyManagerImpl, email: str, org_id: UUID | None = Non
     return ctx
 
 
-async def acme(manager: TenancyManagerImpl) -> Org:
-    """Acme: Ann owns it, Bob is a member, Cid an admin."""
-    _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
-    await manager.add_member(request(), "acme", "bob@example.test", "Bob", Role.MEMBER)
-    await manager.add_member(request(), "acme", "cid@example.test", "Cid", Role.ADMIN)
+async def ajax(manager: TenancyManagerImpl) -> Org:
+    """Ajax: Ann owns it, Bob is a member, Cid an admin."""
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
+    await manager.add_member(request(), "ajax", "bob@example.test", "Bob", Role.MEMBER)
+    await manager.add_member(request(), "ajax", "cid@example.test", "Cid", Role.ADMIN)
     return org
 
 
 async def test_only_an_owners_session_deletes_a_team_org(manager: TenancyManagerImpl) -> None:
-    org = await acme(manager)
+    org = await ajax(manager)
     bob = await dev(manager, "bob@example.test", org.id)
     cid = await dev(manager, "cid@example.test", org.id)
     ann = await dev(manager, "ann@example.test", org.id)
@@ -153,7 +153,7 @@ async def test_only_an_owners_session_deletes_a_team_org(manager: TenancyManager
     )
     for refused in (bob, cid, program):
         with pytest.raises(NotAuthorized):
-            await manager.delete_org(refused, "Acme")
+            await manager.delete_org(refused, "Ajax")
     live = await manager.get_org(ann)
     assert live.deleted_at is None
 
@@ -161,14 +161,14 @@ async def test_only_an_owners_session_deletes_a_team_org(manager: TenancyManager
 async def test_the_typed_name_must_be_the_orgs(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
-    org = await acme(manager)
+    org = await ajax(manager)
     ann = await dev(manager, "ann@example.test", org.id)
-    for typed in ("Acme Inc", "acme", ""):
+    for typed in ("Ajax Inc", "ajax", ""):
         with pytest.raises(ValidationFailed):
             await manager.delete_org(ann, typed)
     assert await storage.count_members(org.id) == 3
     # Surrounding space is forgiven; the spelling is not.
-    await manager.delete_org(ann, "  Acme ")
+    await manager.delete_org(ann, "  Ajax ")
     assert await storage.count_members(org.id) == 0
 
 
@@ -185,7 +185,7 @@ async def test_everyone_loses_the_org_in_one_commit_and_the_rest_is_asked_for(
     relay: SpyRelay,
     twin: IdentityProviderTwinImpl,
 ) -> None:
-    org = await acme(manager)
+    org = await ajax(manager)
     ann = await dev(manager, "ann@example.test", org.id)
     bob = await dev(manager, "bob@example.test", org.id)
     key = await manager.create_api_key(bob, "ci", Role.MEMBER)
@@ -194,7 +194,7 @@ async def test_everyone_loses_the_org_in_one_commit_and_the_rest_is_asked_for(
     assert provider_org_id is not None, "the invitation made the provider's organization"
     relay.rows.clear()
 
-    deleted = await manager.delete_org(ann, "Acme")
+    deleted = await manager.delete_org(ann, "Ajax")
 
     # Nobody is in it, and no credential reaches it.
     assert await storage.count_members(org.id) == 0
@@ -246,14 +246,14 @@ async def test_the_last_owner_deletes_the_org_and_then_their_account(
 
 
 async def test_the_org_goes_last_and_keeps_the_retention(manager: TenancyManagerImpl) -> None:
-    org = await acme(manager)
+    org = await ajax(manager)
     ann = await dev(manager, "ann@example.test", org.id)
-    await manager.delete_org(ann, "Acme")
+    await manager.delete_org(ann, "Ajax")
     work = await manager.service_context(request(), org.id, ann.user_id)
     deleted = await manager.delete_closed_org(work)
     assert deleted is not None and deleted.deleted_at is not None
     # The record stays, under its name, as an operator's deletion leaves it.
-    assert (deleted.name, deleted.slug) == ("Acme", "acme")
+    assert (deleted.name, deleted.slug) == ("Ajax", "ajax")
     sweep = next(c for c in await manager.service_contexts(request()) if c.org_id == org.id)
     assert sweep.user_id == EMPTY_UUID
     assert not await manager.tenant_expired(sweep), "purged after the retention, not at once"
@@ -264,7 +264,7 @@ async def test_the_org_goes_last_and_keeps_the_retention(manager: TenancyManager
 async def test_only_the_platform_ends_a_closed_org_and_never_a_personal_one(
     manager: TenancyManagerImpl,
 ) -> None:
-    org = await acme(manager)
+    org = await ajax(manager)
     ann = await dev(manager, "ann@example.test", org.id)
     with pytest.raises(NotAuthorized):
         await manager.delete_closed_org(ann)
