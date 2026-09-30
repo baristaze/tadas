@@ -25,7 +25,7 @@ from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallation
-from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy import TenancyManagerInterface, TenancyMembersManagerInterface
 from tadas.om.tenancy.rules import permissions_of
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.user import User
@@ -33,23 +33,35 @@ from tadas.om.tenancy.types.user import User
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
 
+class MemberReads(TenancyMembersManagerInterface):
+    """The members delegate of the double below: the users of one org. A
+    partial double, as it is."""
+
+    def __init__(self, users: dict[UUID, User]) -> None:
+        self._users = users
+
+    async def get_user(self, ctx: TenantContext, user_id: UUID) -> User:
+        user = self._users.get(user_id)
+        if user is None:
+            raise NotFound(f"user {user_id} not found")
+        return user
+
+
+MemberReads.__abstractmethods__ = frozenset()
+
+
 class Members(TenancyManagerInterface):
     """Just enough tenancy for the assignee check and for the sweep's
     questions: the users of one org, whether the tenant is past its
     retention, and the context the sweep works a tenant's rows under. A
-    partial double: only `get_user`, `tenant_expired`, and `sweep_context` are
-    reached, and any other method fails loudly as unimplemented, so the
-    abstract set is cleared below."""
+    partial double: only `members.get_user`, `tenant_expired`, and
+    `sweep_context` are reached, and any other method fails loudly as
+    unimplemented, so the abstract set is cleared below."""
 
     def __init__(self) -> None:
         self.users: dict[UUID, User] = {}
         self.expired = False
-
-    async def get_user(self, ctx: TenantContext, user_id: UUID) -> User:
-        user = self.users.get(user_id)
-        if user is None:
-            raise NotFound(f"user {user_id} not found")
-        return user
+        self.members = MemberReads(self.users)  # pyright: ignore[reportAbstractUsage]
 
     async def tenant_expired(self, ctx: TenantContext) -> bool:
         return self.expired

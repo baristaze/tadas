@@ -692,10 +692,10 @@ async def test_a_nudge_runs_the_recheck_at_once(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
     _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
-    login = await tenancy.dev_sign_in(seed_request(), OWNER["email"])
+    login = await tenancy.sign_in.dev_sign_in(seed_request(), OWNER["email"])
     identity = await tenancy.authenticate_login(seed_request(), login.token)
     ctx = await tenancy.authenticate(
-        seed_request(), (await tenancy.exchange_login(identity, org.id)).token
+        seed_request(), (await tenancy.sign_in.exchange_login(identity, org.id)).token
     )
     principal = await tenancy.redeem_ticket(
         seed_request(), (await tenancy.issue_ticket(ctx)).ticket

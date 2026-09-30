@@ -17,9 +17,10 @@ from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import AppContext, AppType, Role, TenantContext
+from tadas.om.root import build_tenancy
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
-from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import SlackInboundHandler
@@ -55,7 +56,7 @@ async def member_of(container: WorkerContainer, slug: str, email: str) -> Tenant
     await tenancy.add_member(request(), slug, email, "Member", Role.MEMBER)
     # The worker signs nobody in, so the sign-in runs through a manager over
     # the same storage with the local sign-in on.
-    signing = TenancyManagerImpl(
+    signing = build_tenancy(
         container.storage.get_tenancy_storage(),
         container.managers.outbox,
         container.infra.get_cache(CacheScope.REALTIME_TICKET),
@@ -63,10 +64,10 @@ async def member_of(container: WorkerContainer, slug: str, email: str) -> Tenant
         identity_provider=IdentityProviderAbsentImpl(),
         entitlements=container.managers.billing,
     )
-    login = await signing.dev_sign_in(request(), email)
+    login = await signing.sign_in.dev_sign_in(request(), email)
     identity = await tenancy.authenticate_login(request(), login.token)
-    memberships = await tenancy.get_identity_memberships(identity, None, 10)
-    issued = await tenancy.exchange_login(identity, memberships.items[0].org.id)
+    memberships = await tenancy.sign_in.get_identity_memberships(identity, None, 10)
+    issued = await tenancy.sign_in.exchange_login(identity, memberships.items[0].org.id)
     return await tenancy.authenticate(request(), issued.token)
 
 
@@ -152,7 +153,7 @@ async def install(
     start = await slack.start_install(owner, REDIRECT)
     state = parse_qs(urlsplit(start.url).query)["state"][0]
     await slack.finish_install(request(), state, twin.approve(team, OWNER_SLACK), REDIRECT)
-    identity = await container.managers.tenancy.get_identity(owner)
+    identity = await container.managers.tenancy.org.get_identity(owner)
     twin.add_user(team, OWNER_SLACK, identity.email)
 
 

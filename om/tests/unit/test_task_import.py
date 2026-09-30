@@ -144,7 +144,7 @@ async def test_an_import_makes_a_task_of_every_row_in_batches_and_succeeds(world
 
 async def test_rows_that_make_no_task_are_skipped_and_the_first_few_named(world: World) -> None:
     ctx = await world.org(Plan.TEAM)
-    me = (await world.managers.tenancy.get_identity(ctx)).email
+    me = (await world.managers.tenancy.org.get_identity(ctx)).email
     rows = [
         f"Assigned,a note,2026-10-01,{me.upper()}",
         ",no title,,",

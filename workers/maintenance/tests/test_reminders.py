@@ -87,7 +87,7 @@ async def test_the_reminder_goes_out_at_nine_in_the_persons_time_zone(
     container, _ = build(tmp_path)
     ann = await owner_of(container, "acme")
     if zone is not None:
-        await container.managers.tenancy.set_time_zone(ann, zone)
+        await container.managers.tenancy.org.set_time_zone(ann, zone)
     due = date(today().year + 1, 7, 15)
     task = await container.managers.tasks.create_task(ann, make_task(ann, due_on=due))
     reminder = await container.managers.tasks.get_due_reminder(ann, task.id)
@@ -104,8 +104,8 @@ async def test_the_assignees_zone_decides_and_the_creators_when_unassigned(
     ann = await owner_of(container, "acme")
     bob = await member_of(container, "acme", "bob@acme.test")
     tenancy, tasks = container.managers.tenancy, container.managers.tasks
-    await tenancy.set_time_zone(ann, "Asia/Tokyo")
-    await tenancy.set_time_zone(bob, "America/New_York")
+    await tenancy.org.set_time_zone(ann, "Asia/Tokyo")
+    await tenancy.org.set_time_zone(bob, "America/New_York")
     due = date(today().year + 1, 1, 20)  # winter: New York is UTC-5
     mine = await tasks.create_task(ann, make_task(ann, due_on=due))
     his = await tasks.create_task(ann, make_task(ann, due_on=due, assignee_id=bob.user_id))

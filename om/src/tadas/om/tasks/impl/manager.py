@@ -650,7 +650,7 @@ class TasksManagerImpl(TasksManagerInterface):
         members: dict[str, UUID] = {}
         after: UUID | None = None
         while True:
-            page = await self._tenancy.get_users(ctx, after, self._options.max_limit)
+            page = await self._tenancy.members.get_users(ctx, after, self._options.max_limit)
             for user in page.items:
                 if user.deleted_at is None:
                     members[fold_email(user.email)] = user.id
@@ -790,7 +790,7 @@ class TasksManagerImpl(TasksManagerInterface):
             or task.reminded_at is not None
         ):
             return None
-        zone = await self._tenancy.get_time_zone(ctx, reminder_person(task))
+        zone = await self._tenancy.org.get_time_zone(ctx, reminder_person(task))
         return DueReminder(due_on=task.due_on, at=reminder_time(task.due_on, zone))
 
     async def fire_reminder(self, ctx: TenantContext, task_id: UUID, due_on: date) -> Task | None:
@@ -966,7 +966,7 @@ class TasksManagerImpl(TasksManagerInterface):
         assigned = task.assignee_id
         if assigned is not None and (current is None or assigned != current.assignee_id):
             try:
-                await self._tenancy.get_user(ctx, assigned)
+                await self._tenancy.members.get_user(ctx, assigned)
             except NotFound:
                 raise ValidationFailed("the assignee is not a member of this org") from None
 

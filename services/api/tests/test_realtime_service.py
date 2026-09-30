@@ -234,7 +234,7 @@ async def test_the_recheck_refuses_a_key_its_plan_no_longer_allows(tmp_path: Pat
     _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     await on_plan(container, org.id, Plan.TEAM)
     token = await session_of(container, org.id, OWNER["email"])
-    key = await tenancy.create_api_key(
+    key = await tenancy.credentials.create_api_key(
         await tenancy.authenticate(seed_request(), token), "ci", Role.MEMBER
     )
     from_session = await principal_of(container, token)
@@ -259,7 +259,7 @@ async def test_a_change_of_the_account_wakes_the_recheck_of_key_sockets(tmp_path
     await on_plan(container, org.id, Plan.TEAM)
     token = await session_of(container, org.id, OWNER["email"])
     owner = await tenancy.authenticate(seed_request(), token)
-    key = await tenancy.create_api_key(owner, "ci", Role.MEMBER)
+    key = await tenancy.credentials.create_api_key(owner, "ci", Role.MEMBER)
     realtime = container.services.get_realtime_service()
     woken: dict[str, int] = {"session": 0, "key": 0}
     ended: list[str] = []

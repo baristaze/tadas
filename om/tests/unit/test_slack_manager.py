@@ -58,11 +58,11 @@ class World:
     async def member(self, slug: str, email: str, role: Role = Role.MEMBER) -> TenantContext:
         tenancy = self.managers.tenancy
         await tenancy.add_member(request(), slug, email, "Member", role)
-        login = await tenancy.dev_sign_in(request(), email)
+        login = await tenancy.sign_in.dev_sign_in(request(), email)
         identity = await tenancy.authenticate_login(request(), login.token)
-        memberships = await tenancy.get_identity_memberships(identity, None, 10)
+        memberships = await tenancy.sign_in.get_identity_memberships(identity, None, 10)
         org = next(m.org.id for m in memberships.items if m.org.slug == slug)
-        session = await tenancy.exchange_login(identity, org)
+        session = await tenancy.sign_in.exchange_login(identity, org)
         return await tenancy.authenticate(request(), session.token)
 
     async def install(self, ctx: TenantContext, team: str = "T0ACME") -> str:
