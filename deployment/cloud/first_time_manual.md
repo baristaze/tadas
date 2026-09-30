@@ -2,7 +2,7 @@
 
 This is the bootstrap pattern used for Tadas. The goal is to keep projects and environments isolated, avoid daily root usage, and use temporary SSO credentials instead of long-lived AWS access keys.
 
-## 1. Target structure
+## Target structure
 
 ```text
 AWS Organization
@@ -20,7 +20,7 @@ AWS Organization
 
 The AWS account is the main isolation boundary. Staging and production should therefore be separate AWS accounts.
 
-## 2. Root account
+## Root account
 
 Use the AWS root account only for initial bootstrap and operations that explicitly require root.
 
@@ -31,7 +31,7 @@ Do:
 - Do not use root for normal AWS work.
 - Keep application resources out of the management account.
 
-## 3. Create AWS Organization
+## Create AWS Organization
 
 From the original AWS account:
 
@@ -41,22 +41,23 @@ From the original AWS account:
 
 The original account becomes the **management account**.
 
-## 4. Enable IAM Identity Center
+## Enable IAM Identity Center
 
 1. Open **IAM Identity Center**.
 2. Enable an **Organization instance**.
 3. Multi-account permissions should be enabled.
 4. Record the AWS Access Portal URL.
 
-For Tadas, IAM Identity Center is in:
+Record the region Identity Center is in:
 
 ```text
 us-east-2
 ```
 
-This does not determine the region where application infrastructure runs.
+This does not determine the region where application infrastructure runs;
+`deployment/cloud/environments.json` names that one.
 
-## 5. Create the normal human user
+## Create the normal human user
 
 Create an IAM Identity Center user such as:
 
@@ -70,7 +71,7 @@ Do not encode roles or projects in the username.
 
 Require MFA for every Identity Center sign-in: **Settings / Authentication / Multi-factor authentication**, set to prompt on every sign-in, and register an authenticator for the user. The admin permission sets are only as strong as that sign-in.
 
-## 6. Create organization admin access
+## Create organization admin access
 
 Create group:
 
@@ -100,7 +101,7 @@ Management account
 
 After this works through the AWS Access Portal, stop using root for normal administration.
 
-## 7. Create Tadas accounts
+## Create Tadas accounts
 
 Create an OU:
 
@@ -130,7 +131,7 @@ Keep the default Organizations access role name:
 OrganizationAccountAccessRole
 ```
 
-## 8. Centralize member-account root management
+## Centralize member-account root management
 
 In AWS Organizations / IAM, enable:
 
@@ -139,7 +140,7 @@ In AWS Organizations / IAM, enable:
 
 A delegated administrator is not necessary for this small setup.
 
-## 8a. Turn on Cost Explorer and Budgets for the member accounts
+## Turn on Cost Explorer and Budgets for the member accounts
 
 A member account can make neither a budget nor an anomaly monitor until the management account turns cost management on for the organization. Do this before the first `scripts/cloud_create.sh`, signed in to the **management account** (not a Tadas account):
 
@@ -166,7 +167,7 @@ The budget is required: `scripts/cloud_create.sh` asks Budgets before it applies
 
 A first apply that stopped part way leaves its state in `deployment/terraform/bootstrap/<staging|prod>/terraform.tfstate`. Keep that file: it is the only record of what that apply made, and the next run of the script applies against it and then moves it into the state bucket.
 
-## 9. Create Tadas access groups
+## Create Tadas access groups
 
 Create Identity Center groups:
 
@@ -178,7 +179,7 @@ TadasBootstrapAdmins
 
 Add `baris.taze` to all three during initial setup.
 
-## 10. Create permission sets
+## Create permission sets
 
 Normal development access:
 
@@ -220,7 +221,7 @@ Create it as a predefined permission set, then add the inline policy:
 
 3. Save, and accept the prompt to re-provision the accounts the set is assigned to.
 
-The page under **IAM** → **Policies** → `ReadOnlyAccess` is the AWS managed policy the set attaches. It is not editable and is not where the inline policy goes. The inline policy grants one thing: assuming the investigate roles, which themselves change nothing. Section 16 checks that it arrived.
+The page under **IAM** → **Policies** → `ReadOnlyAccess` is the AWS managed policy the set attaches. It is not editable and is not where the inline policy goes. The inline policy grants one thing: assuming the investigate roles, which themselves change nothing. [Verify profiles](#verify-profiles) checks that it arrived.
 
 Temporary bootstrap access:
 
@@ -232,7 +233,7 @@ Session duration: 1 hour
 
 `PowerUserAccess` is insufficient for some initial IAM operations, which is why the temporary bootstrap permission exists.
 
-## 11. Assign access to Tadas accounts
+## Assign access to Tadas accounts
 
 Assign to `tadas-staging`:
 
@@ -273,7 +274,7 @@ OrgAdmins
 
 Do not assign `TadasPowerUsers` to the management account.
 
-## 12. Expected AWS Access Portal
+## Expected AWS Access Portal
 
 The user should see approximately:
 
@@ -292,7 +293,7 @@ tadas-prod
   TadasBootstrapAdmin
 ```
 
-## 13. Install AWS CLI
+## Install AWS CLI
 
 On macOS with Homebrew:
 
@@ -301,7 +302,7 @@ brew install awscli
 aws --version
 ```
 
-## 14. Configure AWS CLI with SSO
+## Configure AWS CLI with SSO
 
 Do not manually create or copy long-lived access keys.
 
@@ -329,7 +330,7 @@ Role: TadasBootstrapAdmin
 Profile: tadas-staging-admin
 ```
 
-## 15. Recommended local profiles
+## Recommended local profiles
 
 Create these six profiles, all sharing the same `tadas` SSO session:
 
@@ -342,7 +343,7 @@ tadas-prod-power
 tadas-prod-admin
 ```
 
-Current Tadas account IDs:
+The two account ids, which `deployment/cloud/environments.json` names:
 
 ```text
 tadas-staging: 792394000601
@@ -368,7 +369,7 @@ Default workload region:
 us-west-2
 ```
 
-## 16. Verify profiles
+## Verify profiles
 
 ```bash
 aws sts get-caller-identity --profile tadas-staging
@@ -395,9 +396,9 @@ aws iam list-roles --profile tadas-prod \
 aws iam list-role-policies --profile tadas-prod --role-name <that role>
 ```
 
-The second command lists `AwsSSOInlinePolicy` once the inline policy of section 10 is on the permission set. An empty list means the investigate profile cannot chain yet.
+The second command lists `AwsSSOInlinePolicy` once the inline policy of [Create permission sets](#create-permission-sets) is on the permission set. An empty list means the investigate profile cannot chain yet.
 
-## 17. Rules for agents and automation
+## Rules for agents and automation
 
 Use explicit profiles. Do not rely on a global/default AWS profile.
 
@@ -433,7 +434,7 @@ Rules:
 - Use GitHub Actions OIDC for CI/CD instead of static AWS secrets.
 - Use bootstrap admin only when normal PowerUser access cannot perform the required IAM/bootstrap operation.
 
-## 18. Desired steady state
+## Desired steady state
 
 Human interactive access:
 
@@ -468,9 +469,9 @@ Permanent AWS_SECRET_ACCESS_KEY
 
 If the shell profile exports either, remove the export. Terraform prefers exported keys to `--profile`, so an exported key silently decides which account a command reaches. The create and nuke scripts clear them for their own run and say so.
 
-## 18a. Cloudflare token for the delegation and the site's records
+## Cloudflare token for the delegation and the site's records
 
-`tadas.fyi` is registered at Cloudflare, and its zone stays there. The create run writes into it with an API token: create one with **Zone / DNS / Edit** on the `tadas.fyi` zone only, and pass it as an environment variable for the run:
+The domain `environments.json` names, `tadas.fyi`, is registered at Cloudflare, and its zone stays there. The create run writes into it with an API token: create one with **Zone / DNS / Edit** on the `tadas.fyi` zone only, and pass it as an environment variable for the run:
 
 ```bash
 export CLOUDFLARE_API_TOKEN=<token>
@@ -488,18 +489,18 @@ Nothing else needs it; CI never does. Making the token and running the create ru
 
 The site is optional, so none of this holds up a deploy. Until the environment's `SITE_DOMAIN_NAME` is set and the site's certificate is issued, a deploy (and a release, and the fast rollback) plans, applies, and publishes everything else exactly as always, leaves the site out, and says so in the run's summary.
 
-So the site takes two create runs, and a deploy between them. When the site comes to an environment that already runs, as it did to staging:
+So the site takes two create runs, and a deploy between them. When the site comes to an environment that already runs:
 
 1. The change that brings the site merges. Its deploy leaves the site out and says why.
 2. The create run (`scripts/cloud_create.sh staging` under `tadas-staging-admin`): the certificate, its validation record, the wait until it is issued, the grants to keep and replicate the site's builds, and `SITE_DOMAIN_NAME` on the GitHub environments. It dispatches a deploy of `main`.
 3. That deploy, once green, has made the site's distribution and published the site.
 4. The create run again: step 3c writes the site's CNAME, and the site answers at its name.
 
-For production the same four happen around releases: the change is already released, then the create run (`scripts/cloud_create.sh production` under `tadas-prod-admin`), then a release, then the create run again. Production's run also lets staging's replication write the site's builds into production's artifacts bucket, so that release takes a commit staging built after it, the same rule as the first release. A new environment follows its first-time order (section 19) and runs the create run once more after its first green deploy, for the CNAME.
+For production the same four happen around releases: the change is already released, then the create run (`scripts/cloud_create.sh production` under `tadas-prod-admin`), then a release, then the create run again. Production's run also lets staging's replication write the site's builds into production's artifacts bucket, so that release takes a commit staging built after it, the same rule as the first release. A new environment follows its first-time order ([Bootstrap, then hand the admin back](#bootstrap-then-hand-the-admin-back)) and runs the create run once more after its first green deploy, for the CNAME.
 
 The records the Terraform does not hold stay at Cloudflare when an environment is destroyed; the nuke lists them.
 
-## 19. Bootstrap, then hand the admin back
+## Bootstrap, then hand the admin back
 
 The bootstrap is the `ops-cloud-deployment-create` skill, which runs `scripts/cloud_create.sh`, one account at a time, dry run first:
 
@@ -513,21 +514,25 @@ After the deploy roles work, remove `baris.taze` from `TadasBootstrapAdmins`, so
 
 A bootstrap root is applied by a person before the change that needs it merges. When a pull request changes `deployment/terraform/bootstrap/`, for example to let the deployer read a new secret, apply that root from the pull request's branch under `tadas-<env>-admin` (for production, `tadas-prod-admin`), then merge. A merge whose deploy needs a permission the bootstrap has not granted stops half applied.
 
-## 19a. The providers: Stripe, WorkOS, and Slack
+## The providers: WorkOS, the error tracker, Stripe, and Slack
 
-Three providers sit outside AWS: Stripe takes payment, WorkOS signs
-people in, and Slack carries the org's channel. Each is set up by hand
-once, in its own dashboard, and each has a page that walks through it
-for a person who has never opened that dashboard:
+Four providers sit outside AWS: WorkOS signs people in, a
+Sentry-compatible error tracker receives the errors, Stripe takes
+payment, and Slack carries the org's channel. Each is set up by hand
+once, in its own dashboard:
 
-- [Stripe](../../docs/runbooks/providers/stripe.md): the sandbox and
-  the live account, the two restricted keys (the runtime key the
-  processes hold, and the bootstrap key the person holds),
-  `tadas-ops stripe-bootstrap`.
 - [WorkOS](../../docs/runbooks/providers/workos.md): the Staging and
   Production environments, the Tadas App application, its own API key
-  (never the environment's) and its Redirects tab,
-  `tadas-ops workos-bootstrap`.
+  (never the environment's), its Redirects tab, and the webhook endpoint
+  `https://<api domain name>/webhooks/identity`; then
+  `tadas-ops workos-bootstrap`. The application's client id is
+  `workos_client_id` in the environment root's `variables.tf`.
+- The error tracker: one project for the product, whose DSN every
+  environment reports into; each event carries its environment.
+- [Stripe](../../docs/runbooks/providers/stripe.md): the sandbox and
+  the live account, the two restricted keys (the runtime key the
+  processes hold, and the bootstrap key the person holds), and
+  `tadas-ops stripe-bootstrap`.
 - [Slack](../../docs/runbooks/providers/slack.md): the environment's
   own app, made from its manifest in `deployment/slack/`, its client
   id, its client secret and signing secret, and public distribution,
@@ -536,15 +541,15 @@ for a person who has never opened that dashboard:
 What they share is the order, because the secret that holds each value
 is made by the deploy:
 
-1. The environment's first deploy makes the five secrets, each holding
-   `off`: `tadas/<env>/stripe_runtime_key`,
-   `tadas/<env>/stripe_webhook_secret`, `tadas/<env>/workos_api_key`,
-   `tadas/<env>/slack_client_secret`, and
-   `tadas/<env>/slack_signing_secret`.
-   With `off` the environment runs, and says in its logs what is off.
+1. The environment's first deploy makes the seven secrets, each holding
+   `off`: `tadas/<env>/workos_api_key`, `tadas/<env>/workos_webhook_secret`,
+   `tadas/<env>/sentry_dsn`, `tadas/<env>/stripe_runtime_key`,
+   `tadas/<env>/stripe_webhook_secret`, `tadas/<env>/slack_client_secret`,
+   and `tadas/<env>/slack_signing_secret`. With `off` the environment runs,
+   and says in its logs what is off.
 2. A person writes each value under their own sign-in, `tadas-staging`
    for staging (in production `tadas-prod-power`, when authorized),
-   with `AWS_ACCESS_KEY_ID` and its siblings unset, as section 18
+   with `AWS_ACCESS_KEY_ID` and its siblings unset, as [Desired steady state](#desired-steady-state)
    says. `stripe_webhook_secret` is the exception: the Stripe
    bootstrap writes it. Slack's client id is no secret: it is
    committed as `slack_client_id` in the environment root.
@@ -552,10 +557,10 @@ is made by the deploy:
    tasks that read the new values. A task reads its secrets only at
    start.
 
-Do WorkOS before section 20: the first operator signs up through it,
+Do WorkOS before [The first operator](#the-first-operator): the first operator signs up through it,
 and without its key every sign-in answers `503`.
 
-## 20. The first operator
+## The first operator
 
 A deployed environment starts with no operator: a grant marks an identity, it does not make one. After the environment's first green deploy, follow `docs/runbooks/operator.md`, which is the same walk-through for every operator: sign in, grant, enrol the second factor, check the fence, and write the token into the ops env file. `docs/runbooks/deploy.md` (Grant an operator) is the reference for the workflow itself.
 

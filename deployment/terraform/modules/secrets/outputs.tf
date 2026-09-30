@@ -66,6 +66,12 @@ output "workos_api_key_secret_arn" {
   depends_on  = [aws_secretsmanager_secret_version.workos_api_key]
 }
 
+output "workos_webhook_secret_arn" {
+  description = "The secret WorkOS signs its webhook deliveries with, injected into the API as TADAS_WORKOS_WEBHOOK_SECRET; \"off\" until set, which refuses every delivery."
+  value       = aws_secretsmanager_secret.workos_webhook_secret.arn
+  depends_on  = [aws_secretsmanager_secret_version.workos_webhook_secret]
+}
+
 output "slack_client_secret_arn" {
   description = "Injected into the API and the worker as TADAS_SLACK_CLIENT_SECRET; \"off\" until set, which leaves Slack unconfigured."
   value       = aws_secretsmanager_secret.slack_app["slack_client_secret"].arn

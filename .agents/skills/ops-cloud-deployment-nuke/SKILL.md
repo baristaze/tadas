@@ -134,11 +134,16 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
    Nothing there is touched, by the script or by the skill: Stripe's
    webhook endpoint for the environment's API name (kept for a
    recreate, which rolls it; deleted by the person if the environment
-   is not coming back), the customers its orgs made, WorkOS's
-   organizations and users, and the environment's Slack app and the
-   workspaces that installed it. Each org's Slack bot token, under
-   `tadas/<env>/app/org/`, stays in Secrets Manager, since the
-   application wrote it and Terraform does not own it. The
+   is not coming back) and the customers its orgs made; WorkOS's
+   organizations and users, and the Tadas App application with its API
+   keys, its redirects, and its webhook endpoint for the environment's
+   API name (kept for a recreate; removed by the person if the
+   environment is not coming back); the environment's Slack app and
+   the workspaces that installed it; and the events the error tracker
+   holds for the environment. Each org's own secrets (an installed
+   org's Slack bot token), under `tadas/<env>/app/org/`, stay in
+   Secrets Manager, since the application wrote them and Terraform
+   does not own them. The
    provider keys' values went with the secrets, so a recreate writes
    them again after its first deploy
    (`docs/runbooks/providers/`).
@@ -158,8 +163,8 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
 - No secret value printed.
 - No console clicks: a resource the CLI cannot remove is reported,
   not clicked away.
-- No write at Stripe, WorkOS, or Slack: what stays there is listed,
-  and removing it is the person's call.
+- No write at Stripe, WorkOS, or Slack, or in the error tracker: what
+  stays there is listed, and removing it is the person's call.
 
 ## Output
 
@@ -184,13 +189,14 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
 - Production only: the final snapshot tadas-production-final and the automated backups
 - Staging only: production's copies of what staging built, in production's account
 - GitHub environment and variables; ~/.config/tadas/ops/<env>.env; the tadas-<env>-investigate profile
-- The orgs' Slack bot tokens under tadas/<env>/app/org/: <count>, for the person to delete if the environment is not coming back
+- The orgs' own secrets under tadas/<env>/app/org/: <count>, for the person to delete if the environment is not coming back
 - <resource the destroy could not remove>: <reason>
 
 ## At the providers, untouched
 
 - Stripe (<sandbox | live>): the webhook endpoint https://<api name>/webhooks/stripe, <kept for a recreate | for the person to delete>; the customers its orgs made; the restricted key tadas-<env>-runtime, <kept for a recreate | for the person to delete>
-- WorkOS (<Staging | Production>): the organizations and users its orgs made; the application's redirects
+- WorkOS (<Staging | Production>): the organizations and users its orgs made; the application's API keys, its redirects, and its webhook endpoint https://<api name>/webhooks/identity, <kept for a recreate | for the person to remove>
 - Slack: the environment's app, whose request URLs fail until a new environment answers; the workspaces keep it installed until someone removes it in Slack; each org installs again
-- Provider keys to write again on a recreate: stripe_runtime_key, workos_api_key, slack_client_secret, slack_signing_secret
+- The error tracker: the events the environment reported, tagged environment:<env>
+- Provider keys to write again on a recreate: workos_api_key, workos_webhook_secret, sentry_dsn, stripe_runtime_key, slack_client_secret, slack_signing_secret
 ```

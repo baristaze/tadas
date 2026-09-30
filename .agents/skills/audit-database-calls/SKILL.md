@@ -19,9 +19,10 @@ the code does, not what it looks like it does.
 The audit counts the checkout, tools and code alike; to count another
 commit, run it from a checkout of that commit that has `ops/audit/`.
 Every command runs from the repository root. `--only` runs some of the
-built-in flows (`auth`, `tenancy`, `tasks`, `attachments`, `events`, `billing`,
-`worker`, `sweep`, `health`); `seed` always runs first, and a flows
-file of the run's own always runs in full.
+built-in flows (`auth`, `tenancy`, `tasks`, `attachments`, `events`,
+`billing`, `worker`, `sweep`, `health`), such as `--only tasks,sweep`;
+`seed` always runs first, and a flows file of the run's own always
+runs in full.
 
 ## Role and credential
 
@@ -71,8 +72,8 @@ the providers. It holds no cloud credential and reads no environment.
    flows file of its own (`fixed_flows.py`), and run that file on the
    same database with `--only seed` into a second `--out`
    (`calls_2.json`), or report it as not measured. That is the first
-   run plus at most 1 rerun: a flow that fails again is reported as
-   not measured, with its error, and is not fixed a second time. The summary's round trips are warm (every statement already
+   run plus at most 1 rerun: a flow that fails in `calls_2.json` too is
+   reported as not measured. The summary's round trips are warm (every statement already
    prepared); the report uses them and says so, and `calls.json` holds
    each call's `prepares` beside them. Tally `calls.json` with a scratch
    script (`uv run python <script>`), never a file in the repository.
@@ -113,8 +114,8 @@ the providers. It holds no cloud credential and reads no environment.
      in a flows file when no built-in flow makes that call. Say the reads
      caused by one change as reads per hint × members × open tabs, minus
      the tabs that skip, at an org of 2 and of 200 members with 2 tabs
-     each. A bulk write publishes many hints at once; say what a tab does
-     with a burst;
+     each. Writes in quick succession, or one bulk write, publish hints
+     in a burst; say what a tab does with one;
 5. Drop the run's database, whatever happened before, and check it is
    gone:
 

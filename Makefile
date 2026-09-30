@@ -5,7 +5,7 @@ SHELL := /bin/bash
 # The knobs live in one place: .env.example carries every default and .env
 # (which `make up` copies from it) the developer's overrides. Make reads both
 # so `make seed` and `make urls` say what the compose stack does, and compose
-# reads the same two files for the dashboard ports.
+# reads the same two files for the host ports.
 #
 # Both files are defaults. A variable exported in the shell wins over them,
 # as it does for the settings, for compose, and for scripts/dev.sh, so the
@@ -56,9 +56,14 @@ ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://gi
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
-setup: ## Install every Python and TypeScript dependency
+# A tree copied under a longer name has longer lines and its imports in
+# another order, so setup formats the Python once; on a formatted tree it
+# changes nothing.
+setup: ## Install every Python and TypeScript dependency, and format the Python
 	uv sync --all-packages
 	@if [ -f pnpm-workspace.yaml ] && [ -d apps ]; then pnpm install; fi
+	uv run ruff check --fix --quiet --select I .
+	uv run ruff format --quiet .
 
 # The one-command session. `up` starts the data services first, migrates and
 # seeds them, then starts the app containers and the dashboards; it is safe
@@ -84,9 +89,9 @@ reset: ## Wipe every container and all local data, then `make up`
 
 urls: ## Print the local URLs and the seeded sign-ins
 	@echo ""
-	@echo "  Portal         http://localhost:55173   /login through WorkOS; /login/dev as $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL)"
+	@echo "  Portal         http://localhost:$(TADAS_PORTAL_PORT)   /login through WorkOS; /login/dev as $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL)"
 	@echo "                 two orgs: $(SEED_ADMIN_EMAIL) at /login/dev   owner of $(SEED_SECOND_ORG), admin of $(SEED_ORG)"
-	@echo "  API docs       http://127.0.0.1:8000/docs"
+	@echo "  API docs       http://127.0.0.1:$(TADAS_PORT)/docs"
 	@echo "  pgweb          http://localhost:$(TADAS_PGWEB_PORT)"
 	@echo "  Valkey Admin   http://localhost:$(TADAS_VALKEY_ADMIN_PORT)"
 	@echo "  ElasticMQ UI   http://localhost:$(TADAS_ELASTICMQ_UI_PORT)"
@@ -94,7 +99,7 @@ urls: ## Print the local URLs and the seeded sign-ins
 	@echo "  Prometheus     http://localhost:$(TADAS_PROMETHEUS_PORT)"
 	@echo "  Jaeger         http://localhost:$(TADAS_JAEGER_PORT)"
 	@echo "  GlitchTip      http://localhost:$(TADAS_GLITCHTIP_PORT)   admin@example.test / tadas-local"
-	@echo "  MinIO console  http://localhost:59001   tadas / tadastadas"
+	@echo "  MinIO console  http://localhost:$(TADAS_MINIO_CONSOLE_PORT)   tadas / tadas-minio-local"
 	@echo ""
 
 .env:
@@ -107,7 +112,7 @@ infra-up: ## Start Postgres, the cache, the queue, and the object store
 # One bucket per member of tadas.infra.buckets.Buckets, named <prefix>-<bucket>
 # as the S3 impl names them; the cloud's are Terraform's. MinIO ships `mc`.
 buckets: ## Create the object store's buckets in MinIO, if they are missing
-	$(COMPOSE) exec -T minio sh -c 'mc alias set local http://127.0.0.1:9000 tadas tadastadas >/dev/null && mc mb --ignore-existing local/tadas-user-file-uploads local/tadas-exports'
+	$(COMPOSE) exec -T minio sh -c 'mc alias set local http://127.0.0.1:9000 tadas tadas-minio-local >/dev/null && mc mb --ignore-existing local/tadas-local-user-file-uploads local/tadas-local-exports'
 
 devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus and its collector, Grafana, Jaeger, GlitchTip)
 	$(COMPOSE) --profile devx up -d --wait
@@ -193,7 +198,7 @@ demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) a
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
 # right after `make migrate`, and the downgrade-then-upgrade round trip stays
-# in the integration tests. The deviation is ADR 0003.
+# in the integration tests.
 migrate-check: ## Compare every role's ORM metadata with the migrated schema
 	uv run --package tadas-om python -m tadas.om.storage.migrate check --all --local
 
@@ -232,7 +237,7 @@ test-telemetry: ## The telemetry round trip over the devx profile
 	uv run pytest -q -m telemetry
 
 # The gate's sanity run: the light profile for thirty seconds over the seeded
-# org, against the API on 8000. Proves the wiring, says nothing about capacity.
+# org, against the API on TADAS_PORT. Proves the wiring, says nothing about capacity.
 traffic: ## Drive light traffic at the local API (PROFILE=light DURATION=30)
 	uv run tadas-ops traffic --env local --profile $(PROFILE) --duration $(DURATION) --orgs 0
 

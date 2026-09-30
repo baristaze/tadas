@@ -145,7 +145,8 @@ def test_the_committed_desired_state_names_both_applications() -> None:
     assert staging.default_sign_out_uri == "https://app.staging.tadas.fyi/signed-out"
     assert production.sign_out_uris == ("https://app.tadas.fyi/signed-out",)
     assert staging.api_key_variable != production.api_key_variable
-    assert staging.webhooks == () and production.webhooks == ()
+    assert staging.webhooks == ("https://api.staging.tadas.fyi/webhooks/identity",)
+    assert production.webhooks == ("https://api.tadas.fyi/webhooks/identity",)
 
 
 def test_a_default_that_is_not_a_redirect_is_refused(tmp_path: Path) -> None:

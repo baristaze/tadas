@@ -103,8 +103,9 @@ refused or expired, stop, and name the refresh the preamble gives.
    whole run, reported with their own p95 and judged by nothing. The
    notes say how many people signed in, the profile's concurrency and
    think time, and one sample request id of the run, which step 4
-   follows. A 4xx the session shape explains (a conflict on a retried
-   create) is counted by status and not as an error; a session that
+   follows. A 4xx the session shape explains (a `409` on a task create
+   the client sent again while the first was still running) is counted
+   by status and not as an error; a session that
    fails is counted under sessions, and a person the API refused at
    sign-in is a note.
 4. Read the signals back for the run's window, through the same

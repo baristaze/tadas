@@ -271,8 +271,8 @@ module "load_balancer" {
 #
 # The page calls the API same-origin (apiUrl empty means the page's origin),
 # so no request it makes is cross-origin and no browser sends a preflight.
-# The API's own domain name serves everything it served: the payment
-# processor's and Slack's deliveries, the command line, and the operators.
+# The API's own domain name serves the rest: the providers' deliveries, the
+# command line, and the operators.
 module "portal" {
   source = "../static_site"
 
@@ -387,6 +387,9 @@ module "api" {
   secrets = merge(local.process_secrets, {
     TADAS_TOTP_ENCRYPTION_KEY = module.secrets.totp_encryption_key_secret_arn
     TADAS_WORKOS_API_KEY      = module.secrets.workos_api_key_secret_arn
+    # The API alone receives the identity provider's deliveries and checks
+    # their signature; the worker handles them from the queue.
+    TADAS_WORKOS_WEBHOOK_SECRET = module.secrets.workos_webhook_secret_arn
     # What the portal's distribution sends in X-Tadas-Edge: beside it, the
     # address CloudFront appended to X-Forwarded-For names the client.
     TADAS_EDGE_SECRET = module.secrets.edge_secret_arn

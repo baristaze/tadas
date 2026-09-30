@@ -135,6 +135,54 @@ def test_create_refuses_to_run_for_real_without_the_cloudflare_token(tmp_path: P
     assert result.stdout == ""
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_create_refuses_to_run_for_real_on_placeholders(environment: str, tmp_path: Path) -> None:
+    """A deployment's values start as placeholders in environments.json and
+    in each root's WorkOS client id, and a real run on them would act on
+    accounts, names, and a repository nobody owns. It refuses before any
+    command, and names each. The committed values are real, so the script
+    runs from a copy of the tree that holds the placeholders."""
+    tree = tmp_path / "tree"
+    (tree / "scripts").mkdir(parents=True)
+    script = tree / "scripts" / "cloud_create.sh"
+    script.write_text(CREATE.read_text())
+    placeholders = json.loads(json.dumps(ENVIRONMENTS))
+    placeholders.update(
+        domain="tadas.example", github_repository_id="0", github_repository_owner_id="0"
+    )
+    for name, digit in (("staging", "1"), ("production", "2")):
+        env = placeholders["environments"][name]
+        env["account_id"] = digit * 12
+        for key in ("api_domain_name", "app_domain_name", "site_domain_name"):
+            env[key] = env[key].replace(ENVIRONMENTS["domain"], "tadas.example")
+        root = tree / "deployment" / "terraform" / env["environment_root"]
+        root.mkdir(parents=True)
+        (root / "variables.tf").write_text(
+            f'variable "workos_client_id" {{\n  default = "client_{name.upper()}_PLACEHOLDER"\n}}\n'
+        )
+    (tree / "deployment" / "cloud").mkdir(parents=True)
+    (tree / "deployment" / "cloud" / "environments.json").write_text(json.dumps(placeholders))
+
+    home = tmp_path / "home"
+    home.mkdir()
+    result = _run(script, environment, home=home, CLOUDFLARE_API_TOKEN="token")
+    assert result.returncode == 2
+    assert result.stdout == ""
+    refusal = result.stderr
+    assert "refused: placeholders left: " in refusal
+    for name in (
+        "environments.staging.account_id",
+        "environments.production.account_id",
+        f"environments.{environment}.api_domain_name",
+        "domain",
+        "github_repository_id",
+        "github_repository_owner_id",
+    ):
+        assert name in refusal
+    root = ENVIRONMENTS["environments"][environment]["environment_root"]
+    assert f"workos_client_id in deployment/terraform/{root}/variables.tf" in refusal
+
+
 @pytest.mark.parametrize("script", [CREATE, NUKE], ids=["create", "nuke"])
 def test_refuses_any_profile_but_the_environments_administrator(
     script: Path, tmp_path: Path

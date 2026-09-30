@@ -66,7 +66,7 @@ make urls     # print the URLs and the sign-ins again
 | Prometheus | <http://localhost:59090> | none |
 | Jaeger | <http://localhost:56686> | none |
 | GlitchTip | <http://localhost:58000> | `admin@example.test` / `tadas-local` |
-| MinIO console | <http://localhost:59001> | `tadas` / `tadastadas` |
+| MinIO console | <http://localhost:59001> | `tadas` / `tadas-minio-local` |
 
 Every host port is a knob in `.env.example`; set it in `.env` when a
 port is taken.
