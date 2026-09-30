@@ -24,6 +24,7 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.signature import SignatureVerifier
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.web.async_slack_response import AsyncSlackResponse
+from slack_sdk.webhook.async_client import AsyncWebhookClient
 
 from tadas.infra.base import utcnow
 from tadas.infra.deadline import PASSED
@@ -398,13 +399,28 @@ async def test_an_uninstall_of_an_app_already_gone_is_done(monkeypatch: pytest.M
 async def test_a_transport_failure_is_a_failure_worth_a_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = await started(monkeypatch, TimeoutError("read timed out"))
+    """A call's and a reply's alike. The failure says the transport's error
+    by its type alone: its text can quote what the call carried, and a
+    failure the platform raises keeps its own text in the log line and the
+    tracker. The transport's error stays as the cause, with its frames."""
+    quoted = "ada.lovelace@example.test"
+    client = await started(monkeypatch, TimeoutError(f"read timed out for {quoted}"))
+
+    async def send(self: AsyncWebhookClient, **kwargs: Any) -> Any:
+        raise OSError(f"no route for {quoted}")
+
+    monkeypatch.setattr(AsyncWebhookClient, "send", send)
     try:
-        with pytest.raises(SlackFailed) as raised:
+        with pytest.raises(SlackFailed) as call:
             await client.publish_home(TOKEN, "U0ANN", {"type": "home", "blocks": []})
-        assert raised.value.slack_code == "TimeoutError"
+        with pytest.raises(SlackFailed) as reply:
+            await client.respond("https://hooks.slack.com/commands/T0/1/abc", "hi")
     finally:
         await client.close()
+    for raised, cause in ((call, TimeoutError), (reply, OSError)):
+        assert raised.value.slack_code == cause.__name__
+        assert str(raised.value) == cause.__name__
+        assert type(raised.value.__cause__) is cause
 
 
 class SilentSlack:
