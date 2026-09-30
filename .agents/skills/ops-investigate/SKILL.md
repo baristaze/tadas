@@ -397,8 +397,8 @@ named with `-dead` after it. Slack's calls in are in
     org id when one tenant's rows explain it, `ops-watch` when the
     signal is still moving, `ops-infra-as-code` when the fix is a
     resource, and, for a failed work item whose cause is fixed, the
-    requeue command of step 7 for a person to run. A session follows at
-    most 2 hops of Next. The skill it starts with is hop zero; the
+    requeue command of step 7 for a person to run. A session follows
+    at most 2 hops of Next. The skill it starts with is hop zero; the
     report of the second hop still names its next skill, and the
     session stops there and reports.
 

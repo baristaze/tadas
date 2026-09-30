@@ -71,8 +71,8 @@ the providers. It holds no cloud credential and reads no environment.
    flows file of its own (`fixed_flows.py`), and run that file on the
    same database with `--only seed` into a second `--out`
    (`calls_2.json`), or report it as not measured. That is the first
-   run plus at most 1 rerun: a flow that fails in `calls_2.json` too is
-   reported as not measured. The summary's round trips are warm (every statement already
+   run plus at most 1 rerun: a flow that fails again is reported as
+   not measured, with its error, and is not fixed a second time. The summary's round trips are warm (every statement already
    prepared); the report uses them and says so, and `calls.json` holds
    each call's `prepares` beside them. Tally `calls.json` with a scratch
    script (`uv run python <script>`), never a file in the repository.
