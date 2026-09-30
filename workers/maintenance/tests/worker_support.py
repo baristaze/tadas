@@ -113,7 +113,7 @@ async def start_import(container: WorkerContainer, ctx: TenantContext, rows: int
     running, with the work row of its first step."""
     data = ("title\n" + "".join(f"Task {n}\n" for n in range(1, rows + 1))).encode()
     now = utcnow()
-    file = await container.managers.tasks.create_import_file(
+    file = await container.managers.tasks.imports.create_import_file(
         ctx,
         File(
             id=new_id(),
@@ -129,7 +129,7 @@ async def start_import(container: WorkerContainer, ctx: TenantContext, rows: int
     )
     await container.managers.media.put_content(ctx, file.id, data)
     await container.managers.media.confirm_file(ctx, file.id)
-    return await container.managers.tasks.start_import(ctx, new_id(), file.id)
+    return await container.managers.tasks.imports.start_import(ctx, new_id(), file.id)
 
 
 def make_item(

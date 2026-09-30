@@ -90,7 +90,7 @@ async def test_the_reminder_goes_out_at_nine_in_the_persons_time_zone(
         await container.managers.tenancy.org.set_time_zone(ann, zone)
     due = date(today().year + 1, 7, 15)
     task = await container.managers.tasks.create_task(ann, make_task(ann, due_on=due))
-    reminder = await container.managers.tasks.get_due_reminder(ann, task.id)
+    reminder = await container.managers.tasks.reminders.get_due_reminder(ann, task.id)
     assert reminder is not None and reminder.due_on == due
     day = datetime(due.year, due.month, due.day, utc_hour, tzinfo=UTC)
     assert reminder.at == day + timedelta(days=day_shift)
@@ -109,8 +109,8 @@ async def test_the_assignees_zone_decides_and_the_creators_when_unassigned(
     due = date(today().year + 1, 1, 20)  # winter: New York is UTC-5
     mine = await tasks.create_task(ann, make_task(ann, due_on=due))
     his = await tasks.create_task(ann, make_task(ann, due_on=due, assignee_id=bob.user_id))
-    mine_at = await tasks.get_due_reminder(ann, mine.id)
-    his_at = await tasks.get_due_reminder(ann, his.id)
+    mine_at = await tasks.reminders.get_due_reminder(ann, mine.id)
+    his_at = await tasks.reminders.get_due_reminder(ann, his.id)
     assert mine_at is not None and mine_at.at == datetime(due.year, 1, 20, 0, tzinfo=UTC)
     assert his_at is not None and his_at.at == datetime(due.year, 1, 20, 14, tzinfo=UTC)
 
@@ -136,9 +136,9 @@ async def test_the_reminder_goes_out_once_and_is_announced(tmp_path: Path) -> No
     stored = await container.managers.tasks.get_task(ann, task.id)
     assert stored.reminded_at is not None and stored.version == task.version + 1
     assert await reminded_kinds(container, ann) == ["tasks.task.reminded"]
-    assert await container.managers.tasks.get_due_reminder(ann, task.id) is None
+    assert await container.managers.tasks.reminders.get_due_reminder(ann, task.id) is None
     # A second run of the same item, the at-least-once case, sends nothing.
-    fired = await container.managers.tasks.fire_reminder(ann, task.id, yesterday())
+    fired = await container.managers.tasks.reminders.fire_reminder(ann, task.id, yesterday())
     assert fired is None
     assert await reminded_kinds(container, ann) == ["tasks.task.reminded"]
     assert item.target_id == task.id
@@ -155,7 +155,7 @@ async def test_moving_the_due_date_leaves_the_first_reminder_stale(tmp_path: Pat
     assert len(await run_due(container)) == 2
     assert await reminded_kinds(container, ann) == ["tasks.task.reminded"], "the moved one alone"
     # The one write names the date it read, so the first date's cannot land.
-    assert await tasks.fire_reminder(ann, task.id, first) is None
+    assert await tasks.reminders.fire_reminder(ann, task.id, first) is None
 
 
 async def test_a_new_due_date_after_a_reminder_is_reminded_again(tmp_path: Path) -> None:

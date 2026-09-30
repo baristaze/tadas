@@ -1061,7 +1061,7 @@ async def test_a_pass_purges_every_row_past_its_retention_and_keeps_what_lives(
     stored = await upload(container, ann, "kept.webm")
 
     tasks = container.managers.tasks
-    settled = await tasks.step_import(ann, await start_import(container, ann, 1))
+    settled = await tasks.imports.step_import(ann, await start_import(container, ann, 1))
     assert settled.status is OrchestrationStatus.SUCCEEDED
     running = await start_import(container, ann, 3)
 

@@ -31,7 +31,12 @@ from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.impl.manager import SlackManagerImpl, SlackOptions
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks import TasksManagerInterface
+from tadas.om.tasks.impl.attachments import TasksAttachmentsManagerImpl
+from tadas.om.tasks.impl.cleanup import TasksCleanupManagerImpl
+from tadas.om.tasks.impl.imports import TasksImportsManagerImpl
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
+from tadas.om.tasks.impl.reminders import TasksRemindersManagerImpl
+from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
 from tadas.om.tenancy.impl.credentials import TenancyCredentialsManagerImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
@@ -130,6 +135,53 @@ def build_tenancy(
     return tenancy
 
 
+def build_tasks(
+    storage: TasksStorageInterface,
+    tenancy: TenancyManagerInterface,
+    media: MediaManagerInterface,
+    relay: OutboxRelayInterface,
+    slack: SlackManagerInterface,
+    options: TasksOptions,
+    *,
+    entitlements: EntitlementsInterface,
+    orchestrations: OrchestrationsManagerInterface,
+) -> TasksManagerInterface:
+    """The tasks manager with its delegates, each built here and handed to
+    it, as `build_tenancy` builds the tenancy manager's. `entitlements` is
+    what the plan's bound on active tasks is read from, and `orchestrations`
+    keeps the records of an import and of a cleanup."""
+    # An attachment is a live task's, and the read of one is the manager's.
+    # The manager holds this delegate, so that one edge is bound at call time.
+    attachments = TasksAttachmentsManagerImpl(
+        media, get_task=lambda ctx, task_id: tasks.get_task(ctx, task_id)
+    )
+    imports = TasksImportsManagerImpl(
+        storage,
+        tenancy,
+        media,
+        relay,
+        options,
+        entitlements=entitlements,
+        orchestrations=orchestrations,
+    )
+    cleanup = TasksCleanupManagerImpl(storage, relay, options, orchestrations=orchestrations)
+    reminders = TasksRemindersManagerImpl(storage, tenancy, relay, slack)
+    tasks = TasksManagerImpl(
+        storage,
+        tenancy,
+        media,
+        relay,
+        slack,
+        options,
+        entitlements=entitlements,
+        attachments=attachments,
+        imports=imports,
+        cleanup=cleanup,
+        reminders=reminders,
+    )
+    return tasks
+
+
 def build_managers(
     storage: StorageInterface,
     infra: InfraInterface,
@@ -222,7 +274,7 @@ def build_managers(
         outbox,
         orchestrations_options or OrchestrationsOptions(),
     )
-    tasks = TasksManagerImpl(
+    tasks = build_tasks(
         storage.get_tasks_storage(),
         tenancy,
         media,

@@ -27,7 +27,9 @@ from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMem
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
-from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
+from tadas.om.root import build_tasks
+from tadas.om.tasks import TasksManagerInterface
+from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.om.tasks.rules import Place, needs_respace
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -78,9 +80,9 @@ def manager(
     events_storage: EventStorageMemoryImpl,
     members: Members,
     outbox: OutboxStorageMemoryImpl,
-) -> TasksManagerImpl:
+) -> TasksManagerInterface:
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    return TasksManagerImpl(
+    return build_tasks(
         TasksStorageMemoryImpl(outbox),
         members,
         media_of(outbox, members, relay, infra),
@@ -101,31 +103,33 @@ def own(ctx: TenantContext, scope: TaskScope) -> TaskFilter:
     return TaskFilter(scope=scope, user_id=ctx.user_id)
 
 
-async def open_titles(manager: TasksManagerImpl, ctx: TenantContext, scope: TaskScope) -> list[str]:
+async def open_titles(
+    manager: TasksManagerInterface, ctx: TenantContext, scope: TaskScope
+) -> list[str]:
     page = await manager.get_open_tasks(ctx, own(ctx, scope), None, limit=50)
     return [t.title for t in page.items]
 
 
 async def open_page(
-    manager: TasksManagerImpl, ctx: TenantContext, limit: int = 10
+    manager: TasksManagerInterface, ctx: TenantContext, limit: int = 10
 ) -> tuple[Task, ...]:
     return (await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit)).items
 
 
 async def move(
-    manager: TasksManagerImpl, ctx: TenantContext, task_id: UUID, after_id: UUID | None
+    manager: TasksManagerInterface, ctx: TenantContext, task_id: UUID, after_id: UUID | None
 ) -> Task:
     """A move from a fresh read, the way a client that just listed does it."""
     current = await manager.get_task(ctx, task_id)
     return await manager.move_task(ctx, task_id, after_id, current.version)
 
 
-async def delete(manager: TasksManagerImpl, ctx: TenantContext, task_id: UUID) -> Task:
+async def delete(manager: TasksManagerInterface, ctx: TenantContext, task_id: UUID) -> Task:
     return await manager.delete_task(ctx, task_id, (await manager.get_task(ctx, task_id)).version)
 
 
 async def test_create_update_delete_record_and_push(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
     events: EventsManagerImpl,
     infra: InfraLocalImpl,
     outbox: OutboxStorageMemoryImpl,
@@ -174,7 +178,7 @@ async def test_create_update_delete_record_and_push(
     assert await claim_all(outbox) == []
 
 
-async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) -> None:
+async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerInterface) -> None:
     # The copy on update starts from the stored row: a caller may change the
     # title, the notes, the status, the assignee, and nothing about who made
     # the row or whether it is deleted, whatever its entity says.
@@ -205,7 +209,7 @@ async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) 
 
 
 async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_version(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     # The place in the open list and the version are the manager's: an entity
     # that names others changes neither. The version the write compares with
@@ -231,7 +235,7 @@ async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_versi
     assert (await manager.get_task(ctx, second.id)).title == "second"
 
 
-async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerImpl) -> None:
+async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerInterface) -> None:
     ctx = context(Role.MEMBER)
     for title in ("first", "second", "third"):
         await manager.create_task(ctx, make_task(ctx, title))
@@ -239,7 +243,7 @@ async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerImp
 
 
 async def test_done_leaves_the_open_list_and_reopening_returns_to_the_top(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     ctx = context(Role.MEMBER)
     a = await manager.create_task(ctx, make_task(ctx, "a"))
@@ -258,7 +262,7 @@ async def test_done_leaves_the_open_list_and_reopening_returns_to_the_top(
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["a", "c", "b"]
 
 
-async def test_scopes_mine_and_team(manager: TasksManagerImpl, members: Members) -> None:
+async def test_scopes_mine_and_team(manager: TasksManagerInterface, members: Members) -> None:
     org = make_org()
     ann = context(Role.MEMBER, org, members)
     bob = context(Role.MEMBER, org, members)
@@ -272,7 +276,9 @@ async def test_scopes_mine_and_team(manager: TasksManagerImpl, members: Members)
         await manager.get_open_tasks(ann, own(bob, TaskScope.MINE), None, limit=10)
 
 
-async def test_the_assignee_must_be_a_member(manager: TasksManagerImpl, members: Members) -> None:
+async def test_the_assignee_must_be_a_member(
+    manager: TasksManagerInterface, members: Members
+) -> None:
     org = make_org()
     ann = context(Role.MEMBER, org, members)
     with pytest.raises(ValidationFailed):
@@ -289,7 +295,7 @@ async def test_the_assignee_must_be_a_member(manager: TasksManagerImpl, members:
 
 
 async def test_an_update_keeps_an_assignee_who_left_the_org(
-    manager: TasksManagerImpl, members: Members
+    manager: TasksManagerInterface, members: Members
 ) -> None:
     """The assignee is checked when the assignment changes, not over one
     already stored. Removing a member leaves their tasks assigned to them, and
@@ -318,7 +324,7 @@ async def test_an_update_keeps_an_assignee_who_left_the_org(
     assert cleared.assignee_id is None
 
 
-async def test_move_places_after_an_anchor_or_at_the_top(manager: TasksManagerImpl) -> None:
+async def test_move_places_after_an_anchor_or_at_the_top(manager: TasksManagerInterface) -> None:
     ctx = context(Role.MEMBER)
     c = await manager.create_task(ctx, make_task(ctx, "c"))
     b = await manager.create_task(ctx, make_task(ctx, "b"))
@@ -349,7 +355,7 @@ async def test_move_places_after_an_anchor_or_at_the_top(manager: TasksManagerIm
         await move(manager, ctx, a.id, after_id=done.id)
 
 
-async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
+async def test_authorize_then_verify(manager: TasksManagerInterface) -> None:
     viewer = context(Role.VIEWER)
     with pytest.raises(NotAuthorized):
         await manager.create_task(viewer, make_task(viewer))
@@ -369,7 +375,7 @@ async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
         await manager.delete_task(member, new_id(), 1)
 
 
-async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
+async def test_tenancy_holds_across_contexts(manager: TasksManagerInterface) -> None:
     ann, bob = context(Role.MEMBER), context(Role.MEMBER)
     task = await manager.create_task(ann, make_task(ann))
     with pytest.raises(NotFound):
@@ -379,7 +385,7 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
     assert await open_page(manager, bob) == ()
 
 
-async def test_two_updates_from_one_snapshot_one_wins(manager: TasksManagerImpl) -> None:
+async def test_two_updates_from_one_snapshot_one_wins(manager: TasksManagerInterface) -> None:
     # Ann and Bob both read the task at version 1. Ann's edit lands and the
     # task is at version 2; Bob's edit still names version 1, so it is refused
     # as a failed precondition and Ann's title stands. Bob reads again and his edit lands.
@@ -400,7 +406,7 @@ async def test_two_updates_from_one_snapshot_one_wins(manager: TasksManagerImpl)
 
 
 async def test_a_delete_racing_an_edit_cannot_be_undone_by_the_edit(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
@@ -450,7 +456,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
     outbox = OutboxStorageMemoryImpl()
     storage = Interleaved(outbox)
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    manager = TasksManagerImpl(
+    manager = build_tasks(
         storage,
         members,
         media_of(outbox, members, relay, infra),
@@ -480,7 +486,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
     outbox = OutboxStorageMemoryImpl()
     events_storage = EventStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    manager = TasksManagerImpl(
+    manager = build_tasks(
         TasksStorageMemoryImpl(outbox),
         members,
         media_of(outbox, members, relay, infra),
@@ -502,7 +508,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
     assert [t.title for t in rest.items] == ["t0"] and not rest.has_more
 
 
-async def test_a_client_paging_at_the_clamp_sees_every_task(manager: TasksManagerImpl) -> None:
+async def test_a_client_paging_at_the_clamp_sees_every_task(manager: TasksManagerInterface) -> None:
     # 201 open and 201 done tasks against the default clamp of 200: the 201st
     # row of each list is the one the lookahead exists for.
     ctx = context(Role.MEMBER)
@@ -550,7 +556,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
 
     outbox = OutboxStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, DownTopics())
-    manager = TasksManagerImpl(
+    manager = build_tasks(
         TasksStorageMemoryImpl(outbox),
         members,
         media_of(outbox, members, relay, infra),
@@ -577,7 +583,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
 
 
 async def split_one_gap(
-    manager: TasksManagerImpl, ctx: TenantContext, moves: int
+    manager: TasksManagerInterface, ctx: TenantContext, moves: int
 ) -> tuple[Task, Task, Task, list[str]]:
     """`moves` moves into one and the same gap: a and c take turns right after
     b, so every move halves what the one before left. The worst case for a
@@ -594,7 +600,7 @@ async def split_one_gap(
 
 
 async def test_a_move_writes_its_one_row_however_often_a_gap_is_split(
-    manager: TasksManagerImpl, events: EventsManagerImpl, outbox: OutboxStorageMemoryImpl
+    manager: TasksManagerInterface, events: EventsManagerImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
     """A hundred and fifty moves into one gap, twice as many as a float had
     room for: every move lands where it was asked to, writes the moved task
@@ -630,7 +636,7 @@ async def test_a_move_writes_its_one_row_however_often_a_gap_is_split(
 
 
 async def test_an_edit_of_an_unrelated_task_meets_no_conflict_from_moves(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     """Ann reads a task, and while she edits it Bob makes a hundred moves of
     other tasks into one gap. Her write names the version she read, and it
@@ -646,7 +652,7 @@ async def test_an_edit_of_an_unrelated_task_meets_no_conflict_from_moves(
 
 
 async def test_two_moves_at_once_both_land_and_the_order_stays_whole(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     """Two people move two tasks right after the same one at the same moment.
     Each move writes its own task on its own version, so both land; the two
@@ -673,7 +679,7 @@ async def test_two_moves_at_once_both_land_and_the_order_stays_whole(
 
 
 async def test_a_move_after_one_of_two_tasks_that_share_a_rank_goes_after_both(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     """Two creates that read the same top land on the same rank, and the list
     orders the two by id. There is no rank between them, so a task moved
@@ -705,7 +711,7 @@ async def test_a_move_after_one_of_two_tasks_that_share_a_rank_goes_after_both(
 
 
 async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
-    manager: TasksManagerImpl, events: EventsManagerImpl
+    manager: TasksManagerInterface, events: EventsManagerImpl
 ) -> None:
     """Past the bound, the sweep gives the run short ranks again: the same
     order, one write, each task of the run a version on and announced, the
@@ -739,7 +745,7 @@ async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
 
 
 async def test_a_respace_whose_run_was_written_meanwhile_waits_for_the_next_pass(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     """A person edits a task of the run between the sweep's read and its
     write: the respace lands nothing, and her edit stands. The next pass
@@ -767,7 +773,7 @@ async def test_a_respace_whose_run_was_written_meanwhile_waits_for_the_next_pass
 
 
 async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
-    manager: TasksManagerImpl, members: Members
+    manager: TasksManagerInterface, members: Members
 ) -> None:
     org = make_org()
     ctx = context(Role.MEMBER, org, members)
@@ -775,7 +781,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
     dropped = await delete(manager, ctx, (await manager.create_task(ctx, make_task(ctx, "go"))).id)
     assert await manager.purge_across_tenants(request()) == 0, "the retention has not passed"
     assert await manager.purge_tenant(ctx) == 0, "a living tenant keeps its tasks"
-    past = TasksManagerImpl(
+    past = build_tasks(
         manager._storage,  # type: ignore[attr-defined]
         members,
         manager._media,  # type: ignore[attr-defined]
@@ -783,7 +789,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         no_slack(),
         TasksOptions(retention=timedelta(0)),
         entitlements=ON_TEAM,
-        orchestrations=manager._orchestrations,  # type: ignore[attr-defined]
+        orchestrations=manager.imports._orchestrations,  # type: ignore[attr-defined]
     )
     assert await past.purge_across_tenants(request()) == 1
     assert (await manager.get_task(ctx, live.id)).id == live.id
@@ -792,7 +798,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
 
 
 async def test_a_deleted_tenants_tasks_all_go_once_the_retention_has_passed(
-    manager: TasksManagerImpl, members: Members
+    manager: TasksManagerInterface, members: Members
 ) -> None:
     """A tenant past its retention keeps its org row and nothing else. Its open
     and done tasks were never soft-deleted, so a purge that reads `deleted_at`
@@ -819,7 +825,7 @@ async def test_a_deleted_tenants_tasks_all_go_once_the_retention_has_passed(
 
 
 async def test_a_placement_reads_one_place_however_long_the_open_list(
-    manager: TasksManagerImpl,
+    manager: TasksManagerInterface,
 ) -> None:
     """Creating, reopening, and moving a task each read one open place, bounded
     in the statement, never the open list; and the order reads as before."""

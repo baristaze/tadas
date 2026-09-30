@@ -25,7 +25,9 @@ from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
-from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
+from tadas.om.root import build_tasks
+from tadas.om.tasks import TasksManagerInterface
+from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.task import Task
 
@@ -65,8 +67,8 @@ def tasks(
     members: Members,
     relay: OutboxRelayImpl,
     media: MediaManagerImpl,
-) -> TasksManagerImpl:
-    return TasksManagerImpl(
+) -> TasksManagerInterface:
+    return build_tasks(
         TasksStorageMemoryImpl(outbox),
         members,
         media,
@@ -389,48 +391,48 @@ async def test_a_viewer_cannot_delete_a_subjects_files(media: MediaManagerImpl) 
 
 
 async def test_a_file_attached_to_a_task_is_a_task_attachment_of_that_task(
-    tasks: TasksManagerImpl, media: MediaManagerImpl
+    tasks: TasksManagerInterface, media: MediaManagerImpl
 ) -> None:
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))
     sent = a_file(ctx, purpose=FilePurpose.TASK_ATTACHMENT, subject_id=new_id())
-    attached = await tasks.attach_file(ctx, task.id, sent)
+    attached = await tasks.attachments.attach_file(ctx, task.id, sent)
     assert (attached.purpose, attached.subject_id) == (FilePurpose.TASK_ATTACHMENT, task.id)
-    assert (await tasks.get_attachments(ctx, task.id, None, 10)).items == ()
+    assert (await tasks.attachments.get_attachments(ctx, task.id, None, 10)).items == ()
     await media.issue_upload(ctx, attached.id)
     await media.put_content(ctx, attached.id, PDF)
     stored = await media.confirm_file(ctx, attached.id)
-    assert (await tasks.get_attachments(ctx, task.id, None, 10)).items == (stored,)
+    assert (await tasks.attachments.get_attachments(ctx, task.id, None, 10)).items == (stored,)
 
 
-async def test_a_missing_or_foreign_task_takes_no_attachment(tasks: TasksManagerImpl) -> None:
+async def test_a_missing_or_foreign_task_takes_no_attachment(tasks: TasksManagerInterface) -> None:
     ann, eve = context(Role.MEMBER), context(Role.MEMBER)
     task = await tasks.create_task(ann, make_task(ann))
     for attempt in (
-        tasks.attach_file(ann, new_id(), a_file(ann)),
-        tasks.attach_file(eve, task.id, a_file(eve)),
-        tasks.get_attachments(eve, task.id, None, 10),
+        tasks.attachments.attach_file(ann, new_id(), a_file(ann)),
+        tasks.attachments.attach_file(eve, task.id, a_file(eve)),
+        tasks.attachments.get_attachments(eve, task.id, None, 10),
     ):
         with pytest.raises(NotFound):
             await attempt
 
 
 async def test_an_attachment_is_removed_from_its_own_task_only(
-    tasks: TasksManagerImpl, media: MediaManagerImpl
+    tasks: TasksManagerInterface, media: MediaManagerImpl
 ) -> None:
     ctx = context(Role.MEMBER)
     one = await tasks.create_task(ctx, make_task(ctx, "one"))
     two = await tasks.create_task(ctx, make_task(ctx, "two"))
     attached = await uploaded(media, ctx, a_file(ctx, subject_id=one.id))
     with pytest.raises(NotFound):
-        await tasks.remove_attachment(ctx, two.id, attached.id)
-    removed = await tasks.remove_attachment(ctx, one.id, attached.id)
+        await tasks.attachments.remove_attachment(ctx, two.id, attached.id)
+    removed = await tasks.attachments.remove_attachment(ctx, one.id, attached.id)
     assert removed.deleted_at is not None
-    assert (await tasks.get_attachments(ctx, one.id, None, 10)).items == ()
+    assert (await tasks.attachments.get_attachments(ctx, one.id, None, 10)).items == ()
 
 
 async def test_deleting_a_task_deletes_its_attachments(
-    tasks: TasksManagerImpl, media: MediaManagerImpl
+    tasks: TasksManagerInterface, media: MediaManagerImpl
 ) -> None:
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))
@@ -441,7 +443,7 @@ async def test_deleting_a_task_deletes_its_attachments(
     await tasks.delete_task(ctx, task.id, task.version)
     usage = await media.get_usage(ctx)
     assert (usage.total_count, usage.pending_size_bytes) == (1, 0)
-    assert (await tasks.get_attachments(ctx, other.id, None, 10)).items == (kept,)
+    assert (await tasks.attachments.get_attachments(ctx, other.id, None, 10)).items == (kept,)
 
 
 async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
@@ -463,7 +465,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         relay,
         MediaOptions(),  # type: ignore[attr-defined]
     )
-    tasks = TasksManagerImpl(
+    tasks = build_tasks(
         TasksStorageMemoryImpl(outbox),
         members,
         failing,
@@ -514,7 +516,7 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
 
     flaky = Flaky(files, infra.get_buckets(), members, relay, MediaOptions())
     storage = Recorded(outbox)
-    tasks = TasksManagerImpl(
+    tasks = build_tasks(
         storage,
         members,
         flaky,

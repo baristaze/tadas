@@ -69,8 +69,8 @@ async def test_the_days_cleanup_archives_the_old_done_task_and_leaves_the_rest(
     await world.done(ctx, "old", 120)
     reopened = await world.done(ctx, "reopened", 120)
     await world.done(ctx, "recent", 89)
-    record = await world.managers.tasks.open_cleanup(ctx)
-    again = await world.managers.tasks.open_cleanup(ctx)
+    record = await world.managers.tasks.cleanup.open_cleanup(ctx)
+    again = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None and again is not None and again.id == record.id
     current = await world.managers.tasks.get_task(ctx, reopened.id)
     await world.managers.tasks.update_task(

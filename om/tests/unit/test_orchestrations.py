@@ -245,7 +245,7 @@ async def test_a_record_of_another_org_is_not_found(world: World) -> None:
     with pytest.raises(NotFound):
         await world.managers.orchestrations.get(other, record.id)
     with pytest.raises(NotFound):
-        await world.managers.tasks.get_import(other, record.id)
+        await world.managers.tasks.imports.get_import(other, record.id)
 
 
 async def test_the_sweep_purges_settled_records_past_the_retention(world: World) -> None:

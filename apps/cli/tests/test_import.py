@@ -36,10 +36,10 @@ def worker_steps(stack: Stack) -> imports.OpenChannel:
             seed_request(), stack.session_token(OWNER["email"])
         )
         ctx = await managers.tenancy.service_context(seed_request(), owner.org_id, owner.user_id)
-        (record,) = (await managers.tasks.get_imports(ctx, 1)).items
+        (record,) = (await managers.tasks.imports.get_imports(ctx, 1)).items
         seq = 0
         while record.status is OrchestrationStatus.RUNNING:
-            record = await managers.tasks.step_import(ctx, record)
+            record = await managers.tasks.imports.step_import(ctx, record)
             seq += 1
             yield EntityChanged(
                 kind="orchestrations.orchestration.updated",

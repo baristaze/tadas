@@ -78,7 +78,7 @@ async def claim_deletion(container: WorkerContainer) -> tuple[TenantContext, Wor
 async def attach(container: WorkerContainer, ctx: TenantContext, task_id: UUID) -> File:
     data = b"\x89PNG\r\n\x1a\n" + b"0" * 64
     now = utcnow()
-    file = await container.managers.tasks.attach_file(
+    file = await container.managers.tasks.attachments.attach_file(
         ctx,
         task_id,
         File(

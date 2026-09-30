@@ -68,24 +68,24 @@ class World:
             size_bytes=len(data),
             purpose=FilePurpose.TASK_IMPORT,
         )
-        started = await self.managers.tasks.create_import_file(ctx, file)
+        started = await self.managers.tasks.imports.create_import_file(ctx, file)
         await self.managers.media.put_content(ctx, started.id, data)
         await self.managers.media.confirm_file(ctx, started.id)
         return started.id
 
     async def start(self, ctx: TenantContext, data: bytes) -> Orchestration:
         file_id = await self.upload(ctx, data)
-        return await self.managers.tasks.start_import(ctx, new_id(), file_id)
+        return await self.managers.tasks.imports.start_import(ctx, new_id(), file_id)
 
     async def step(self, ctx: TenantContext, record_id: UUID) -> Orchestration:
         record = await self.managers.orchestrations.get(ctx, record_id)
-        return await self.managers.tasks.step_import(ctx, record)
+        return await self.managers.tasks.imports.step_import(ctx, record)
 
     async def run(self, ctx: TenantContext, record_id: UUID) -> Orchestration:
         """Steps the record until it stops running, as the worker's items do."""
         record = await self.managers.orchestrations.get(ctx, record_id)
         while record.status is OrchestrationStatus.RUNNING:
-            record = await self.managers.tasks.step_import(ctx, record)
+            record = await self.managers.tasks.imports.step_import(ctx, record)
         return await self.managers.orchestrations.get(ctx, record_id)
 
     async def open_titles(self, ctx: TenantContext) -> list[str]:
@@ -208,7 +208,7 @@ async def test_a_person_resumes_a_parked_import_and_it_parks_again_while_full(
     started = await world.start(ctx, titled(15))
     parked = await world.run(ctx, started.id)
     assert parked.applied == 10
-    resumed = await world.managers.tasks.resume_import(ctx, started.id)
+    resumed = await world.managers.tasks.imports.resume_import(ctx, started.id)
     assert resumed.status is OrchestrationStatus.RUNNING and resumed.park_reason is None
     again = await world.run(ctx, started.id)
     assert again.status is OrchestrationStatus.PARKED and again.cursor == 10
@@ -220,7 +220,7 @@ async def test_a_person_resumes_a_parked_import_and_it_parks_again_while_full(
     for task in page.items:
         done = task.model_copy(update={"status": "done"})
         await world.managers.tasks.update_task(ctx, Task.model_validate(done), task.version)
-    await world.managers.tasks.resume_import(ctx, started.id)
+    await world.managers.tasks.imports.resume_import(ctx, started.id)
     later = await world.run(ctx, started.id)
     assert later.status is OrchestrationStatus.PARKED
     assert (later.cursor, later.applied) == (12, 12)
@@ -231,10 +231,10 @@ async def test_resume_answers_a_running_import_as_it_is_and_refuses_a_settled_on
 ) -> None:
     ctx = await world.org(Plan.TEAM)
     started = await world.start(ctx, titled(3))
-    assert await world.managers.tasks.resume_import(ctx, started.id) == started
+    assert await world.managers.tasks.imports.resume_import(ctx, started.id) == started
     await world.run(ctx, started.id)
     with pytest.raises(ValidationFailed):
-        await world.managers.tasks.resume_import(ctx, started.id)
+        await world.managers.tasks.imports.resume_import(ctx, started.id)
 
 
 @pytest.mark.parametrize(
@@ -252,7 +252,7 @@ async def test_a_file_past_a_bound_fails_and_creates_nothing(
 ) -> None:
     ctx = await world.org(Plan.TEAM)
     file_id = await world.upload(ctx, data or b"\n")
-    started = await world.managers.tasks.start_import(ctx, new_id(), file_id)
+    started = await world.managers.tasks.imports.start_import(ctx, new_id(), file_id)
     failed = await world.run(ctx, started.id)
     assert failed.status is OrchestrationStatus.FAILED
     assert failed.fail_reason is reason
@@ -273,7 +273,7 @@ async def test_a_file_removed_before_its_step_fails_the_import(world: World) -> 
 async def test_start_takes_only_a_stored_import_file(world: World) -> None:
     ctx = await world.org(Plan.TEAM)
     now = utcnow()
-    pending = await world.managers.tasks.create_import_file(
+    pending = await world.managers.tasks.imports.create_import_file(
         ctx,
         File(
             id=new_id(),
@@ -289,7 +289,7 @@ async def test_start_takes_only_a_stored_import_file(world: World) -> None:
     )
     assert pending.purpose is FilePurpose.TASK_IMPORT and pending.subject_id is None
     with pytest.raises(ValidationFailed):
-        await world.managers.tasks.start_import(ctx, new_id(), pending.id)
+        await world.managers.tasks.imports.start_import(ctx, new_id(), pending.id)
 
 
 async def test_a_step_that_dies_before_its_commit_starts_again_at_the_cursor(
@@ -336,9 +336,9 @@ async def test_a_step_from_a_stale_read_lands_nothing(world: World) -> None:
     ctx = await world.org(Plan.TEAM)
     started = await world.start(ctx, titled(IMPORT_BATCH + 10))
     stale = await world.managers.orchestrations.get(ctx, started.id)
-    await world.managers.tasks.step_import(ctx, stale)
+    await world.managers.tasks.imports.step_import(ctx, stale)
     with pytest.raises(PreconditionFailed):
-        await world.managers.tasks.step_import(ctx, stale)
+        await world.managers.tasks.imports.step_import(ctx, stale)
     record = await world.managers.orchestrations.get(ctx, started.id)
     assert record.applied == IMPORT_BATCH
     assert len(await world.open_titles(ctx)) == IMPORT_BATCH
@@ -348,9 +348,9 @@ async def test_the_imports_are_listed_newest_first(world: World) -> None:
     ctx = await world.org(Plan.TEAM)
     first = await world.start(ctx, titled(1))
     second = await world.start(ctx, titled(1))
-    page = await world.managers.tasks.get_imports(ctx, 10)
+    page = await world.managers.tasks.imports.get_imports(ctx, 10)
     assert [r.id for r in page.items] == [second.id, first.id]
-    assert (await world.managers.tasks.get_import(ctx, first.id)).id == first.id
+    assert (await world.managers.tasks.imports.get_import(ctx, first.id)).id == first.id
 
 
 def _task(ctx: TenantContext, title: str) -> Task:

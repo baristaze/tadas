@@ -80,7 +80,7 @@ async def test_an_import_is_started_read_listed_and_parks_on_free(
     ctx = await worker_context(container, free_owner)
     record = await container.managers.orchestrations.get(ctx, UUID(started["id"]))
     while record.status is OrchestrationStatus.RUNNING:
-        record = await container.managers.tasks.step_import(ctx, record)
+        record = await container.managers.tasks.imports.step_import(ctx, record)
 
     read = await client.get(f"/v1/tasks/imports/{started['id']}", headers=free_owner)
     assert read.status_code == 200, read.text
@@ -137,9 +137,9 @@ async def test_an_archived_task_leaves_the_done_list_and_is_restored(
         }
     )
     await storage.update_task(ctx.org_id, aged, task.version, ())
-    record = await container.managers.tasks.open_cleanup(ctx)
+    record = await container.managers.tasks.cleanup.open_cleanup(ctx)
     assert record is not None
-    await container.managers.tasks.step_cleanup(ctx, record)
+    await container.managers.tasks.cleanup.step_cleanup(ctx, record)
 
     done = await client.get("/v1/tasks?status=done", headers=owner)
     assert done.json()["items"] == []

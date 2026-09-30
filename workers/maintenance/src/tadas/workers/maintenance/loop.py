@@ -68,7 +68,7 @@ there may be more."""
 
 ChoreStep = Callable[[TenantContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
-of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
+of a record kept per period (`TasksCleanupManagerInterface.open_cleanup`)."""
 
 TallyStep = Callable[[], Awaitable[object]]
 """The count of the platform's size across every tenant, kept as the tally the

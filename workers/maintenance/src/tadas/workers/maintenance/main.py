@@ -118,7 +118,7 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         # The respace gives short ranks back to a run of open tasks whose
         # ranks grew long.
         chores={
-            "cleanup": managers.tasks.open_cleanup,
+            "cleanup": managers.tasks.cleanup.open_cleanup,
             "respace": managers.tasks.respace_ranks,
         },
         # The tenants the chores run in: one read a pass across tenants finds
@@ -138,8 +138,8 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
                 managers.orchestrations,
                 {
-                    OrchestrationKind.TASK_IMPORT: managers.tasks.step_import,
-                    OrchestrationKind.TASK_CLEANUP: managers.tasks.step_cleanup,
+                    OrchestrationKind.TASK_IMPORT: managers.tasks.imports.step_import,
+                    OrchestrationKind.TASK_CLEANUP: managers.tasks.cleanup.step_cleanup,
                 },
             ),
             WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(managers.orchestrations),

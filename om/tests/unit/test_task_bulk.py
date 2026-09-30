@@ -24,8 +24,9 @@ from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMem
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.root import build_tasks
 from tadas.om.tasks.impl import manager as manager_module
-from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
+from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.om.tasks.rules import BULK_BATCH, BULK_MAX_IDS
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.bulk import BulkAction, PlanBound, SkippedTask, SkipReason
@@ -57,7 +58,7 @@ class Stack:
         self.storage = CountingStorage(self.outbox)
         self.members = Members()  # pyright: ignore[reportAbstractUsage] (a partial double)
         relay = OutboxRelayImpl(self.outbox, EventStorageMemoryImpl(), infra.get_topics())
-        self.manager = TasksManagerImpl(
+        self.manager = build_tasks(
             self.storage,
             self.members,
             media_of(self.outbox, self.members, relay, infra),

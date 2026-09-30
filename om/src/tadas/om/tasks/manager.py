@@ -2,20 +2,35 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import date
 from uuid import UUID
 
 from tadas.om.context import RequestContext, TenantContext
-from tadas.om.media.types.file import File
-from tadas.om.media.types.page import FilePage
-from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationPage
+from tadas.om.tasks.attachments import TasksAttachmentsManagerInterface
+from tadas.om.tasks.cleanup import TasksCleanupManagerInterface
+from tadas.om.tasks.imports import TasksImportsManagerInterface
+from tadas.om.tasks.reminders import TasksRemindersManagerInterface
 from tadas.om.tasks.types.bulk import BulkAction, BulkOutcome
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
-from tadas.om.tasks.types.task import DueReminder, Task, TaskStatus
+from tadas.om.tasks.types.task import Task, TaskStatus
 
 
 class TasksManagerInterface(ABC):
+    """Manager of the tasks swimlane. It keeps the task list: its reads, its
+    edits, its order, and the sweep's work on it. Its other duties are
+    delegates, each an interface of its own that the root builds and a
+    caller outside the namespace reaches through the manager, as
+    `tasks.imports.start_import`."""
+
+    attachments: TasksAttachmentsManagerInterface
+    """The files kept with a task."""
+    imports: TasksImportsManagerInterface
+    """The import of tasks from a CSV file."""
+    cleanup: TasksCleanupManagerInterface
+    """The daily cleanup of old done tasks."""
+    reminders: TasksRemindersManagerInterface
+    """The reminder of a task's due date."""
+
     @abstractmethod
     async def get_open_tasks(
         self, ctx: TenantContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
@@ -146,114 +161,9 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def attach_file(self, ctx: TenantContext, task_id: UUID, file: File) -> File:
-        """Starts an upload of a file to a live task: the media namespace lands
-        it pending, as a task attachment whose subject is the task, whatever
-        purpose and subject the caller's file names. The bytes and the confirm
-        go through the media namespace."""
-        ...
-
-    @abstractmethod
-    async def get_attachments(
-        self, ctx: TenantContext, task_id: UUID, after: UUID | None, limit: int
-    ) -> FilePage:
-        """One page of a live task's stored attachments, oldest first."""
-        ...
-
-    @abstractmethod
-    async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> File:
-        """Soft-deletes one attachment of a live task. A file that is not this
-        task's attachment is `NotFound`, as one that never existed is."""
-        ...
-
-    # The import of tasks from a CSV file.
-
-    @abstractmethod
-    async def create_import_file(self, ctx: TenantContext, file: File) -> File:
-        """Starts the upload of a CSV file to import: the media namespace
-        lands it pending under the `task_import` purpose and its bounds,
-        whatever purpose and subject the caller's file names. The bytes and
-        the confirm go through the media namespace."""
-        ...
-
-    @abstractmethod
-    async def start_import(
-        self, ctx: TenantContext, import_id: UUID, file_id: UUID
-    ) -> Orchestration:
-        """Starts the import of a stored `task_import` file: the record and
-        the work row of its first step, in one commit. The rows are read by
-        the worker, a batch a step. An id written already answers the import
-        as stored."""
-        ...
-
-    @abstractmethod
-    async def get_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration: ...
-
-    @abstractmethod
-    async def get_imports(self, ctx: TenantContext, limit: int) -> OrchestrationPage:
-        """The org's newest imports, newest first."""
-        ...
-
-    @abstractmethod
-    async def resume_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
-        """A person's wake of a parked import: it runs again from its cursor,
-        and parks again at once if the plan still has no room."""
-        ...
-
-    @abstractmethod
-    async def step_import(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
-        """One step of an import: reads the file, checks its bounds, and makes
-        the tasks of the next batch of rows in one commit with the record's
-        next cursor (`TasksStorageInterface.create_tasks_in_step`). A row that
-        makes no task is skipped and named; a row that would take the org past
-        its plan's bound of active tasks parks the record `plan_limit` at that
-        row; a file past a bound fails it. Each task's id is derived from the
-        import and the row, so a step run twice makes each task once."""
-        ...
-
-    # The daily cleanup of old done tasks.
-
-    @abstractmethod
-    async def open_cleanup(self, ctx: TenantContext) -> Orchestration | None:
-        """The sweep, for one tenant: opens today's cleanup record when the org
-        has a done task unchanged since the day began, less the archive age
-        (`tasks.rules.archive_cutoff`), and today's record is not open yet;
-        the org, the kind, and the day are its unique key, so every sweep
-        after the first one of the day opens nothing. None when there is
-        nothing to archive."""
-        ...
-
-    @abstractmethod
-    async def step_cleanup(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
-        """One step of a cleanup: archives the next batch of done tasks
-        unchanged since the record's cutoff, in one conditional write with the
-        record's next cursor (`TasksStorageInterface.update_archived_in_step`).
-        A task reopened, edited, or deleted meanwhile is left alone."""
-        ...
-
-    @abstractmethod
     async def count_active_tasks(self, ctx: TenantContext) -> int:
         """How many of the org's tasks are open and not deleted: what the
         plan's active-task bound counts."""
-        ...
-
-    @abstractmethod
-    async def get_due_reminder(self, ctx: TenantContext, task_id: UUID) -> DueReminder | None:
-        """The reminder the task is waiting for: its due date and the moment
-        the reminder goes out, nine in the morning of that date in the time
-        zone of the person the task is for (`tasks.rules.reminder_time`),
-        read as the task and the person are now. None when the task waits for
-        none: no due date, done, deleted, gone, or reminded already."""
-        ...
-
-    @abstractmethod
-    async def fire_reminder(self, ctx: TenantContext, task_id: UUID, due_on: date) -> Task | None:
-        """The reminder of the task's due date, when its moment has come:
-        marks the task reminded and announces it (`tasks.task.reminded`), and
-        asks for the Slack post when the org has a Slack channel bound, all in
-        one write conditioned on the task still being open and due on `due_on`
-        and not yet reminded. None when it no longer is, which is a reminder
-        gone stale: nothing is written and nothing is announced."""
         ...
 
     @abstractmethod
@@ -271,7 +181,7 @@ class TasksManagerInterface(ABC):
     async def tenants_with_chores(self, after: UUID | None, limit: int) -> list[UUID]:
         """Platform-internal: the sweep's one read a pass, across tenants, of
         the tenants whose tasks have a chore due: a done task today's cleanup
-        archives (`open_cleanup`), or an open task whose rank grew long
+        archives (`cleanup.open_cleanup`), or an open task whose rank grew long
         (`respace_ranks`). At most `limit` of them, in id order, after `after`
         when one is given; the sweep runs the chores in those tenants alone.
         Takes no context, because it reads for no tenant and no principal."""

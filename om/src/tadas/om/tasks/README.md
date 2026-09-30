@@ -190,3 +190,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   yet reminded, all checked in one write. So a reminder for a date that
   was moved or cleared, or for a task finished or deleted meanwhile,
   never goes out, and a reminder goes out once.
+
+## How another namespace reaches it
+
+The tasks manager keeps the task list: its reads, its edits, its order,
+and the sweep's work on it. Its other duties are delegates, each an
+interface of its own reached through the manager: `tasks.attachments`,
+`tasks.imports`, `tasks.cleanup`, and `tasks.reminders`.
