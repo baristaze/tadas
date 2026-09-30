@@ -11,6 +11,13 @@ model at the center, one infrastructure toolkit, an API process and a
 maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
+Its base is the guideline's scaffold,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.40.0/scaffold/acme_root)
+at v0.40.0, rendered as Tadas. The `scaffold` branch keeps each render,
+and the main branch merges it, so every difference from the scaffold is
+Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
+a later release by a merge.
+
 <p align="center">
   <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Acme's Team list. Bob adds three tasks and opens the second to give it a due date; he opens the third, assigns it to the owner, and attaches an image, which shows as a preview. The owner opens the same task and sees the image. Bob completes the first task. Each change appears in the owner's window at once.">
 </p>
