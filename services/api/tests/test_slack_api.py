@@ -139,6 +139,23 @@ async def test_a_header_no_signer_writes_is_refused_and_queues_nothing(
     assert await queued(container) == []
 
 
+@pytest.mark.parametrize("path", ["/webhooks/slack/commands", "/webhooks/slack/events"])
+async def test_a_body_that_is_not_utf8_is_refused_and_queues_nothing(
+    client: httpx.AsyncClient, container: AppContainer, path: str
+) -> None:
+    """An unsigned call with a current timestamp, a signature in its
+    alphabet, and a body that is no UTF-8: the route's 401, never an
+    exception."""
+    headers = {
+        "X-Slack-Request-Timestamp": str(int(time.time())),
+        "X-Slack-Signature": "v0=" + "ab" * 32,
+    }
+    answer = await client.post(path, content=b"\xff\xfe", headers=headers)
+    assert answer.status_code == 401, answer.text
+    assert answer.json()["error"]["code"] == "slack_signature_invalid"
+    assert await queued(container) == []
+
+
 @pytest.mark.parametrize(
     "retry",
     [b"\xb2", b"9" * 5000, b"-1", b"soon"],

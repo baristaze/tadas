@@ -169,29 +169,36 @@ def test_a_skill_that_holds_a_token_pre_approves_the_ops_command_and_no_other(na
 
 
 # What a tenant writes and the operator plane answers with: an org's name and
-# slug, a member's display name and address. A tenant chooses those words, and
-# the session that reads them holds an operator's token.
-TENANT_TEXT = {"name", "slug", "display_name", "email"}
+# slug, a member's display name and address, a task's title, notes, and due
+# date. A tenant chooses those words, and the session that reads them holds
+# an operator's token.
+TENANT_TEXT = {"name", "slug", "display_name", "email", "title", "notes", "due_on"}
 TENANT_READ = re.compile(
-    r'^ *curl [^\n]*"\$TADAS_API_URL/v1/admin/orgs/<org_id>(?:/members(?:\?cursor=<next_cursor>)?)?"'
+    r'^ *curl [^\n]*"\$TADAS_API_URL/v1/admin/orgs/<org_id>'
+    r'(?:/members(?:\?cursor=<next_cursor>)?|/tasks[^"\n]*)?"'
     r"(?P<piped> \\\n +\| jq '(?P<kept>[^'\n]*)'$)?",
     re.MULTILINE,
 )
 
 
 def test_the_root_cause_reads_of_a_tenant_keep_no_text_the_tenant_wrote() -> None:
-    """The org, its members, and a next page of them are read through `jq`,
-    which keeps the ids, the kind, and the timestamps: no read is printed
-    whole."""
+    """The org, its members, a next page of them, and its tasks are read
+    through `jq`, which keeps the ids, the kind, the status, and the
+    timestamps: no read is printed whole."""
     reads = list(TENANT_READ.finditer(_skill("ops-root-cause")))
-    assert len(reads) == 3, (
-        "ops-root-cause no longer reads the org and its members as this test sees them"
+    assert len(reads) == 4, (
+        "ops-root-cause no longer reads the org, its members, and its tasks as this test sees them"
     )
+    assert sum("/tasks" in read[0] for read in reads) == 1
     for read in reads:
         assert read["piped"], f"a read of the tenant is printed whole: {read[0]}"
         assert not set(re.findall(r"[a-z_]+", read["kept"])) & TENANT_TEXT, read["kept"]
+    assert "/tasks" not in TENANT_READ.sub("", _skill("ops-root-cause")), (
+        "the tasks route is named outside the read that goes through `jq`"
+    )
     assert "Bash(jq:*)" in _allowed_tools("ops-root-cause")
     assert "never run either read without its `jq`" in _prose("ops-root-cause")
+    assert "Never run it without its `jq`" in _prose("ops-root-cause")
     assert "**Tenant.** <kind> org" in _skill("ops-root-cause")
 
 

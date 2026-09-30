@@ -134,11 +134,24 @@ do not use up the first pass's one read of each signal.
    one. The operator's feed carries `request_id` and `app` beside the
    actor, which the tenant's own feed leaves out, so it is the map from
    what the tenant did to the requests that did it. The rows themselves
-   are the org and its members of step 2, and its tasks
-   (`/v1/admin/orgs/<org_id>/tasks?status=open|done`). Without `--request-id`, pick
-   the request ids of the window's failed or missing writes here and in
-   step 4, at most five, the newest first among those tied to the
-   symptom.
+   are the org and its members of step 2, and its tasks, the open ones
+   or the done ones, read as those two are:
+
+   ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
+   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/tasks?status=<open|done>" \
+     | jq '{tasks: [.items[]? | {id, status, created_by, assignee_id, created_at, updated_at, archived_at, deleted_at, reminded_at}], next_cursor, error: .error.code}'
+   ```
+
+   The read keeps a task's ids, its status, and its timestamps, and
+   drops what the tenant wrote: its `title`, its `notes`, and its
+   `due_on`. Never run it without its `jq`. A page holds at most 50
+   tasks, and a next page is read as a next page of members is: with
+   `next_cursor` as `cursor`, through the same `jq`, at most 20 pages.
+
+   Without `--request-id`, pick the request ids of the window's failed
+   or missing writes here and in step 4, at most five, the newest first
+   among those tied to the symptom.
 
    The feed reads only forward from `after_seq`, with no time filter,
    so the skill first finds the window's first `seq`, and never reads
@@ -267,7 +280,8 @@ do not use up the first pass's one read of each signal.
 - No secret value read or printed: the env file is sourced and never
   read, and no bearer is written to the report.
 - No text a tenant wrote read: an org's name or slug, a member's
-  display name or address. The reads of step 2 drop them.
+  display name or address, a task's title or notes. The reads of steps
+  2 and 3 drop them.
 - No data outside `--org`: no list of orgs, no cross-tenant query, no
   second org id "for comparison".
 - No `terraform apply`, no console clicks.

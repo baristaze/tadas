@@ -56,6 +56,12 @@ def verify(body: bytes, timestamp: str | None, signature: str | None, secret: st
         raise SlackRequestRefused(
             "bad_timestamp", "the request timestamp is not a number"
         ) from None
+    # The SDK reads the body as UTF-8 before it signs it, and raises on one
+    # that is not. Slack sends no such body, so nothing signed it.
+    try:
+        body.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SlackRequestRefused("bad_body", "the body is not UTF-8") from None
     # In whole seconds, before the SDK subtracts the timestamp from a float:
     # a timestamp of any length is outside the window, never too large for a
     # float. The SDK's compare takes ASCII text alone and raises on anything
