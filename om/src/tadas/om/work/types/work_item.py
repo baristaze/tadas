@@ -156,9 +156,10 @@ class DeleteAccountPayload(Platform):
 class DeleteOrgPayload(Platform):
     """What is left of a team org its owner or an operator deleted: its
     organization at the identity provider, when it had one, since the org row
-    no longer names it (so no sign-in through it finds the org). It is an id. The item's target
-    is the org, which it runs in: the processor's customer and the Slack app
-    are read from the org when the item runs, and the org is deleted last."""
+    no longer names it (so no sign-in through it finds the org). It is an id.
+    The item's target is the org, which it runs in: the processor's customer
+    and the Slack app are read from the org when the item runs, and the org
+    is deleted last."""
 
     provider_org_id: str | None = None
 

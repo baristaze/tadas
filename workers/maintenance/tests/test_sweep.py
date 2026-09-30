@@ -2,25 +2,39 @@
 a pass across tenants and again while a batch comes back full, its budget and
 where the next pass resumes, a purge called again while its batch comes back
 full, each namespace's purge past its retention once a pass across tenants,
-a living tenant that costs the purges nothing, the chores run in the tenants
+every row past its retention gone after one pass of the worker's own loop, a
+living tenant that costs the purges nothing, the chores run in the tenants
 one read across tenants finds with a chore due and in no other, a page of
-them a pass, a deleted tenant marked purged once nothing of it is left and
-left out after, the tenant's expiry read once per pass, the count of the
-platform's size once an interval, and the pass's duration and the four
-gauges of the queue and the outbox on its own line."""
+them a pass, a deleted tenant's every row gone, the tenant marked purged once
+nothing of it is left and left out after, the tenant's expiry read once per
+pass, the count of the platform's size once an interval, and the pass's
+duration and the four gauges of the queue and the outbox on its own line."""
 
 import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
 from prometheus_client import REGISTRY
-from worker_support import build_container, fast_options, request, sign_in
+from slack_support import on_team
+from test_billing_work import checkout, consumer_of
+from test_billing_work import queued as queued_delivery
+from worker_support import (
+    build_container,
+    fast_options,
+    make_item,
+    request,
+    sign_in,
+    start_import,
+    upload,
+)
 
+from tadas.infra.buckets import Buckets
 from tadas.infra.cache import CacheScope
 from tadas.infra.observability import (
     OUTBOX_FAILED_RECENTLY,
@@ -28,15 +42,20 @@ from tadas.infra.observability import (
     JsonFormatter,
 )
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.billing.types.plan import Plan
 from tadas.om.context import CredentialKind, RequestContext, Role, TenantContext, build_context
-from tadas.om.orchestrations.types.orchestration import OrchestrationKind
+from tadas.om.events.manager import audit_event
+from tadas.om.media.types.file import File
+from tadas.om.orchestrations.types.orchestration import OrchestrationKind, OrchestrationStatus
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.tasks.rules import RANK_SCALE_BOUND
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
-from tadas.om.tenancy.rules import permissions_of
+from tadas.om.tenancy.rules import hash_token, permissions_of
+from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.org import Org
 from tadas.om.work import WorkManagerInterface
+from tadas.om.work.types.work_item import WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.loop import (
     AcrossStep,
@@ -292,42 +311,74 @@ async def test_only_a_tenant_with_nothing_left_is_offered_to_be_marked_purged(
     assert work.marked == [idle.org_id]
 
 
-async def deleted_org(container: WorkerContainer, days_ago: int) -> UUID:
-    """A team org deleted `days_ago`, with one removed member's rows left."""
+async def deleted_org(container: WorkerContainer, days_ago: int) -> tuple[UUID, File]:
+    """A team org deleted `days_ago`, with rows of every namespace left: its
+    owner's user and membership, an api key, a stored file and its object, a
+    running record, and the stream of events they made. It is on Team, whose
+    plan holds api keys."""
     tail = new_id().hex[-8:]
-    _, org = await container.managers.tenancy.bootstrap(
+    owner, org = await container.managers.tenancy.bootstrap(
         request(), "Gone", f"gone-{tail}", f"gone-{tail}@example.test", "Gone"
     )
+    await on_team(container, owner)
+    file = await upload(container, owner)
+    await start_import(container, owner, 3)
+    await container.managers.tenancy.create_api_key(owner, "ci", Role.MEMBER)
     storage = container.storage.get_tenancy_storage()
     stored = await storage.read_org(org.id)
     assert stored is not None
     when = utcnow() - timedelta(days=days_ago)
     await storage.write_org(org.id, stored.model_copy(update={"deleted_at": when}))
-    return org.id
+    return org.id, file
+
+
+async def rows_of(container: WorkerContainer, org_id: UUID) -> dict[str, int]:
+    """How many rows of the tenant each namespace holds."""
+    storage = container.storage
+    orchestrations = storage.get_orchestrations_storage()
+    return {
+        "users": len(await storage.get_tenancy_storage().read_users(org_id, None, limit=10)),
+        "files": len(await storage.get_media_storage().read_every_file(org_id, None, 10)),
+        "records": len(await orchestrations.read_recent(org_id, OrchestrationKind.TASK_IMPORT, 10)),
+        "events": len(await storage.get_event_storage().read_after(org_id, 0, 100)),
+    }
 
 
 async def test_a_deleted_tenant_is_marked_purged_once_nothing_is_left_and_skipped_after(
     tmp_path: Path,
 ) -> None:
-    """The first pass takes the rows of a tenant past its retention, the next
-    finds nothing left and marks it, and from then on the sweep leaves it
-    out. A tenant within its retention is swept and never marked."""
+    """The first pass takes every row of a tenant past its retention, each
+    namespace through its purge of the tenant, and keeps the org row as the
+    record; the next finds nothing left and marks it, and from then on the
+    sweep leaves it out. A tenant within its retention is swept and never
+    marked, and keeps its rows."""
     container = build_container(tmp_path)
-    expired = await deleted_org(container, days_ago=40)
-    recent = await deleted_org(container, days_ago=1)
+    expired, file = await deleted_org(container, days_ago=40)
+    recent, _ = await deleted_org(container, days_ago=1)
     loop = build_loop(container)
     tenancy = container.storage.get_tenancy_storage()
+    buckets = container.infra.get_buckets()
+    assert all((await rows_of(container, expired)).values())
+    assert await buckets.exists(expired, Buckets.USER_FILE_UPLOADS, file.key)
 
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     first = await tenancy.read_org(expired)
     assert first is not None and first.purged_at is None, "this pass took its rows"
-    assert await tenancy.read_users(expired, None, limit=10) == []
+    assert await rows_of(container, expired) == {
+        "users": 0,
+        "files": 0,
+        "records": 0,
+        "events": 0,
+    }
+    assert not await buckets.exists(expired, Buckets.USER_FILE_UPLOADS, file.key)
+    assert await container.storage.get_event_storage().read_head(expired) == 0
 
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     marked = await tenancy.read_org(expired)
     assert marked is not None and marked.purged_at is not None, "nothing was left"
     kept = await tenancy.read_org(recent)
     assert kept is not None and kept.purged_at is None, "within its retention"
+    assert all((await rows_of(container, recent)).values())
 
     swept = {ctx.org_id for ctx in await container.managers.work.maintenance_contexts(request())}
     assert expired not in swept, "a purged tenant is left out"
@@ -775,12 +826,12 @@ async def test_each_purge_across_tenants_runs_once_a_pass_after_the_tenants(
         work,
         {"tenant": tenant},
         fast_options(sweep_budget=timedelta(0)),
-        across={"tasks": across_recording(calls, "tasks"), "events": events},
+        across={"media": across_recording(calls, "media"), "events": events},
     )
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    assert calls == ["tenant", "tasks", "events"], "one tenant, then each purge once"
+    assert calls == ["tenant", "media", "events"], "one tenant, then each purge once"
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    assert calls[3:] == ["tenant", "tasks", "events"]
+    assert calls[3:] == ["tenant", "media", "events"]
 
 
 async def test_a_full_purge_across_tenants_runs_again_while_the_budget_lasts(
@@ -894,7 +945,7 @@ async def test_a_living_tenant_costs_the_purges_nothing(
     statement at all for any one tenant: a living tenant's own purge answers
     from the expiry the pass read with the org rows."""
     container = build_container(tmp_path)
-    for slug in ("acme", "beta", "gamma"):
+    for slug in ("ajax", "beta", "gamma"):
         await container.managers.tenancy.bootstrap(
             request(), slug.title(), slug, f"ann@{slug}.test", "Ann"
         )
@@ -930,7 +981,156 @@ async def test_a_living_tenant_costs_the_purges_nothing(
     per_tenant = [c for c in calls if c.endswith((".purge_tenant", ".read_every_file"))]
     assert per_tenant == [], "no living tenant is purged in its own right"
     assert len(calls) == len(set(calls)), f"each purge once a pass: {calls}"
-    assert len(calls) == 11, calls
+    assert sorted(calls) == [
+        "BillingStorageMemoryImpl.purge_deliveries",
+        "EventStorageMemoryImpl.trim",
+        "IdempotencyStorageMemoryImpl.purge_records",
+        "MediaStorageMemoryImpl.purge_files_across_tenants",
+        "MediaStorageMemoryImpl.read_purgeable",
+        "OrchestrationsStorageMemoryImpl.purge_settled",
+        "SlackStorageMemoryImpl.purge",
+        "TasksStorageMemoryImpl.purge_deleted",
+        "TasksStorageMemoryImpl.read_deleted",
+        "TenancyStorageMemoryImpl.purge_deleted",
+        "TenancyStorageMemoryImpl.purge_sign_in_delays",
+    ], calls
+
+
+LATER = timedelta(days=100)
+"""Past every retention the sweep keeps: the events' ninety days, and each
+shorter one."""
+
+CLOCKS = (
+    "tadas.om.tenancy.impl.manager",
+    "tadas.om.media.impl.manager",
+    "tadas.om.idempotency.impl.manager",
+    "tadas.om.events.impl.manager",
+    "tadas.om.work.impl.manager",
+    "tadas.om.outbox.impl.relay",
+)
+"""The modules whose clock a purge past a retention reads."""
+
+
+def move_on(container: WorkerContainer, monkeypatch: pytest.MonkeyPatch, by: timedelta) -> None:
+    """Every clock the purges read, `by` ahead of the wall's."""
+
+    def later() -> datetime:
+        return utcnow() + by
+
+    for module in CLOCKS:
+        monkeypatch.setattr(f"{module}.utcnow", later)
+    monkeypatch.setattr(container.managers.orchestrations, "_clock", later)
+
+
+async def test_a_pass_purges_every_row_past_its_retention_and_keeps_what_lives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the worker's own wiring, a pass a hundred days on takes, across
+    tenants, every row whose retention has passed: through the tenancy
+    purge, a removed member's user and membership, a revoked api key, an
+    expired session, a socket ticket, a closed invitation, and a run of
+    failed sign-ins; through the media purge, a deleted file with its object
+    and an upload never confirmed; a settled record; a finished idempotency
+    marker; a settled work item; every relayed outbox row; and the org's
+    events, the floor moving with them. What still lives stays: the owner's
+    user and membership, a live key, a stored file, a running record, and a
+    queued item."""
+    container = build_container(tmp_path)
+    ann = await sign_in(container)
+    org = ann.org_id
+    tenancy, media = container.managers.tenancy, container.managers.media
+    tenancy_rows = container.storage.get_tenancy_storage()
+    # Ajax pays for Team, whose plan holds a second member and api keys.
+    paid = await checkout(container, ann, Plan.TEAM, 1)
+    assert await consumer_of(container).handle(await queued_delivery(container, paid)) == "applied"
+
+    await tenancy.add_member(request(), "ajax", "bob@example.test", "Bob", Role.MEMBER)
+    (bob,) = [u for u in await tenancy_rows.read_users(org, None, 10) if u.id != ann.user_id]
+    await tenancy.remove_member(ann, bob.id)
+    revoked = await tenancy.create_api_key(ann, "old", Role.MEMBER)
+    await tenancy.revoke_api_key(ann, revoked.api_key.id)
+    live = await tenancy.create_api_key(ann, "ci", Role.MEMBER)
+    invitation = await tenancy.invite_member(ann, "carol@example.test", Role.MEMBER)
+    await tenancy.revoke_invitation(ann, invitation.id)
+    ticket = await tenancy.issue_ticket(ann)
+    await tenancy_rows.record_failed_sign_in("a-digest", utcnow())
+
+    deleted = await upload(container, ann, "old.webm")
+    await media.delete_file(ann, deleted.id)
+    abandoned = await upload(container, ann, "never.webm", confirm=False)
+    stored = await upload(container, ann, "kept.webm")
+
+    tasks = container.managers.tasks
+    settled = await tasks.step_import(ann, await start_import(container, ann, 1))
+    assert settled.status is OrchestrationStatus.SUCCEEDED
+    running = await start_import(container, ann, 3)
+
+    begun = await container.managers.idempotency.begin(ann, "k", "d", new_id())
+    assert begun.attempt_id is not None
+    await container.managers.idempotency.finish(ann, "k", begun.attempt_id, 201, "{}")
+
+    work = container.managers.work
+    done = await work.enqueue(ann, make_item(ann))
+    claimed = await work.claim(request(), "default", [done.kind], "test", timedelta(minutes=1))
+    assert claimed is not None and claimed[1].id == done.id
+    await work.complete(*claimed)
+    queued = await work.enqueue(ann, make_item(ann))
+
+    events = container.storage.get_event_storage()
+    await events.append_events(org, [audit_event(ann, new_id(), "tenancy.test.noted", org, {})])
+    head = await events.read_head(org)
+
+    storage = container.storage
+    media_rows, buckets = storage.get_media_storage(), container.infra.get_buckets()
+    records, items = storage.get_orchestrations_storage(), storage.get_work_storage()
+    idempotency = storage.get_idempotency_storage()
+    memory = cast(TenancyStorageMemoryImpl, tenancy_rows)
+    ticket_hash = hash_token(ticket.ticket)
+
+    async def past_their_retention() -> dict[str, object]:
+        """Each row the pass must take, as storage reads it: None once gone."""
+        # The memory storage's own tables, for the two rows no read names by
+        # id: an ended membership, and a ticket.
+        memberships = memory._memberships.values()  # pyright: ignore[reportPrivateUsage]
+        tickets = memory._socket_tickets.values()  # pyright: ignore[reportPrivateUsage]
+        found = {
+            "removed user": await tenancy_rows.read_user(org, bob.id),
+            "ended membership": next((m for _, m in memberships if m.user_id == bob.id), None),
+            "revoked key": await tenancy_rows.read_api_key(org, revoked.api_key.id),
+            "expired session": await tenancy_rows.read_session(org, ann.credential_id),
+            "ticket": next((t for _, t in tickets if t.ticket_hash == ticket_hash), None),
+            "closed invitation": await tenancy_rows.read_invitation(org, invitation.id),
+            "failed sign-ins": await tenancy_rows.read_sign_in_delay("a-digest"),
+            "deleted file": await media_rows.read_file(org, deleted.id),
+            "abandoned upload": await media_rows.read_file(org, abandoned.id),
+            "settled record": await records.read_orchestration(org, settled.id),
+            "finished marker": await idempotency.read_record(org, ann.user_id, "k"),
+            "settled item": await items.read_item(org, done.id),
+        }
+        return {name: row for name, row in found.items() if row is not None}
+
+    assert len(await past_their_retention()) == 12, "every row is there before the pass"
+    assert await buckets.exists(org, Buckets.USER_FILE_UPLOADS, deleted.key)
+
+    move_on(container, monkeypatch, LATER)
+    await build_loop(container)._sweep_once()  # pyright: ignore[reportPrivateUsage]
+
+    assert await past_their_retention() == {}
+    assert not await buckets.exists(org, Buckets.USER_FILE_UPLOADS, deleted.key)
+    outbox = storage.get_outbox_storage()
+    assert await outbox.purge_done(utcnow() + LATER, 1000) == 0, "no relayed row is left"
+    assert head > 0 and await events.read_floor(org) == await events.read_head(org) == head
+    assert await events.read_after(org, 0, 100) == []
+
+    # What still lives stays.
+    assert await tenancy_rows.read_user(org, ann.user_id) is not None
+    assert await tenancy_rows.read_membership_for_user(org, ann.user_id) is not None
+    assert await tenancy_rows.read_api_key(org, live.api_key.id) is not None
+    assert await media_rows.read_file(org, stored.id) is not None
+    assert await buckets.exists(org, Buckets.USER_FILE_UPLOADS, stored.key)
+    assert await records.read_orchestration(org, running.id) is not None
+    kept = await items.read_item(org, queued.id)
+    assert kept is not None and kept.status is WorkStatus.QUEUED
 
 
 TASK_READS = ("read_archivable", "read_long_place", "read_tenants_with_chores")
@@ -951,7 +1151,7 @@ async def test_a_tenant_with_no_chore_due_costs_the_pass_no_read_of_its_tasks(
     tasks = container.managers.tasks
     storage = container.storage.get_tasks_storage()
     owners: list[TenantContext] = []
-    for slug in ("acme", "beta", "gamma"):
+    for slug in ("ajax", "beta", "gamma"):
         ctx, _ = await container.managers.tenancy.bootstrap(
             request(), slug.title(), slug, f"ann@{slug}.test", "Ann"
         )

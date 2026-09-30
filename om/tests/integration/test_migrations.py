@@ -1,10 +1,11 @@
 """Every role's migrated schema agrees with the ORM metadata, the latest
 revision of every role downgrades and upgrades again, the logins are safe to
-make twice, a migration behind a held lock gives up within its bound, a data
-migration passes the fence it runs under, the personal org backfill gives
-every person one, the due date backfill gives every task with a due time its
-date, a task's rank and position follow each other for the builds before this
-one, and the address fold folds every address and stops on two that fold to
+make twice, a migration behind a held lock gives up within its bound, and a
+data migration passes the fence it runs under and fails when it misses rows.
+Tadas's own chain holds too: the personal org backfill gives every person
+one, the due date backfill gives every task with a due time its date, a
+task's rank and position follow each other for the builds before this one,
+and the address fold folds every address and stops on two that fold to
 one."""
 
 import asyncio
@@ -297,6 +298,9 @@ def raw(connection: Connection, sql: str) -> list[tuple[object, ...]]:
 
 
 async def on_core(url: str, sql: str) -> list[tuple[object, ...]]:
+    """One statement on the core role, as the migration login, which owns the
+    version table the lock test reads, with the tasks' fence lifted for it
+    (`raw`)."""
     engine = create_async_engine(url)
     try:
         async with engine.begin() as connection:

@@ -62,6 +62,7 @@ async def test_a_read_below_the_floor_is_gone_and_names_the_head(
         error = gone.json()["error"]
         assert error["code"] == "stream_truncated"
         assert error["stream"] == {"floor": 2, "head": 3}
+        assert "last_owner" not in error
         assert "plan_limit" not in error
         assert error["request_id"] == gone.headers["x-request-id"]
 
@@ -75,7 +76,7 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:

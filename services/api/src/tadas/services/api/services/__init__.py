@@ -5,13 +5,14 @@ translates the request, calls one manager, and projects the result."""
 from abc import ABC, abstractmethod
 
 from tadas.services.api.services.admin import AdminServiceInterface
-from tadas.services.api.services.billing import BillingServiceInterface, WebhooksServiceInterface
+from tadas.services.api.services.billing import BillingServiceInterface
 from tadas.services.api.services.events import EventsServiceInterface
 from tadas.services.api.services.media import MediaServiceInterface
 from tadas.services.api.services.realtime import RealtimeServiceInterface
 from tadas.services.api.services.slack import SlackServiceInterface
 from tadas.services.api.services.tasks import TasksServiceInterface
 from tadas.services.api.services.tenancy import TenancyServiceInterface
+from tadas.services.api.services.webhooks import WebhooksServiceInterface
 
 __all__ = [
     "AdminServiceInterface",

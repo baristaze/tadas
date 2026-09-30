@@ -134,8 +134,9 @@ class WorkerContainer:
         )
         infra = InfraConfiguredImpl(settings)
         # The worker signs nobody in. It reads the payment processor, posts
-        # through the Slack app, and deletes a deleted account's person at the
-        # identity provider, so it holds all three, refused as the API's are.
+        # through the Slack app, and deletes a deleted account's person, and a
+        # deleted org's organization, at the identity provider, so it holds
+        # all three, refused as the API's are.
         integrations = IntegrationsConfiguredImpl(
             settings, settings.environment, settings.is_cloud_environment
         )

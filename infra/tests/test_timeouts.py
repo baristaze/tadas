@@ -5,7 +5,6 @@ names a timeout (or the AWS configuration that carries one) at the call
 site. The cases below then build each client and read the timeout back."""
 
 import ast
-import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -49,14 +48,10 @@ CLIENT_CONSTRUCTORS = {
 
 
 def repository_root() -> Path:
-    top = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=Path(__file__).parent,
-    ).stdout.strip()
-    return Path(top)
+    """The checkout this test runs in: the nearest folder above it with an
+    `.env.example`, so a copy that is not yet a repository reads its own."""
+    here = Path(__file__).resolve().parent
+    return next(p for p in (here, *here.parents) if (p / ".env.example").is_file())
 
 
 def _is_client_construction(call: ast.Call) -> bool:

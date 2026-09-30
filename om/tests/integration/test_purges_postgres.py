@@ -32,6 +32,9 @@ from contracts.event_storage import drained as drained_events
 from contracts.factories import make_session, make_socket_ticket
 from contracts.idempotency_storage import drained as drained_records
 from contracts.idempotency_storage import make_record
+from contracts.orchestration_storage import drained as drained_orchestrations
+from contracts.orchestration_storage import make_record as make_orchestration
+from contracts.orchestration_storage import seed as seed_orchestration
 from contracts.slack_storage import drained as drained_slack
 from contracts.slack_storage import make_post, posted_at
 from contracts.task_storage import make_task, seed
@@ -48,6 +51,7 @@ from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgre
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.media.storage.impl.postgres import MediaStoragePostgresImpl
 from tadas.om.orchestrations.storage.impl.postgres import OrchestrationsStoragePostgresImpl
+from tadas.om.orchestrations.types.orchestration import OrchestrationStatus
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.slack.storage.impl.postgres import SlackStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
@@ -256,6 +260,34 @@ async def test_the_queue_purge_reads_its_index(
         lambda: WorkStoragePostgresImpl(sessions).purge_items(utcnow(), 1000),
     )
     assert served(work, "ix_work_items_status_updated_at"), work
+
+
+async def test_a_purge_skips_a_record_another_transaction_holds(
+    pg_sessions: LoginSessions,
+) -> None:
+    """A row locked elsewhere is left for the next call, not waited on: the
+    purge takes the rest and returns at once, across tenants and for one."""
+    storage = OrchestrationsStoragePostgresImpl(pg_sessions)
+    back = await drained_orchestrations(storage)
+    org = new_id()
+    old = back + timedelta(days=40)
+    held, free = (
+        make_orchestration(status=OrchestrationStatus.SUCCEEDED, updated_ago=old) for _ in range(2)
+    )
+    for record in (held, free):
+        await seed_orchestration(storage, org, record)
+    cut = utcnow() - back - timedelta(days=30)
+    async with pg_sessions[DatabaseRole.CORE]() as holder:
+        await set_scope(holder, org, None, None)
+        await holder.execute(
+            text("SELECT id FROM core.orchestrations WHERE id = :id FOR UPDATE"),
+            {"id": held.id},
+        )
+        assert await storage.purge_settled(cut, 10) == 1
+        assert await storage.purge_tenant(org, 10) == 0, "the held one is still held"
+        await holder.rollback()
+    assert await storage.purge_settled(cut, 10) == 1
+    assert await storage.read_orchestration(org, held.id) is None
 
 
 async def test_a_purge_skips_a_task_another_transaction_holds(pg_sessions: LoginSessions) -> None:
@@ -530,7 +562,7 @@ BACKLOG: dict[DatabaseRole, dict[str, dict[str, str]]] = {
         },
         "outbox_rows": BORN
         | {
-            "kind": "'task.updated'",
+            "kind": "'tenancy.user.updated'",
             "target_id": "gen_random_uuid()",
             "payload": "'{}'",
             "actor_id": ACTOR,

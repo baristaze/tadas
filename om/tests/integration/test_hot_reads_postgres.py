@@ -49,7 +49,7 @@ Statement = tuple[str, Any]
 Watched = tuple[LoginSessions, list[AsyncEngine]]
 
 PEOPLE = 1000
-"""How many people the tenant's tasks spread over, so the generic plan's
+"""How many people a tenant's markers and tasks spread over, so the generic plan's
 estimate for one person (one in PEOPLE) is a small share, as in a large team."""
 
 TENANTS = 20
@@ -437,7 +437,7 @@ async def test_the_sweeps_gauges_read_one_index_entry_or_one_range(
                 "INSERT INTO core.outbox_rows (id, org_id, created_at, kind, target_id,"
                 " payload, actor_id, request_id, app, done_at, attempts, failed_at)"
                 " SELECT uuidv7(), t.a[1 + g % :n], now() - g * interval '1 second',"
-                " 'tasks.task.created', gen_random_uuid(), '{}', gen_random_uuid(),"
+                " 'tenancy.user.created', gen_random_uuid(), '{}', gen_random_uuid(),"
                 " gen_random_uuid(), 'portal',"
                 " CASE WHEN g % 100 > 1 THEN now() END, 0,"
                 " CASE WHEN g % 100 = 1 THEN now() END"

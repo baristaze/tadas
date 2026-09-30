@@ -65,10 +65,10 @@ def test_a_code_matches_one_step_either_side_and_nothing_else() -> None:
 
 
 def test_the_otpauth_uri_carries_the_secret_the_account_and_the_issuer() -> None:
-    uri = otpauth_uri(b"12345678901234567890", "root@example.test", "Tadas")
+    uri = otpauth_uri(b"12345678901234567890", "root@example.test", "Big Co")
     assert uri == (
-        "otpauth://totp/Tadas%3Aroot%40example.test?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
-        "&issuer=Tadas&algorithm=SHA1&digits=6&period=30"
+        "otpauth://totp/Big%20Co%3Aroot%40example.test?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+        "&issuer=Big%20Co&algorithm=SHA1&digits=6&period=30"
     )
 
 
@@ -104,16 +104,16 @@ def test_the_platforms_own_addresses_are_told_apart() -> None:
 
 
 def test_the_domain_of_an_address_is_its_part_after_the_at_in_lower_case() -> None:
-    assert email_domain("Ann@Acme.Example") == "acme.example"
+    assert email_domain("Ann@Ajax.Example") == "ajax.example"
     assert email_domain("a@b@c.test") == "c.test"
 
 
 def test_a_single_sign_on_joins_only_an_address_in_a_verified_domain() -> None:
-    assert sso_joins("ann@acme.example", ("acme.example",))
-    assert sso_joins("Ann@ACME.example", ("Acme.Example", "other.example"))
-    assert not sso_joins("ann@evil.example", ("acme.example",))
-    assert not sso_joins("ann@sub.acme.example", ("acme.example",))
-    assert not sso_joins("ann@acme.example", ())
+    assert sso_joins("ann@ajax.example", ("ajax.example",))
+    assert sso_joins("Ann@AJAX.example", ("Ajax.Example", "other.example"))
+    assert not sso_joins("ann@evil.example", ("ajax.example",))
+    assert not sso_joins("ann@sub.ajax.example", ("ajax.example",))
+    assert not sso_joins("ann@ajax.example", ())
 
 
 def test_a_slug_nobody_typed_is_the_name_and_a_tail() -> None:

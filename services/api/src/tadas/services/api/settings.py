@@ -21,10 +21,10 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
 
     service_name: str = "api"
     # The namespaces whose routers this process mounts; empty mounts every one
-    # the image hosts (tenancy, tasks, events, media). Naming a subset is how
-    # one namespace becomes a service of its own: the same image, another
-    # value, and no code change. A name the image does not host refuses the
-    # boot.
+    # the image hosts (tenancy, tasks, events, media, billing, slack). Naming
+    # a subset is how one namespace becomes a service of its own: the same
+    # image, another value, and no code change. A name the image does not host
+    # refuses the boot.
     namespaces: list[str] = []
     version: str = "0.9.0"
     host: str = "127.0.0.1"
@@ -202,8 +202,8 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
         https address and nowhere else. Each refusal names the setting."""
         if self.dev_sign_in_enabled and self.environment not in DEV_SIGN_IN_ENVIRONMENTS:
             raise ValueError(
-                "TADAS_DEV_SIGN_IN_ENABLED=true is refused "
-                f"when TADAS_ENVIRONMENT={self.environment}"
+                "TADAS_DEV_SIGN_IN_ENABLED=true is refused when "
+                + f"TADAS_ENVIRONMENT={self.environment}"
             )
         if self.environment in CLOUD_ENVIRONMENTS:
             for setting, uris, what in (

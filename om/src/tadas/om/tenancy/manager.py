@@ -413,8 +413,6 @@ class TenancyManagerInterface(ABC):
         while the user row stays."""
         ...
 
-    # Invitations and single sign-on.
-
     @abstractmethod
     async def invite_member(
         self, ctx: TenantContext, email: str, role: Role, attempt: Attempt | None = None

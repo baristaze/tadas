@@ -63,7 +63,7 @@ def managers(infra: InfraLocalImpl, storage: StorageMemoryImpl) -> Managers:
 @pytest.fixture
 async def ctx(managers: Managers) -> TenantContext:
     tenancy = managers.tenancy
-    _, org = await tenancy.bootstrap(request(APP), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await tenancy.bootstrap(request(APP), "Ajax", "ajax", "ann@example.test", "Ann")
     login = await tenancy.dev_sign_in(request(APP), "ann@example.test")
     identity = await tenancy.authenticate_login(request(APP), login.token)
     issued = await tenancy.exchange_login(identity, org.id)
@@ -212,7 +212,7 @@ async def test_the_same_worker_re_claiming_after_a_requeue_refuses_its_stale_cop
     managers: Managers, ctx: TenantContext
 ) -> None:
     # A worker whose lease expired, whose item the sweep requeued, and which
-    # claims the same item again: the stale task's completion carries the old
+    # claims the same item again: the stale copy's completion carries the old
     # token and is refused; the new claim is settled by its own token.
     await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
     first = await managers.work.claim(

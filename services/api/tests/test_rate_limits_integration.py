@@ -65,7 +65,7 @@ async def over_the_stack(
         suffix = new_id().hex[-8:]
         email = f"ann-{suffix}@example.test"
         _, org = await container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", f"acme-{suffix}", email, OWNER["name"]
+            seed_request(), "Ajax", f"ajax-{suffix}", email, OWNER["name"]
         )
         app = create_app(container)
         transport = httpx.ASGITransport(

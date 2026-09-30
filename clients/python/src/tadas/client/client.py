@@ -676,7 +676,7 @@ class ApiClient:
             await self.request("DELETE", f"/v1/tasks/{task_id}", if_match=version)
         )
 
-    # A task's attachments, and the files behind them
+    # Media: the org's files, as references to objects in the store
 
     async def attachments(
         self, task_id: UUID, *, cursor: str | None = None, limit: int = LIMIT_MAX
@@ -717,6 +717,9 @@ class ApiClient:
             idempotency_key=idempotency_key or str(uuid4()),
         )
         return FileView.model_validate(started)
+
+    async def file(self, file_id: UUID) -> FileView:
+        return FileView.model_validate(await self.request("GET", f"/v1/media/files/{file_id}"))
 
     async def issue_upload(self, file_id: UUID) -> IssuedUploadView:
         form = await self.request("POST", f"/v1/media/files/{file_id}/upload")
@@ -773,6 +776,18 @@ class ApiClient:
                 raise ApiError(posted.status_code, "upload_refused", posted.text[:200], None)
         return await self.confirm_file(started.id)
 
+    async def download(self, file_id: UUID) -> bytes:
+        """A stored file's bytes: by the signed link, or through the API when
+        the store cannot sign one."""
+        link = await self.issue_download(file_id)
+        if link.url is None:
+            return await self.content(file_id)
+        async with httpx.AsyncClient(timeout=self.timeout, verify=trust_store()) as store:
+            fetched = await store.get(link.url)
+        if fetched.is_error:
+            raise ApiError(fetched.status_code, "download_refused", fetched.text[:200], None)
+        return fetched.content
+
     # Imports
 
     async def start_import_file(
@@ -819,18 +834,6 @@ class ApiClient:
     async def resume_import(self, import_id: UUID) -> ImportView:
         resumed = await self.request("POST", f"/v1/tasks/imports/{import_id}/resume")
         return ImportView.model_validate(resumed)
-
-    async def download(self, file_id: UUID) -> bytes:
-        """A stored file's bytes: by the signed link, or through the API when
-        the store cannot sign one."""
-        link = await self.issue_download(file_id)
-        if link.url is None:
-            return await self.content(file_id)
-        async with httpx.AsyncClient(timeout=self.timeout, verify=trust_store()) as store:
-            fetched = await store.get(link.url)
-        if fetched.is_error:
-            raise ApiError(fetched.status_code, "download_refused", fetched.text[:200], None)
-        return fetched.content
 
     # Events and the channel
 

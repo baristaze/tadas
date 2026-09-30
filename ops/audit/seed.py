@@ -3,15 +3,18 @@
     uv run python ops/audit/seed.py audit_<run> --scale 1
 
 Scale 1 is the shape the query audit measures against: 5,000 people, each
-with a personal org, and one heavy team org of 200 members holding 100,000
-tasks (40,000 open, 15,000 done, 40,000 archived, 5,000 deleted) and a
-million events; beside them work items, outbox rows, sessions, idempotency
-records, files, invitations, API keys, Slack installations, and cleanup
-records, each in the proportions a busy platform has. Every count scales
-linearly with `--scale`, with a floor of one, so `--scale 0.01` is a quick
-run with the same shape. The heavy org's id is fixed, so a statement file
-can name it (see `FIXED`). Its last member (`n` = the member count) is
-assigned no task and created none, so an audit always has an idle member.
+with a personal org, and one heavy team org of 200 members and 150 who left,
+holding 100,000 tasks (40,000 open, 15,000 done, 40,000 archived, 5,000
+deleted), a million events, and 20,000 files attached to its tasks; beside
+them work items, outbox rows, sessions, idempotency records, invitations,
+API keys, Slack installations, and settled orchestrations, each in the
+proportions a busy platform has. Every count scales linearly with
+`--scale`, with a floor of one, so `--scale 0.01` is a quick run with the
+same shape. The heavy org's id is fixed, so a statement file can name it
+(see `FIXED`). A member who left the heavy org holds no API key and no
+session there, so an audit always has a user with nothing live. Its last
+member (`n` = the member count) is assigned no task and created none, so an
+audit always has an idle member.
 
 It runs as the local superuser on a database `auditdb.py` made, since no
 login the application holds walks past the row-level security policies,
@@ -340,22 +343,22 @@ def statements(c: Counts) -> list[tuple[str, str]]:
         (
             "files",
             f"""INSERT INTO core.files (id, org_id, name, created_at, updated_at, created_by,
-                updated_by, key, extension,
-                                    content_type, size_bytes, purpose, subject_id, status,
-                                        deleted_at)
-            SELECT uuidv7(-(interval '300 days') + g * interval '20 minutes'), {big}, 'f' || g,
-                   now() - interval '300 days', now(), bu.u[1], bu.u[1], 'k' || g, 'pdf',
-                       'application/pdf', 100000,
-                   'task_attachment', t.id,
+                updated_by, key, extension, content_type, size_bytes, purpose, subject_id,
+                status, deleted_at)
+            SELECT uuidv7(-(interval '300 days') + g * interval '20 minutes'), {big},
+                   'f' || g || '.pdf', now() - interval '300 days', now(),
+                   bu.u[1 + g % bu.k], bu.u[1 + g % bu.k], 'k' || g, 'pdf',
+                   'application/pdf', 100000, 'task_attachment', t.id,
                    CASE WHEN g % 50 = 0 THEN 'pending' ELSE 'stored' END,
                    CASE WHEN g % 40 = 0 THEN now() - interval '10 days' END
             FROM generate_series(1, {c.files}) g, bu,
                  LATERAL (SELECT id FROM core.tasks WHERE org_id = {big} AND status = 'open'
                           ORDER BY id OFFSET (g % least(5000, {c.open_tasks})) LIMIT 1) t
             UNION ALL
-            SELECT gen_random_uuid(), p.org_id, 'f', now() - interval '30 days', now(),
-                p.user_id, p.user_id, 'k', 'pdf',
-                   'application/pdf', 1000, 'task_attachment', gen_random_uuid(), 'stored', NULL
+            SELECT gen_random_uuid(), p.org_id, 'f.pdf', now() - interval '30 days', now(),
+                   p.user_id, p.user_id, 'k', 'pdf',
+                   'application/pdf', 1000, 'task_attachment', gen_random_uuid(), 'stored',
+                   NULL::timestamptz
             FROM people p CROSS JOIN generate_series(1, 10) k""",
         ),
         (
@@ -375,14 +378,14 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             f"""INSERT INTO activity.events (id, org_id, seq, kind, target_id, produced_at,
                 actor_id, request_id, app, payload)
             SELECT uuidv7(-(interval '100 days') + g * (interval '100 days' / {c.events})),
-                {big}, g, 'tasks.task.updated',
+                {big}, g, 'tenancy.user.updated',
                    gen_random_uuid(),
                        now() - interval '100 days' + g * (interval '100 days' / {c.events}),
                    gen_random_uuid(), gen_random_uuid(), 'portal', '{{}}'::jsonb
             FROM generate_series(1, {c.events}) g
             UNION ALL
             SELECT uuidv7(-(interval '10 days') + (p.n * 10 + k) * interval '1 second'),
-                p.org_id, k, 'tasks.task.created',
+                p.org_id, k, 'tenancy.api_key.created',
                    gen_random_uuid(), now() - interval '10 days', p.identity_id,
                        gen_random_uuid(), 'portal', '{{}}'
             FROM people p CROSS JOIN generate_series(1, 10) k""",
@@ -414,8 +417,8 @@ def statements(c: Counts) -> list[tuple[str, str]]:
               SELECT g,
                      CASE WHEN g <= {work_done} THEN 'done' WHEN g <= {work_failed} THEN 'failed'
                           WHEN g <= {work_ready} THEN 'queued' ELSE 'claimed' END AS status,
-                     CASE WHEN g > {work_failed} AND g <= {work_future} THEN 'TASK_REMINDER'
-                          WHEN g % 4 = 0 THEN 'SLACK_POST' ELSE 'NOOP' END AS kind,
+                     CASE WHEN g > {work_failed} AND g <= {work_future} THEN 'ORCHESTRATION'
+                          WHEN g % 4 = 0 THEN 'DELETE_ACCOUNT' ELSE 'NOOP' END AS kind,
                      CASE WHEN g > {work_failed} AND g <= {work_future} THEN now() + (random() *
                          60) * interval '1 day'
                           ELSE now() - (random() * 60) * interval '1 minute' END AS avail,
@@ -436,7 +439,7 @@ def statements(c: Counts) -> list[tuple[str, str]]:
                        '2 minutes'
                         ELSE now() - interval '8 days' + g * (interval '8 days' /
                             {c.outbox_rows}) END,
-                   'tasks.task.updated', gen_random_uuid(), '{{}}', gen_random_uuid(),
+                   'tenancy.user.updated', gen_random_uuid(), '{{}}', gen_random_uuid(),
                        gen_random_uuid(), 'portal',
                    CASE WHEN g <= {outbox_done} THEN now() - interval '8 days' + g * (interval
                        '8 days' / {c.outbox_rows}) END,
@@ -446,7 +449,7 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             FROM generate_series(1, {c.outbox_rows}) g JOIN people p ON p.n = 1 + g % {c.people}""",
         ),
         (
-            "cleanup records",
+            "settled orchestrations",
             f"""INSERT INTO core.orchestrations (id, org_id, created_at, updated_at, created_by,
                 updated_by, kind, input,
                                              period, status, cursor, applied, skipped,

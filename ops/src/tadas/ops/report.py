@@ -137,8 +137,8 @@ class Report:
     errors: int
     error_ratio: float
     working: Group
-    """The task routes, the event stream, and the socket's ticket: the
-    requests a target's p95 judges."""
+    """Every request but the sign-ins and sign-outs: the requests a target's
+    p95 judges."""
     auth: Group
     """The sign-ins and sign-outs, one of each per person for the whole run,
     reported beside the working requests and never mixed into them."""

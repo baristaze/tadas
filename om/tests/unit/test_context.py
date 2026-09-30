@@ -91,7 +91,7 @@ def test_a_stage_is_immutable() -> None:
 async def test_login_then_authenticate_login_produces_the_identity_stage(
     manager: TenancyManagerImpl,
 ) -> None:
-    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     rctx = request()
     login = await manager.dev_sign_in(rctx, "ann@example.test")
     ictx = await manager.authenticate_login(rctx, login.token)
@@ -111,7 +111,7 @@ async def test_login_then_authenticate_login_produces_the_identity_stage(
 async def test_authenticate_login_takes_a_session_token_and_refuses_an_api_key(
     manager: TenancyManagerImpl,
 ) -> None:
-    _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     login = await manager.dev_sign_in(request(), "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     session = await manager.exchange_login(ictx, org.id)
@@ -130,12 +130,12 @@ async def test_authenticate_login_takes_a_session_token_and_refuses_an_api_key(
 async def test_exchange_login_produces_a_session_and_refuses_a_non_member(
     manager: TenancyManagerImpl,
 ) -> None:
-    _, acme = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, ajax = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     _, beta = await manager.bootstrap(request(), "Beta", "beta", "bob@example.test", "Bob")
     login = await manager.dev_sign_in(request(), "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
-    issued = await manager.exchange_login(ictx, acme.id)
-    assert issued.org.id == acme.id and issued.role is Role.OWNER
+    issued = await manager.exchange_login(ictx, ajax.id)
+    assert issued.org.id == ajax.id and issued.role is Role.OWNER
     with pytest.raises(NotAuthorized):
         await manager.exchange_login(ictx, beta.id)
 
@@ -143,7 +143,7 @@ async def test_exchange_login_produces_a_session_and_refuses_a_non_member(
 async def test_authenticate_produces_the_tenant_stage_and_refuses_a_login_token(
     manager: TenancyManagerImpl,
 ) -> None:
-    _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     login = await manager.dev_sign_in(request(), "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     issued = await manager.exchange_login(ictx, org.id)
@@ -166,7 +166,7 @@ async def test_authenticate_produces_the_tenant_stage_and_refuses_a_login_token(
 async def test_admit_operator_produces_the_operator_stage_for_operators_only(
     manager: TenancyManagerImpl,
 ) -> None:
-    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     await manager.bootstrap(
         request(),
         "Ops",
@@ -255,7 +255,7 @@ async def test_a_read_operator_is_admitted_with_read_and_refused_a_write(
 async def test_service_and_socket_contexts_refine_the_request_they_are_given(
     manager: TenancyManagerImpl,
 ) -> None:
-    owner, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    owner, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     rctx = request()
     service = await manager.service_context(rctx, org.id, owner.user_id)
     assert service.security.role is Role.SERVICE and service.request_id == rctx.request_id

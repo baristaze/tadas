@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from contracts.event_storage import make_event
 from contracts.plans import ON_TEAM, GrantedEverywhere
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
@@ -29,7 +30,6 @@ from tadas.om.context import (
     Role,
 )
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
-from tadas.om.events.types.event import Event
 from tadas.om.exceptions import (
     Conflict,
     NotAuthenticated,
@@ -151,16 +151,16 @@ def rows_of(entity: Org | User | Membership) -> dict[str, object]:
 async def test_a_read_operator_reads_and_is_refused_every_write(
     plane: Plane, reader: OperatorContext, writer: OperatorContext
 ) -> None:
-    org = await plane.operator.create_org(writer, "Acme", "acme", "ann@example.test", "Ann")
+    org = await plane.operator.create_org(writer, "Ajax", "ajax", "ann@example.test", "Ann")
     assert reader.permissions == {OperatorPermission.READ}
     first = await plane.operator.get_orgs(reader, None, 10)
     rest = await plane.operator.get_orgs(reader, first.items[-1].id, 10)
     assert first.has_more and not rest.has_more
     every = first.items + rest.items
-    assert {o.slug for o in every if not o.personal} == {"acme", "root", "sup"}
+    assert {o.slug for o in every if not o.personal} == {"ajax", "root", "sup"}
     # And the personal org of each of the three people who own them.
     assert len([o for o in every if o.personal]) == 3
-    assert (await plane.operator.get_org(reader, org.id)).slug == "acme"
+    assert (await plane.operator.get_org(reader, org.id)).slug == "ajax"
     await plane.operator.tally_size()
     assert (await plane.operator.size(reader)).tenants == 6
     for write in (
@@ -186,10 +186,10 @@ async def test_create_org_lands_the_rows_bootstrap_lands(
     owner's identity, user, and owner membership included, apart from the ids
     and instants each minted."""
     seeded_ctx, seeded = await plane.manager.bootstrap(
-        request(), "Acme", "acme", "ann@example.test", "Ann"
+        request(), "Ajax", "ajax", "ann@example.test", "Ann"
     )
-    created = await plane.operator.create_org(writer, "Acme", "acme-2", "bob@example.test", "Ann")
-    assert rows_of(created) == {**rows_of(seeded), "slug": "acme-2"}
+    created = await plane.operator.create_org(writer, "Ajax", "ajax-2", "bob@example.test", "Ann")
+    assert rows_of(created) == {**rows_of(seeded), "slug": "ajax-2"}
     seeded_owner = (await plane.storage.read_users(seeded.id, None, 10))[0]
     created_owner = (await plane.storage.read_users(created.id, None, 10))[0]
     assert rows_of(created_owner) == {
@@ -224,9 +224,9 @@ async def test_add_member_lands_the_rows_the_seeding_command_lands(
     same rows, announced by the same row kind; the one difference is who made
     them, the org's creator on the seeding path and the operator's identity
     on the operator plane, which has no user in the tenant."""
-    _, org = await plane.manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await plane.manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     _, seeded, created_first = await plane.manager.add_member(
-        request(), "acme", "bob@example.test", "Bob", Role.ADMIN
+        request(), "ajax", "bob@example.test", "Bob", Role.ADMIN
     )
     added = await plane.operator.add_member(writer, org.id, "cat@example.test", "Bob", Role.ADMIN)
     assert created_first
@@ -253,9 +253,9 @@ async def test_add_member_lands_the_rows_the_seeding_command_lands(
 async def test_the_creates_refuse_what_the_commands_refuse_and_a_little_more(
     plane: Plane, writer: OperatorContext
 ) -> None:
-    org = await plane.operator.create_org(writer, "Acme", "acme", "ann@example.test", "Ann")
+    org = await plane.operator.create_org(writer, "Ajax", "ajax", "ann@example.test", "Ann")
     with pytest.raises(Conflict):
-        await plane.operator.create_org(writer, "Acme", "acme", "bob@example.test", "Bob")
+        await plane.operator.create_org(writer, "Ajax", "ajax", "bob@example.test", "Bob")
     for role in (Role.OWNER, Role.SERVICE):
         with pytest.raises(ValidationFailed):
             await plane.operator.add_member(writer, org.id, "bob@example.test", "Bob", role)
@@ -275,10 +275,10 @@ async def test_an_operator_deletes_a_team_org_as_its_owner_does(
     """One commit closes the org for everyone in it and asks for `DELETE_ORG`,
     every row under the operator's identity; the org waits, live and empty,
     for the queue, which deletes it under the operator's name (ADR 0042)."""
-    org = await plane.operator.create_org(writer, "Acme", "acme", "ann@example.test", "Ann")
+    org = await plane.operator.create_org(writer, "Ajax", "ajax", "ann@example.test", "Ann")
     bob = await plane.operator.add_member(writer, org.id, "bob@example.test", "Bob", Role.MEMBER)
     # The org's organization at the identity provider, as an invitation makes it.
-    await plane.storage.write_org(org.id, org.model_copy(update={"provider_org_id": "org_acme"}))
+    await plane.storage.write_org(org.id, org.model_copy(update={"provider_org_id": "org_ajax"}))
     login = await plane.manager.dev_sign_in(request(), "bob@example.test")
     issued = await plane.manager.exchange_login(
         await plane.manager.authenticate_login(request(), login.token), org.id
@@ -307,7 +307,7 @@ async def test_an_operator_deletes_a_team_org_as_its_owner_does(
     work = [r for r in plane.relay.rows if r.kind == work_row_kind(WorkKind.DELETE_ORG)]
     assert len(work) == 1
     assert (work[0].org_id, work[0].target_id) == (org.id, org.id)
-    assert work[0].payload == {"provider_org_id": "org_acme"}
+    assert work[0].payload == {"provider_org_id": "org_ajax"}
     # A repeat before the queue has run answers the org and asks for nothing.
     plane.relay.rows.clear()
     assert await plane.operator.delete_org(writer, org.id) == closed
@@ -326,7 +326,7 @@ async def test_an_operator_never_deletes_a_personal_org_and_a_reader_never_delet
     plane: Plane, writer: OperatorContext, reader: OperatorContext
 ) -> None:
     """A personal org goes only with its person's account (ADR 0041)."""
-    org = await plane.operator.create_org(writer, "Acme", "acme", "ann@example.test", "Ann")
+    org = await plane.operator.create_org(writer, "Ajax", "ajax", "ann@example.test", "Ann")
     login = await plane.manager.dev_sign_in(request(), "ann@example.test")
     home = next(m.org for m in login.memberships if m.org.personal)
     with pytest.raises(PersonalOrgFixed):
@@ -345,11 +345,11 @@ async def test_a_rerun_of_a_create_returns_the_row_as_stored(
     slug it took or adding the person twice."""
     attempt = Attempt(target_id=new_id(), attempt_id=new_id())
     org = await plane.operator.create_org(
-        writer, "Acme", "acme", "ann@example.test", "Ann", attempt
+        writer, "Ajax", "ajax", "ann@example.test", "Ann", attempt
     )
     assert org.id == attempt.target_id
     rerun = await plane.operator.create_org(
-        writer, "Acme", "acme", "ann@example.test", "Ann", attempt
+        writer, "Ajax", "ajax", "ann@example.test", "Ann", attempt
     )
     assert rerun == org
     member_attempt = Attempt(target_id=new_id(), attempt_id=new_id())
@@ -364,6 +364,13 @@ async def test_a_rerun_of_a_create_returns_the_row_as_stored(
         == added
     )
     assert len(await plane.storage.read_users(org.id, None, 10)) == 2
+
+
+async def seed_events(plane: Plane, org_id: UUID, count: int) -> None:
+    """Events in the tenant's stream, appended to the storage the relay
+    appends to, one at a time."""
+    for _ in range(count):
+        await plane.events.append_events(org_id, [make_event(org_id)])
 
 
 def make_task(org_id: UUID, title: str, status: TaskStatus, rank: int) -> Task:
@@ -381,38 +388,11 @@ def make_task(org_id: UUID, title: str, status: TaskStatus, rank: int) -> Task:
 
 
 async def seed_tasks(plane: Plane, org_id: UUID, count: int, status: TaskStatus) -> list[Task]:
+    """Tasks in the tenant, written to the storage the operator reads."""
     tasks = [make_task(org_id, f"{status.value} {i}", status, i) for i in range(count)]
     for task in tasks:
-        row = OutboxRow(
-            id=new_id(),
-            created_at=task.created_at,
-            org_id=org_id,
-            kind="tasks.task.created",
-            target_id=task.id,
-            payload={"title": task.title},
-            actor_id=task.created_by,
-            request_id=new_id(),
-            app="api",
-        )
-        assert await plane.tasks.create_task(org_id, task, (row,))
-        await plane.events.append_events(org_id, [row_event(org_id, row)])
+        assert await plane.tasks.create_task(org_id, task, ())
     return tasks
-
-
-def row_event(org_id: UUID, row: OutboxRow) -> Event:
-    """The event the relay would append for the row; the tasks are seeded
-    into storage directly, so the stream is fed the same way."""
-    return Event(
-        id=row.id,
-        org_id=org_id,
-        kind=row.kind,
-        target_id=row.target_id,
-        payload=row.payload,
-        produced_at=row.created_at,
-        actor_id=row.actor_id,
-        request_id=row.request_id,
-        app=row.app,
-    )
 
 
 async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
@@ -422,12 +402,14 @@ async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
     with the clamp on the page and the lookahead past it, and never crosses
     into another tenant. Each one logs one line naming the tenant and the
     operator and nothing of what was read."""
-    _, org = await plane.manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await plane.manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     _, other = await plane.manager.bootstrap(
         request(), "Other", "other", "otto@example.test", "Otto"
     )
     for email in ("bob@example.test", "cat@example.test", "dan@example.test"):
-        await plane.manager.add_member(request(), "acme", email, "M", Role.MEMBER)
+        await plane.manager.add_member(request(), "ajax", email, "M", Role.MEMBER)
+    await seed_events(plane, org.id, 6)
+    await seed_events(plane, other.id, 2)
     open_tasks = await seed_tasks(plane, org.id, 4, TaskStatus.OPEN)
     done_tasks = await seed_tasks(plane, org.id, 2, TaskStatus.DONE)
     await seed_tasks(plane, other.id, 2, TaskStatus.OPEN)
@@ -493,8 +475,9 @@ async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
 async def test_the_sweeps_tally_counts_the_living_and_the_last_day(
     plane: Plane, reader: OperatorContext, writer: OperatorContext
 ) -> None:
-    _, org = await plane.manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
-    await plane.manager.add_member(request(), "acme", "bob@example.test", "B", Role.MEMBER)
+    _, org = await plane.manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
+    await plane.manager.add_member(request(), "ajax", "bob@example.test", "B", Role.MEMBER)
+    await seed_events(plane, org.id, 2)
     await seed_tasks(plane, org.id, 2, TaskStatus.OPEN)
     before = utcnow()
     tally = await plane.operator.tally_size()
@@ -525,11 +508,11 @@ async def test_the_seeding_path_is_unchanged_by_the_shared_implementation(plane:
     """The command's `add_member` still runs under the org's creator: the
     role is capped at the creator's, the service role is refused by name, and
     a deleted org is not found."""
-    _, org = await plane.manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await plane.manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     with pytest.raises(ValidationFailed):
-        await plane.manager.add_member(request(), "acme", "bob@example.test", "Bob", Role.SERVICE)
+        await plane.manager.add_member(request(), "ajax", "bob@example.test", "Bob", Role.SERVICE)
     ctx, owner, created = await plane.manager.add_member(
-        request(), "acme", "bob@example.test", "Bob", Role.OWNER
+        request(), "ajax", "bob@example.test", "Bob", Role.OWNER
     )
     assert created and ctx.user_id == org.created_by and owner.created_by == org.created_by
     assert EMPTY_UUID not in {owner.created_by, owner.updated_by}

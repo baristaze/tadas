@@ -1,10 +1,74 @@
 # Integrations
 
 The third-party providers Tadas talks to. Each is one interface with a
-real client and a deterministic twin, and a caller never knows which it
-holds. Nothing here imports the object model; a provider's errors root
-at infra's exception family, since a provider is a dependency the way a
+real client and a twin, and a caller never knows which it holds.
+Nothing here imports the object model: a provider's errors root at
+infra's exception family, since a provider is a dependency the way a
 backend is.
+
+## The identity provider
+
+`identity.IdentityProviderInterface` proves who a person is and holds
+an org's side of it:
+
+- the hosted sign-in, the code exchange, the device sign-in for the
+  command line, and the logout address that ends the provider's session
+  in the browser;
+- an org's organization at the provider, its single sign-on link, and
+  its invitations;
+- the deletion of a deleted account's user and a deleted team org's
+  organization;
+- the check of an inbound delivery (`verify_delivery`).
+
+The provider hands Tadas an issuer, a subject, and a verified email.
+Everything else (the identity row, its sessions, its memberships) is
+Tadas's own; [the tenancy namespace](../om/src/tadas/om/tenancy/README.md)
+says how a sign-in becomes a person.
+
+| Implementation | What it is |
+|----------------|------------|
+| `identity/workos.py` | WorkOS AuthKit through the pinned `workos` SDK. At start it proves the key is the application's, and refuses to boot on any other ([ADR 0033](../docs/adr/0033-the-workos-key-is-the-applications.md)). |
+| `identity/twin.py` | The provider in memory, for tests and CI. It signs its own deliveries with the provider's scheme. Every id it mints starts with `twin_`. |
+| `identity/absent.py` | The provider of a process with none configured, a local stack with no key among them: every call is `ProviderUnavailable`, which the API answers as `503`. The local sign-in by address still works. |
+
+## The webhook check
+
+The provider delivers its events to `POST /webhooks/identity`. The
+route takes no credential; the signature is the authentication.
+`identity/deliveries.py` checks the `WorkOS-Signature` header, an
+HMAC-SHA256 over `<timestamp>.<body>` under `TADAS_WORKOS_WEBHOOK_SECRET`,
+inside a three-minute window, in constant time. A delivery that fails
+is `400 webhook_signature_invalid`, and nothing is queued. One that
+passes is queued on `webhooks` with a key that is a UUID v5 over the
+provider's event id, so a redelivery carries the same key. The
+maintenance worker applies it.
+
+## Settings
+
+| Setting | What |
+|---------|------|
+| `TADAS_IDENTITY_PROVIDER` | `workos`, `twin`, or `none` (the default). The twin is refused at boot outside `local` and `test`. |
+| `TADAS_WORKOS_CLIENT_ID` | The application's client id. Not a secret. Staging's application serves the local stack and staging; production has its own. |
+| `TADAS_WORKOS_API_KEY` | The application's own API key: the exchange's client secret and the key of every management call. Empty or `off` leaves WorkOS unconfigured. |
+| `TADAS_WORKOS_WEBHOOK_SECRET` | The webhook endpoint's signing secret, injected at start. Unset, every delivery is refused as unavailable. |
+| `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout of every call. |
+
+[The WorkOS runbook](../docs/runbooks/providers/workos.md) sets them up.
+
+## What every integration holds to
+
+- **A timeout on every call**, from settings.
+- **A request's deadline on every call a request makes**, shared by
+  every call of the request; a worker's calls carry none
+  ([ADR 0069](../docs/adr/0069-a-request-has-a-deadline-its-provider-calls-share.md)).
+- **One exception family.** `ProviderUnavailable` is `503`,
+  `ProviderRefused` `400`, `ProviderConflict` `409`. The key never
+  appears in a message.
+- **A refused key is unavailable; a refused request is refused.** Work
+  parks on the first and fails for good on the second
+  ([ADR 0051](../docs/adr/0051-a-refused-key-is-unavailable-a-refused-request-is-refused.md)).
+- **A twin that says it is one**, and is refused in a deployed
+  environment.
 
 ## Payments
 
@@ -127,68 +191,6 @@ three credentials is the real client. The two manifests in
 `deployment/slack/` name the same scopes, and a test holds them together.
 The app's settings, its credentials, and each environment's app are in
 [the Slack runbook](../docs/runbooks/providers/slack.md).
-
-## The identity provider
-
-| What | Interface | Real client | Twin |
-|------|-----------|-------------|------|
-| Proves who a person is: the hosted sign-in, the code exchange, the device sign-in for the command line, and the logout address that ends the hosted sign-in's session in the browser; holds an org's side of it: its organization, its single sign-on, its invitations; deletes a person who deleted their account, and the organization of a team org its owner or an operator deleted | `identity.IdentityProviderInterface` | `identity/workos.py`: WorkOS AuthKit through the `workos` SDK, pinned | `identity/twin.py`: in memory, for tests and CI |
-
-`identity/absent.py` is the provider of a process that signs nobody in:
-every call answers `ProviderUnavailable`, which the API presents as
-`503`. An API or a worker whose WorkOS application key is not set holds
-it. The worker holds the real client beside the API's: it signs nobody
-in, and deletes the WorkOS user of a person who deleted their account
-and the WorkOS organization of a team org its owner or an operator deleted.
-
-The provider hands Tadas an issuer, a subject, and a verified email,
-and for a sign-in through the hosted page, the id of the provider's own
-session in that browser (the `sid` claim of the access token WorkOS
-answers the exchange with), which the sign-out ends. Everything else (the identity row, its id, the sessions, the
-memberships) is Tadas's own; the tenancy namespace's README says how a
-sign-in becomes a person.
-
-## Settings
-
-| Setting | What |
-|---------|------|
-| `TADAS_IDENTITY_PROVIDER` | `workos`, `twin`, or `none` (the default). `twin` is refused at boot outside `local` and `test`. |
-| `TADAS_WORKOS_CLIENT_ID` | The Tadas App application's client id. Not a secret: every authorization URL carries it. Staging's Tadas App serves the local stack and staging; production has its own. |
-| `TADAS_WORKOS_API_KEY` | The Tadas App application's API key, made on that application's own API keys tab, never the environment's API Keys page. A secret, and the process's one WorkOS credential: the client secret of the code exchange (which sends the PKCE verifier as well), and the key of every management call (organizations, invitations, the admin portal), so an invitation carries the application's context. The device sign-in sends no secret. At start the client proves it is the application's key and refuses to boot on any other (ADR 0033). Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
-| `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout every call is sent with (10 seconds). The SDK takes whole seconds, so a fraction is rounded up. |
-
-The WorkOS environments, the application's redirects, and the key are
-set up as [the WorkOS runbook](../docs/runbooks/providers/workos.md)
-says.
-
-## What every integration holds to
-
-- **A timeout on every call.** The real client builds its own HTTP
-  client with the timeout from settings and hands it to the SDK. An SDK
-  that names a timeout on each request as well gets the same one, since
-  the request's wins over the client's. WorkOS's does, and falls back to
-  60 seconds. A test reads the timeout a request is sent with, for each
-  provider.
-- **A request's deadline on every call a request makes.** A method a
-  request can call takes the request's `deadline`, the instant its time
-  runs out, which every call of the request shares (ADR 0069). The call
-  ends by then, as a call the provider does not answer ends. A worker's
-  calls carry none: its item's lease bounds them.
-- **One exception family.** Every provider error is translated into an
-  integration exception, each a leaf of infra's (`ProviderUnavailable`
-  is a `503`, `ProviderRefused` a `400`, `ProviderConflict` a `409`),
-  and the one caller translates the sign-in leaves into the platform's
-  own. The key never appears in a message.
-- **A refused key is unavailable, a refused request is refused.** A
-  provider that refuses the process's own credential (revoked, or
-  without the permission) answers unavailable: nothing is wrong with
-  the call, and it goes through once a person fixes the key. Only a
-  refusal of the request itself is a refusal, since the same request
-  gets the same answer. Work parks on the first and fails for good on
-  the second.
-- **A twin that says it is one.** Every id the twin mints starts with
-  `twin_`, and the configured root refuses it in a deployed
-  environment.
 
 ## What a provider that hangs costs a call
 

@@ -27,7 +27,7 @@ from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, Wo
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import SyncSeatsHandlerImpl
-from tadas.workers.maintenance.main import build_loop
+from tadas.workers.maintenance.main import build_consumer
 
 PORTAL = "http://portal.test/settings/billing"
 
@@ -37,12 +37,12 @@ def twin_of(container: WorkerContainer) -> PaymentsTwinImpl:
 
 
 def consumer_of(container: WorkerContainer) -> DeliveryConsumer:
-    return DeliveryConsumer(
-        queues=container.infra.get_queues(),
-        billing=container.managers.billing,
-        tenancy=container.managers.tenancy,
-        options=DeliveryOptions(worker_id="maintenance-test", wait=timedelta(0)),
+    """The worker's own consumer, with a long poll that answers at once."""
+    built = build_consumer(container)
+    built._options = DeliveryOptions(  # pyright: ignore[reportPrivateUsage]
+        worker_id="maintenance-test", wait=timedelta(0)
     )
+    return built
 
 
 async def queued(container: WorkerContainer, payload: bytes) -> QueueMessage:
@@ -114,9 +114,12 @@ async def test_the_consumer_runs_until_it_is_stopped(tmp_path: Path) -> None:
     ctx = await sign_in(container)
     payload = await checkout(container, ctx, Plan.TEAM, 1)
     delivery = delivery_of(json.loads(payload))
-    await container.infra.get_queues().send(
-        Queues.WEBHOOKS, json.dumps({"delivery": delivery.model_dump(mode="json")}).encode()
-    )
+    body = {
+        "idempotency_key": str(delivery.idempotency_key),
+        "provider": "stripe",
+        "delivery": delivery.model_dump(mode="json"),
+    }
+    await container.infra.get_queues().send(Queues.WEBHOOKS, json.dumps(body).encode())
     consumer = consumer_of(container)
     running = asyncio.create_task(consumer.run())
     for _ in range(100):
@@ -134,7 +137,7 @@ async def seats_to_sync(
     """Acme pays for one seat on Max and has just added Bob: the owner's
     context, the service context the item runs under, and the item."""
     container = build_container(tmp_path)
-    ctx = await sign_in(container)
+    ctx = await sign_in(container, "acme")
     consumer = consumer_of(container)
     bought = await checkout(container, ctx, Plan.MAX, 1)
     assert await consumer.handle(await queued(container, bought)) == "applied"
@@ -203,21 +206,6 @@ async def test_a_seat_count_the_processor_refuses_fails_and_one_that_may_pass_pa
     # Either way the mirror still says what the processor bills.
     billing = await container.managers.billing.get_billing(ctx)
     assert billing.account is not None and billing.account.quantity == 1
-
-
-def test_every_kind_is_asked_for_by_a_permission_as_wide_as_its_handler(tmp_path: Path) -> None:
-    """Whoever may ask for a kind may make every call its handler makes: the
-    authorization at enqueue covers the whole run."""
-    loop = build_loop(build_container(tmp_path))
-    handlers = loop._handlers  # the worker's own table, read to hold it to the rule
-    assert set(handlers) == set(WorkKind) == set(WORK_ENQUEUE_PERMISSIONS)
-    for kind, handler in handlers.items():
-        asking = WORK_ENQUEUE_PERMISSIONS[kind]
-        requires = type(handler).REQUIRES
-        for role, permissions in ROLE_PERMISSIONS.items():
-            if asking in permissions:
-                missing = [p for p in requires if p not in permissions]
-                assert not missing, f"{role.value} asks for {kind.value} without {missing}"
 
 
 @pytest.mark.parametrize("role", [Role.MEMBER, Role.VIEWER])

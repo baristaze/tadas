@@ -1,14 +1,34 @@
 # The API process
 
-The one HTTP process of Tadas. It serves every route of the product
-under `/v1`, the live channel, and the operational routes outside
-`/v1`. Every replica is the same process; replicas share nothing but
-the database, the cache, and the topic bus.
+The one HTTP process of Tadas. It serves the product's routes under `/v1`,
+the realtime socket, the identity provider's webhook at
+`/webhooks/identity`, the payment processor's at `/webhooks/stripe`,
+Slack's calls under `/webhooks/slack`, and the probes `/healthz`,
+`/readyz`, and `/metrics`. Every replica is the same process, and replicas
+share nothing but the database, the cache, and the topic bus.
+`TADAS_NAMESPACES` mounts a subset of the namespaces (`["media"]`, say), so
+one namespace can run as a service of its own with no code change. A name
+the image does not host refuses the boot.
 
-By default it mounts every namespace's routes. `TADAS_NAMESPACES`
-names a subset (`["media"]`, say), which is how one namespace becomes
-a service of its own: the same image with another value, and no code
-change. A name the image does not host refuses the boot.
+A request passes four layers, each in its own folder under
+`src/tadas/services/api/`:
+
+- **Gateway** (`gateway/`). The middleware and dependencies every request
+  meets: the request id and access log, the trusted proxy hops, admission
+  and the request's deadline, the credential, rate limits, idempotency,
+  the error envelope, and the webhooks' signed bodies.
+- **Routers** (`routers/`). One module per namespace: tenancy with the
+  operator plane, tasks with its imports, events, media, billing, Slack,
+  and webhooks. Each route makes one call into a service.
+- **Services** (`services/`). One interface per namespace, and its impl in
+  `services/impl/`. An impl translates the request, calls a manager or a
+  provider, and returns a view from `types/`.
+- **Realtime** (`realtime/`). The socket, its ticket, its bounded send
+  lanes, and the recheck that closes it when its credential ends.
+
+`container.py` builds everything once per process, `app.py` assembles the
+app, and `main.py` is the `tadas-api` command: `serve`, `migrate`,
+`bootstrap`, `add-member`, `grant-operator`, and `openapi`.
 
 ## Routes, by area
 
@@ -63,8 +83,9 @@ change. A name the image does not host refuses the boot.
   keys, creating one, revoking one; a ticket for the live channel.
   (`/v1/sessions`, `/v1/api-keys`, `/v1/realtime/tickets`)
 - **Tasks.** Open and done lists a page at a time, one task, create,
-  edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
-  `/v1/tasks/{task_id}/move`)
+  edit, move, delete. A task's due date (`due_on`, `YYYY-MM-DD`, never a
+  time) is set on the create and set, moved, or cleared (`null`) on the
+  edit. (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
 - **Many tasks at once.** How many tasks the open or the done list
   shows in a scope; completing or reopening the tasks named, at most a
   thousand, or every task of one list, under an Idempotency-Key. The
@@ -90,10 +111,6 @@ change. A name the image does not host refuses the boot.
   follows, or the bytes through the API; and the org's storage used.
   (`/v1/media/files/{file_id}`, `.../upload`, `.../content`,
   `.../confirm`, `.../download`, `/v1/media/usage`)
-  edit, move, delete. A task's due date (`due_on`, `YYYY-MM-DD`, never a
-  time) is set on the create and set, moved, or cleared (`null`) on the
-  edit.
-  (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
 - **Slack.** The org's installation (its workspace, its channel, and
   whether it works), any member; the install, which answers Slack's
   page to send the browser to with a one-time state, and the
@@ -108,6 +125,11 @@ change. A name the image does not host refuses the boot.
   taking that back. Everyone in the org reads; an owner or an admin
   changes. (`/v1/billing`, `/v1/billing/checkout`,
   `/v1/billing/portal`, `/v1/billing/cancel`, `/v1/billing/resume`)
+- **The identity provider's deliveries.** Outside `/v1`, since their
+  shape is the provider's. No credential: the route checks the provider's
+  signature over the body and its timestamp, and queues the delivery for
+  the worker; one that fails the check is refused and nothing is queued.
+  (`/webhooks/identity`)
 - **The payment processor's deliveries.** Outside `/v1`, since their
   shape is the processor's, pinned on the endpoint it delivers to. No
   credential: the route checks the processor's signature over the body

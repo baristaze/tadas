@@ -28,7 +28,12 @@ from tadas.workers.maintenance.accounts import (
     UnassignTasksHandlerImpl,
 )
 from tadas.workers.maintenance.container import MEDIA_PURGE_BATCH, WorkerContainer
-from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
+from tadas.workers.maintenance.deliveries import (
+    DeliveryConsumer,
+    DeliveryOptions,
+    IdentityDeliveriesImpl,
+    StripeDeliveriesImpl,
+)
 from tadas.workers.maintenance.handler import NoopHandlerImpl, SyncSeatsHandlerImpl
 from tadas.workers.maintenance.health import Probe, WorkerHttpServer
 from tadas.workers.maintenance.loop import AcrossStep, LoopOptions, WorkerLoop
@@ -75,35 +80,36 @@ def unstaged(purge: Callable[[], Awaitable[int]]) -> AcrossStep:
 
 
 def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoop:
+    managers = container.managers
     return WorkerLoop(
-        work=container.managers.work,
-        outbox=container.managers.outbox,
+        work=managers.work,
+        outbox=managers.outbox,
         # Per tenant, what only a tenant deleted past its retention has: every
         # row of it goes. Any other tenant costs these nothing.
         purges={
-            "tasks": container.managers.tasks.purge_tenant,
+            "tasks": managers.tasks.purge_tenant,
             # Every file's object, then its row.
-            "media": container.managers.media.purge_tenant,
-            "tenancy": container.managers.tenancy.purge_tenant,
-            "events": container.managers.events.purge_tenant,
-            "billing": container.managers.billing.purge_tenant,
-            "slack": container.managers.slack.purge_tenant,
-            "orchestrations": container.managers.orchestrations.purge_tenant,
+            "media": managers.media.purge_tenant,
+            "tenancy": managers.tenancy.purge_tenant,
+            "events": managers.events.purge_tenant,
+            "billing": managers.billing.purge_tenant,
+            "slack": managers.slack.purge_tenant,
+            "orchestrations": managers.orchestrations.purge_tenant,
         },
         # Once a pass, across every tenant: each namespace's rows past their
         # retention.
         across={
             # A deleted task's attachments, under its tenant's context, then the task.
-            "tasks": container.managers.tasks.purge_across_tenants,
+            "tasks": managers.tasks.purge_across_tenants,
             # A deleted file's object, then its row; an abandoned upload's too.
-            "media": unstaged(container.managers.media.purge_across_tenants),
-            "tenancy": unstaged(container.managers.tenancy.purge_across_tenants),
-            "idempotency": unstaged(container.managers.idempotency.purge_across_tenants),
+            "media": unstaged(managers.media.purge_across_tenants),
+            "tenancy": unstaged(managers.tenancy.purge_across_tenants),
+            "idempotency": unstaged(managers.idempotency.purge_across_tenants),
             # The trim: each tenant's floor moves with its events.
-            "events": unstaged(container.managers.events.purge_across_tenants),
-            "billing": unstaged(container.managers.billing.purge_across_tenants),
-            "slack": unstaged(container.managers.slack.purge_across_tenants),
-            "orchestrations": unstaged(container.managers.orchestrations.purge_across_tenants),
+            "events": unstaged(managers.events.purge_across_tenants),
+            "billing": unstaged(managers.billing.purge_across_tenants),
+            "slack": unstaged(managers.slack.purge_across_tenants),
+            "orchestrations": unstaged(managers.orchestrations.purge_across_tenants),
         },
         # The media purge's batch is its own: a whole one says there may be more.
         across_batches={"media": MEDIA_PURGE_BATCH},
@@ -112,44 +118,42 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         # The respace gives short ranks back to a run of open tasks whose
         # ranks grew long.
         chores={
-            "cleanup": container.managers.tasks.open_cleanup,
-            "respace": container.managers.tasks.respace_ranks,
+            "cleanup": managers.tasks.open_cleanup,
+            "respace": managers.tasks.respace_ranks,
         },
         # The tenants the chores run in: one read a pass across tenants finds
         # those with an archivable task or a long rank, so a tenant with
         # neither costs the pass nothing.
-        chore_tenants=container.managers.tasks.tenants_with_chores,
+        chore_tenants=managers.tasks.tenants_with_chores,
         # The platform's size, counted across tenants once an interval and
         # kept as the tally the operator plane reads instead of counting.
-        tally=container.managers.tenancy_operator.tally_size,
+        tally=managers.tenancy_operator.tally_size,
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
-            WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(
-                container.managers.tenancy, container.managers.billing
-            ),
-            WorkKind.TASK_REMINDER: TaskReminderHandlerImpl(container.managers.tasks),
+            WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(managers.tenancy, managers.billing),
+            WorkKind.TASK_REMINDER: TaskReminderHandlerImpl(managers.tasks),
             WorkKind.SLACK_POST: SlackPostHandlerImpl(
-                container.managers.tasks, container.managers.slack, container.slack
+                managers.tasks, managers.slack, container.slack
             ),
             WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
-                container.managers.orchestrations,
+                managers.orchestrations,
                 {
-                    OrchestrationKind.TASK_IMPORT: container.managers.tasks.step_import,
-                    OrchestrationKind.TASK_CLEANUP: container.managers.tasks.step_cleanup,
+                    OrchestrationKind.TASK_IMPORT: managers.tasks.step_import,
+                    OrchestrationKind.TASK_CLEANUP: managers.tasks.step_cleanup,
                 },
             ),
-            WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(container.managers.orchestrations),
+            WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(managers.orchestrations),
             WorkKind.DELETE_ACCOUNT: DeleteAccountHandlerImpl(
-                container.managers.tenancy,
-                container.managers.billing,
-                container.managers.slack,
+                managers.tenancy,
+                managers.billing,
+                managers.slack,
                 container.identity_provider,
             ),
-            WorkKind.UNASSIGN_TASKS: UnassignTasksHandlerImpl(container.managers.tasks),
+            WorkKind.UNASSIGN_TASKS: UnassignTasksHandlerImpl(managers.tasks),
             WorkKind.DELETE_ORG: DeleteOrgHandlerImpl(
-                container.managers.tenancy,
-                container.managers.billing,
-                container.managers.slack,
+                managers.tenancy,
+                managers.billing,
+                managers.slack,
                 container.identity_provider,
             ),
         },
@@ -160,10 +164,15 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
 
 
 def build_consumer(container: WorkerContainer) -> DeliveryConsumer:
+    """The consumer of `Queues.WEBHOOKS`: each provider's deliveries, under
+    the name the API queues them with."""
     return DeliveryConsumer(
         queues=container.infra.get_queues(),
-        billing=container.managers.billing,
         tenancy=container.managers.tenancy,
+        providers={
+            "identity": IdentityDeliveriesImpl(container.managers.events),
+            "stripe": StripeDeliveriesImpl(container.managers.billing),
+        },
         options=DeliveryOptions(worker_id=container.settings.worker_id),
     )
 
@@ -233,8 +242,8 @@ async def serve(lane: str | None) -> int:
     http.start()
     consuming = asyncio.create_task(inbound.run(), name="slack-inbound")
     try:
-        # The claim loop and the processor's deliveries run side by side; a
-        # stop ends both, the loop draining its items first.
+        # The claim loop, with the sweep, and the deliveries run side by
+        # side; a stop ends both, the loop draining its items first.
         await asyncio.gather(loop.run(), consumer.run())
     finally:
         consuming.cancel()

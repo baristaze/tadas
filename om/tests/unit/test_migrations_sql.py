@@ -53,17 +53,17 @@ def test_split_statements_keeps_a_function_body_whole() -> None:
     sql = (
         "-- a trigger\nCREATE FUNCTION core.f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
         "BEGIN\n    NEW.a := 1;\n    RETURN NEW;\nEND\n$$;\n"
-        "CREATE TRIGGER t BEFORE INSERT ON core.tasks FOR EACH ROW EXECUTE FUNCTION core.f();\n"
+        "CREATE TRIGGER t BEFORE INSERT ON core.orgs FOR EACH ROW EXECUTE FUNCTION core.f();\n"
     )
     assert split_statements(sql) == [
         "CREATE FUNCTION core.f() RETURNS trigger LANGUAGE plpgsql AS $$\n"
         "BEGIN\n    NEW.a := 1;\n    RETURN NEW;\nEND\n$$",
-        "CREATE TRIGGER t BEFORE INSERT ON core.tasks FOR EACH ROW EXECUTE FUNCTION core.f()",
+        "CREATE TRIGGER t BEFORE INSERT ON core.orgs FOR EACH ROW EXECUTE FUNCTION core.f()",
     ]
 
 
 def test_a_function_is_checked_by_its_schema_alone() -> None:
-    check_role_of_sql(DatabaseRole.CORE, "DROP FUNCTION core.tasks_rank_from_position()")
+    check_role_of_sql(DatabaseRole.CORE, "DROP FUNCTION core.touch_updated_at()")
     with pytest.raises(RuntimeError):
         check_role_of_sql(DatabaseRole.CORE, "CREATE FUNCTION queue.f() RETURNS trigger")
 
@@ -99,6 +99,7 @@ def test_role_metadata_holds_only_that_role() -> None:
 SWEEP_INDEXES = {
     "users": "ix_users_org_id_deleted_at",
     "memberships": "ix_memberships_org_id_deleted_at",
+    "files": "ix_files_org_id_deleted_at",
     "slack_installations": "ix_slack_installations_org_id_deleted_at",
 }
 """The index the per-tenant purge needs on each soft-deletable table whose

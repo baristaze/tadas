@@ -53,7 +53,7 @@ def organization(org_id: str, external_id: str | None, domains: list[tuple[str, 
     return {
         "object": "organization",
         "id": org_id,
-        "name": "Acme",
+        "name": "Ajax",
         "external_id": external_id,
         "metadata": {},
         "created_at": NOW,
@@ -77,7 +77,7 @@ def invitation(invitation_id: str, state: str, accepted_user_id: str | None = No
     return {
         "object": "invitation",
         "id": invitation_id,
-        "email": "bob@acme.example",
+        "email": "bob@ajax.example",
         "state": state,
         "accepted_at": None,
         "revoked_at": None,
@@ -540,7 +540,7 @@ async def test_the_pages_of_one_listing_share_the_deadline() -> None:
     sent = Sent(paging)
     with pytest.raises(ProviderUnavailable) as raised:
         await under(sent).find_pending_invitation(
-            email="bob@acme.example", organization_id="org_1", deadline=after(0.4)
+            email="bob@ajax.example", organization_id="org_1", deadline=after(0.4)
         )
     assert raised.value.message in ended_by_the_deadline("listing the invitations")
     # Every page before the last answered in full. The last was cut waiting
@@ -575,7 +575,7 @@ async def test_an_unprocessable_invitation_is_a_conflict() -> None:
     )
     with pytest.raises(ProviderConflict) as raised:
         await made.send_invitation(
-            email="bob@acme.example", organization_id="org_1", expires_in_days=7
+            email="bob@ajax.example", organization_id="org_1", expires_in_days=7
         )
     assert API_KEY not in str(raised.value)
 
@@ -586,23 +586,23 @@ async def test_an_organization_is_found_by_its_external_id_else_created() -> Non
         return httpx.Response(
             200,
             json=organization(
-                "org_1", "tadas-org", [("acme.example", "verified"), ("other.example", "pending")]
+                "org_1", "tadas-org", [("ajax.example", "verified"), ("other.example", "pending")]
             ),
         )
 
     made, recorder = provider(found)
-    org = await made.ensure_organization(external_id="tadas-org", name="Acme")
-    assert org.id == "org_1" and org.verified_domains == ("acme.example",)
+    org = await made.ensure_organization(external_id="tadas-org", name="Ajax")
+    assert org.id == "org_1" and org.verified_domains == ("ajax.example",)
     assert len(recorder.requests) == 1
 
     def missing(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(404, json={"message": "not found"})
-        assert body_of(request) == {"name": "Acme", "external_id": "tadas-org"}
+        assert body_of(request) == {"name": "Ajax", "external_id": "tadas-org"}
         return httpx.Response(201, json=organization("org_2", "tadas-org", []))
 
     made, recorder = provider(missing)
-    org = await made.ensure_organization(external_id="tadas-org", name="Acme")
+    org = await made.ensure_organization(external_id="tadas-org", name="Ajax")
     assert org.id == "org_2" and org.verified_domains == ()
     assert [r.method for r in recorder.requests] == ["GET", "POST"]
 
@@ -611,7 +611,7 @@ async def test_invitations_are_sent_found_and_read_back() -> None:
     def answer(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/user_management/invitations":
             assert body_of(request) == {
-                "email": "bob@acme.example",
+                "email": "bob@ajax.example",
                 "organization_id": "org_1",
                 "expires_in_days": 7,
             }
@@ -633,18 +633,18 @@ async def test_invitations_are_sent_found_and_read_back() -> None:
 
     made, recorder = provider(answer)
     sent = await made.send_invitation(
-        email="bob@acme.example", organization_id="org_1", expires_in_days=7
+        email="bob@ajax.example", organization_id="org_1", expires_in_days=7
     )
     assert sent.id == "inv_1" and sent.state is InvitationState.PENDING
-    pending = await made.find_pending_invitation(email="bob@acme.example", organization_id="org_1")
+    pending = await made.find_pending_invitation(email="bob@ajax.example", organization_id="org_1")
     assert pending is not None and pending.id == "inv_2"
     accepted = await made.accepted_invitation(
-        organization_id="org_1", user_id="user_1", email="bob@acme.example"
+        organization_id="org_1", user_id="user_1", email="bob@ajax.example"
     )
     assert accepted is not None and accepted.id == "inv_1"
     assert (
         await made.accepted_invitation(
-            organization_id="org_1", user_id="user_9", email="bob@acme.example"
+            organization_id="org_1", user_id="user_9", email="bob@ajax.example"
         )
         is None
     )
@@ -660,7 +660,7 @@ async def test_the_accepted_invitation_is_read_by_the_persons_address_first() ->
 
     def answer(request: httpx.Request) -> httpx.Response:
         query = parse_qs(request.url.query.decode())
-        by_address = query.get("email") == ["bob@acme.example"]
+        by_address = query.get("email") == ["bob@ajax.example"]
         data = (
             [invitation("inv_1", "accepted", "user_1")]
             if by_address
@@ -673,25 +673,25 @@ async def test_the_accepted_invitation_is_read_by_the_persons_address_first() ->
 
     made, recorder = provider(answer)
     accepted = await made.accepted_invitation(
-        organization_id="org_1", user_id="user_1", email="bob@acme.example"
+        organization_id="org_1", user_id="user_1", email="bob@ajax.example"
     )
     assert accepted is not None and accepted.id == "inv_1"
     [only] = recorder.requests
     assert only.url.path == "/user_management/invitations"
     assert parse_qs(only.url.query.decode()) == {
         "organization_id": ["org_1"],
-        "email": ["bob@acme.example"],
+        "email": ["bob@ajax.example"],
         "limit": ["100"],
         "order": ["desc"],
     }
 
     made, recorder = provider(answer)
     accepted = await made.accepted_invitation(
-        organization_id="org_1", user_id="user_2", email="bob@acme.example"
+        organization_id="org_1", user_id="user_2", email="bob@ajax.example"
     )
     assert accepted is not None and accepted.id == "inv_2"
     first, second = (parse_qs(r.url.query.decode()) for r in recorder.requests)
-    assert first["email"] == ["bob@acme.example"] and "email" not in second
+    assert first["email"] == ["bob@ajax.example"] and "email" not in second
     assert second["organization_id"] == ["org_1"]
 
 

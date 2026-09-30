@@ -43,7 +43,7 @@ def operator_api(request: httpx.Request) -> httpx.Response:
         )
     if request.url.path == "/v1/admin/orgs":
         if request.url.params.get("cursor") is None:
-            items = [org("0199a4c0-0000-7000-8000-00000000000a", "acme")]
+            items = [org("0199a4c0-0000-7000-8000-00000000000a", "ajax")]
             return httpx.Response(200, json={"items": items, "next_cursor": "c2"})
         return httpx.Response(200, json={"items": [org(RUN_ORG, "ops-r1-1")], "next_cursor": None})
     if request.url.path == f"/v1/admin/orgs/{RUN_ORG}/members":
@@ -74,6 +74,7 @@ async def test_size_reads_the_operator_plane_with_the_token_and_leaves_run_tenan
     out = capsys.readouterr().out
     assert "tenants                  2" in out and "users                    10" in out
     assert "tasks_last_24h           40" in out
+    assert "events_last_24h          90" in out
     assert "counted_at               2026-09-20 12:00:00+00:00" in out
     assert "counted                  " in out and "s ago, by the maintenance worker's sweep" in out
     assert "traffic run tenants      1 left out (2 users)" in out

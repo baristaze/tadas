@@ -655,7 +655,7 @@
         "type": "object"
       },
       "DeliveryReceivedView": {
-        "description": "The delivery checked out and is queued; the processor stops retrying.",
+        "description": "The delivery checked out and is queued; the provider stops retrying.",
         "properties": {
           "received": {
             "title": "Received",
@@ -909,7 +909,7 @@
         "type": "object"
       },
       "FilePurpose": {
-        "description": "Which domain context a file came from. The purpose decides the bounds an\nupload is held to and what `subject_id` names.",
+        "description": "Which context a file came from. The purpose decides the bounds an\nupload is held to and what `subject_id` names. A product adds a purpose\nper kind of file it keeps, with its bounds (`media.rules.BOUNDS`).",
         "enum": [
           "task_attachment",
           "voice_dictation",
@@ -3261,7 +3261,7 @@
       },
       "UpdateIdentityRequest": {
         "additionalProperties": false,
-        "description": "Where the person is, as an IANA name (\"Europe/Istanbul\"): the portal\nsends the browser's own on sign-in. A due date's reminder goes out at\nnine in the morning in it; with none sent, in UTC. A name that is not\none is 422.",
+        "description": "Where the person is, as an IANA name (\"Europe/Istanbul\"): the portal\nsends the browser's own on sign-in, and a time shown or sent to the\nperson is in it (a due date's reminder goes out at nine in the morning\nthere); with none sent, in UTC. A name that is not one is 422.",
         "properties": {
           "time_zone": {
             "maxLength": 64,
@@ -11644,6 +11644,87 @@
         "summary": "List Users",
         "tags": [
           "tenancy"
+        ]
+      }
+    },
+    "/webhooks/identity": {
+      "post": {
+        "operationId": "identity_delivery_webhooks_identity_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "WorkOS-Signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workos-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryReceivedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Identity Delivery",
+        "tags": [
+          "webhooks"
         ]
       }
     },

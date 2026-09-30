@@ -6,7 +6,6 @@ read as text, the way a reviewer reads them. A field the cloud leaves at its
 default is listed here with the reason, so a new field needs a decision."""
 
 import re
-import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -15,7 +14,11 @@ from pydantic import ValidationError
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.storage.impl.memory import StorageMemoryImpl
-from tadas.workers.maintenance.container import WorkerContainer, events_options
+from tadas.workers.maintenance.container import (
+    MEDIA_PURGE_BATCH,
+    WorkerContainer,
+    events_options,
+)
 from tadas.workers.maintenance.main import loop_options
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
@@ -95,14 +98,10 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
 
 
 def repository_root() -> Path:
-    top = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=Path(__file__).parent,
-    ).stdout.strip()
-    return Path(top)
+    """The checkout this test runs in: the nearest folder above it with an
+    `.env.example`, so a copy that is not yet a repository reads its own."""
+    here = Path(__file__).resolve().parent
+    return next(p for p in (here, *here.parents) if (p / ".env.example").is_file())
 
 
 def documented_knobs(env_example: str) -> set[str]:
@@ -226,16 +225,16 @@ def test_the_worker_hands_each_retention_to_its_manager(tmp_path: Path) -> None:
             "billing_backend": "twin",
             "slack_backend": "twin",
             "worker_purge_batch": 7,
-            "tasks_retention_days": 3,
+            "media_retention_days": 3,
             "socket_ticket_retention_hours": 2,
         }
     )
     container = WorkerContainer.for_tests(
         StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings=settings
     )
-    tasks = container.managers.tasks._options  # type: ignore[attr-defined]
+    media = container.managers.media._options  # type: ignore[attr-defined]
     tenancy = container.managers.tenancy._options  # type: ignore[attr-defined]
-    assert (tasks.retention, tasks.purge_batch) == (timedelta(days=3), 7)
+    assert (media.retention, media.purge_batch) == (timedelta(days=3), MEDIA_PURGE_BATCH)
     assert (tenancy.ticket_retention, tenancy.purge_batch) == (timedelta(hours=2), 7)
     assert tenancy.retention == timedelta(days=30)
     options = loop_options(settings)

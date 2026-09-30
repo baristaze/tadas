@@ -1,14 +1,14 @@
 """Inbound calls from providers, outside /v1: the version of their shape is
-the provider's. A route takes no credential; it is authenticated by the
-provider's signature over the body and its timestamp, checked before
-anything is queued, and a worker does what the call means.
+the provider's. A route takes no credential and no rate limit; it is
+authenticated by the provider's signature over the body and its timestamp,
+checked before anything is queued, and a worker does what the call means.
 
-The payment processor delivers to `/webhooks/stripe`. Slack calls three
-URLs, each named in the app's manifest: `/webhooks/slack/commands` for
-`/tadas`, `/webhooks/slack/events` for the Events API, and
-`/webhooks/slack/oauth`, where Slack sends a person's browser back at the end
-of an install. The last is not signed: the one-time state it carries is its
-check."""
+The identity provider delivers its events to `/webhooks/identity`. The
+payment processor delivers to `/webhooks/stripe`. Slack calls three URLs,
+each named in the app's manifest: `/webhooks/slack/commands` for `/tadas`,
+`/webhooks/slack/events` for the Events API, and `/webhooks/slack/oauth`,
+where Slack sends a person's browser back at the end of an install. The
+last is not signed: the one-time state it carries is its check."""
 
 from typing import Annotated
 
@@ -17,11 +17,18 @@ from fastapi.responses import RedirectResponse
 
 from tadas.services.api.gateway.auth import Rctx
 from tadas.services.api.gateway.resolve import SlackService, WebhooksService
-from tadas.services.api.gateway.webhooks import SlackCall, StripeDelivery
-from tadas.services.api.types.billing import DeliveryReceivedView
+from tadas.services.api.gateway.webhooks import IdentityDelivery, SlackCall, StripeDelivery
 from tadas.services.api.types.slack import SlackEventAnswerView
+from tadas.services.api.types.webhooks import DeliveryReceivedView
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+@router.post("/identity", response_model=DeliveryReceivedView)
+async def identity_delivery(
+    rctx: Rctx, webhooks: WebhooksService, delivery: IdentityDelivery
+) -> DeliveryReceivedView:
+    return await webhooks.receive_identity(rctx, delivery)
 
 
 @router.post("/stripe", response_model=DeliveryReceivedView)

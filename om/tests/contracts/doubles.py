@@ -1,5 +1,6 @@
 """Doubles and helpers the manager suites share: just enough tenancy, a
-context of a given role, and the media manager a tasks manager composes."""
+context of a given role, and the media manager over the memory storage,
+with the rest a tasks manager composes."""
 
 from uuid import UUID
 
@@ -92,7 +93,7 @@ def media_of(
     relay: OutboxRelayImpl,
     infra: InfraLocalImpl,
 ) -> MediaManagerImpl:
-    """The media manager a tasks manager composes, over the same outbox."""
+    """The media manager over the memory storage, landing in the same outbox."""
     return MediaManagerImpl(
         MediaStorageMemoryImpl(outbox), infra.get_buckets(), members, relay, MediaOptions()
     )

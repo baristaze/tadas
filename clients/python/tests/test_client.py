@@ -23,7 +23,25 @@ from tadas.client.client import (
     retry_wait_seconds,
 )
 from tadas.client.realtime import Channel
-from tadas.client.types import BulkAction, OrgKind, Role, TaskScope, TaskStatus
+from tadas.client.types import BulkAction, FileView, OrgKind, Role, TaskScope, TaskStatus
+
+ORG = {
+    "id": "0199a4c0-0000-7000-8000-0000000000bb",
+    "name": "Ajax",
+    "slug": "ajax",
+    "kind": "team",
+    "created_at": "2026-09-18T12:00:00Z",
+    "deleted_at": None,
+}
+
+USER = {
+    "id": "0199a4c0-0000-7000-8000-0000000000cc",
+    "email": "bob@example.test",
+    "display_name": "Bob",
+    "created_at": "2026-09-18T12:00:00Z",
+}
+
+ME = {"app": "cli", "org": ORG, "user": USER, "role": "owner", "permissions": ["read", "write"]}
 
 TASK = {
     "id": "0199a4c0-0000-7000-8000-000000000001",
@@ -39,29 +57,26 @@ TASK = {
     "version": 1,
 }
 
-
-ORG = {
-    "id": "0199a4c0-0000-7000-8000-0000000000bb",
-    "name": "Acme",
-    "slug": "acme",
-    "kind": "team",
+FILE = {
+    "id": "0199a4c0-0000-7000-8000-0000000000ee",
+    "name": "spec.pdf",
+    "extension": "pdf",
+    "content_type": "application/pdf",
+    "size_bytes": 17,
+    "purpose": "task_attachment",
+    "subject_id": TASK["id"],
+    "status": "pending",
     "created_at": "2026-09-18T12:00:00Z",
+    "created_by": USER["id"],
     "deleted_at": None,
-}
-
-USER = {
-    "id": "0199a4c0-0000-7000-8000-0000000000cc",
-    "email": "bob@example.test",
-    "display_name": "Bob",
-    "created_at": "2026-09-18T12:00:00Z",
 }
 
 EVENT = {
     "seq": 1,
-    "kind": "tasks.task.created",
-    "target_id": TASK["id"],
+    "kind": "tenancy.invitation.created",
+    "target_id": "0199a4c0-0000-7000-8000-0000000000dd",
     "produced_at": "2026-09-18T12:00:00Z",
-    "actor_id": TASK["created_by"],
+    "actor_id": USER["id"],
 }
 
 
@@ -72,7 +87,7 @@ class Recorder:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        return self.respond.get(request.url.path, httpx.Response(200, json=TASK))
+        return self.respond.get(request.url.path, httpx.Response(200, json=ME))
 
 
 def client_over(recorder: Recorder, token: str | None = "ses_1") -> ApiClient:
@@ -88,7 +103,7 @@ def client_over(recorder: Recorder, token: str | None = "ses_1") -> ApiClient:
 async def test_every_request_carries_bearer_and_app_headers() -> None:
     recorder = Recorder()
     async with client_over(recorder) as client:
-        await client.task(UUID(TASK["id"]))
+        await client.me()
     sent = recorder.requests[0]
     assert sent.headers["authorization"] == "Bearer ses_1"
     assert sent.headers["x-app"] == "cli" and sent.headers["x-app-version"] == "cli@test"
@@ -97,7 +112,7 @@ async def test_every_request_carries_bearer_and_app_headers() -> None:
 
 
 async def test_a_creating_call_always_sends_an_idempotency_key() -> None:
-    recorder = Recorder()
+    recorder = Recorder({"/v1/tasks": httpx.Response(201, json=TASK)})
     async with client_over(recorder) as client:
         await client.create_task("one")
         await client.create_task("two", idempotency_key="given")
@@ -107,8 +122,18 @@ async def test_a_creating_call_always_sends_an_idempotency_key() -> None:
     assert minted.read() == b'{"title":"one","notes":""}'
 
 
-async def test_update_sends_only_what_was_passed_and_null_unassigns() -> None:
+async def test_a_versioned_write_names_its_version_in_if_match() -> None:
     recorder = Recorder()
+    async with client_over(recorder) as client:
+        await client.request("PATCH", "/v1/me", json={"display_name": "Ann"}, if_match=3)
+        await client.me()
+    versioned, plain = recorder.requests
+    assert versioned.headers["if-match"] == '"3"'
+    assert "if-match" not in plain.headers
+
+
+async def test_update_sends_only_what_was_passed_and_null_unassigns() -> None:
+    recorder = Recorder({f"/v1/tasks/{TASK['id']}": httpx.Response(200, json=TASK)})
     async with client_over(recorder) as client:
         task_id = UUID(TASK["id"])
         await client.update_task(task_id, version=1, status=TaskStatus.done)
@@ -125,7 +150,8 @@ async def test_update_sends_only_what_was_passed_and_null_unassigns() -> None:
 
 async def test_every_write_carries_the_version_it_was_given() -> None:
     # The move says it in its body; the delete, which has none, in If-Match.
-    recorder = Recorder()
+    answer = httpx.Response(200, json=TASK)
+    recorder = Recorder({f"/v1/tasks/{TASK['id']}": answer, f"/v1/tasks/{TASK['id']}/move": answer})
     async with client_over(recorder) as client:
         task_id, anchor = UUID(TASK["id"]), uuid4()
         await client.move_task(task_id, anchor, version=4)
@@ -183,8 +209,8 @@ async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:
             {
                 "org": {
                     "id": str(uuid4()),
-                    "name": "Acme",
-                    "slug": "acme",
+                    "name": "Ajax",
+                    "slug": "ajax",
                     "kind": "team",
                     "created_at": "2026-09-18T12:00:00Z",
                     "deleted_at": None,
@@ -215,7 +241,7 @@ async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:
     async with client_over(recorder, token=None) as client:
         issued = await client.dev_sign_in("ann@example.test")
         exchanged = await client.exchange_session(issued.token, issued.memberships[0].org.id)
-    assert exchanged.token == "ses_2" and exchanged.org.slug == "acme"
+    assert exchanged.token == "ses_2" and exchanged.org.slug == "ajax"
     assert "authorization" not in recorder.requests[0].headers
     assert recorder.requests[1].headers["authorization"] == "Bearer lgn_1"
 
@@ -392,7 +418,7 @@ async def test_a_switch_presents_the_session_and_carries_the_new_one() -> None:
     async with client_over(recorder, token="ses_1") as client:
         issued = await client.switch_session(UUID(ORG["id"]))
         assert client.token == "ses_2" and issued.role.value == "member"
-        await client.task(UUID(TASK["id"]))
+        await client.me()
     assert recorder.requests[0].headers["authorization"] == "Bearer ses_1"
     assert recorder.requests[1].headers["authorization"] == "Bearer ses_2"
     async with client_over(recorder, token=None) as client:
@@ -404,16 +430,16 @@ async def test_a_switch_presents_the_session_and_carries_the_new_one() -> None:
 async def test_a_refusal_is_a_typed_error_with_the_request_id() -> None:
     refusal = httpx.Response(
         404,
-        json={"error": {"code": "not_found", "message": "task x not found", "request_id": "r-1"}},
+        json={"error": {"code": "not_found", "message": "file x not found", "request_id": "r-1"}},
         headers={"x-request-id": "r-1"},
     )
-    recorder = Recorder({"/v1/tasks/" + TASK["id"]: refusal})
+    recorder = Recorder({"/v1/media/files/" + FILE["id"]: refusal})
     async with client_over(recorder) as client:
         with pytest.raises(ApiError) as raised:
-            await client.task(UUID(TASK["id"]))
+            await client.file(UUID(FILE["id"]))
     error = raised.value
     assert (error.status, error.code, error.request_id) == (404, "not_found", "r-1")
-    assert str(error) == "not_found: task x not found (request r-1)"
+    assert str(error) == "not_found: file x not found (request r-1)"
 
 
 async def test_a_401_clears_the_token_and_a_bare_error_still_types() -> None:
@@ -427,9 +453,9 @@ async def test_a_401_clears_the_token_and_a_bare_error_still_types() -> None:
 
 def test_websocket_url_follows_the_scheme() -> None:
     plain = ApiClient("http://127.0.0.1:8000", app="cli", app_version="v")
-    secure = ApiClient("https://api.tadas.fyi/", app="cli", app_version="v")
+    secure = ApiClient("https://api.tadas.example/", app="cli", app_version="v")
     assert plain.websocket_url("/v1/realtime") == "ws://127.0.0.1:8000/v1/realtime"
-    assert secure.websocket_url("/v1/realtime") == "wss://api.tadas.fyi/v1/realtime"
+    assert secure.websocket_url("/v1/realtime") == "wss://api.tadas.example/v1/realtime"
     assert plain.headers == {"X-App": "cli", "X-App-Version": "v"}
 
 
@@ -535,16 +561,16 @@ async def test_an_unavailable_answer_is_retried_to_the_bound_and_then_surfaces()
     )
     async with retrying(handler) as client:
         with pytest.raises(ApiError) as raised:
-            await client.task(UUID(TASK["id"]))
+            await client.me()
     assert len(seen) == 3  # the first attempt and the two the bound allows
     assert raised.value.status == 503 and raised.value.code == "unavailable"
 
 
 async def test_the_retry_stops_as_soon_as_an_attempt_answers() -> None:
-    handler, seen = answering(httpx.Response(503), httpx.Response(200, json=TASK))
+    handler, seen = answering(httpx.Response(503), httpx.Response(200, json=ME))
     async with retrying(handler) as client:
-        task = await client.task(UUID(TASK["id"]))
-    assert task.title == "one" and len(seen) == 2
+        me = await client.me()
+    assert me.user.email == "bob@example.test" and len(seen) == 2
 
 
 def raising(failure: httpx.TransportError) -> tuple[Any, list[httpx.Request]]:
@@ -573,7 +599,7 @@ async def test_the_wire_failures_that_can_differ_are_retried_and_no_others(
     handler, seen = raising(failure)
     async with retrying(handler) as client:
         with pytest.raises(httpx.TransportError):
-            await client.task(UUID(TASK["id"]))
+            await client.me()
     assert len(seen) == attempts
 
 
@@ -585,14 +611,14 @@ async def test_a_refusal_is_sent_once(status: int) -> None:
     )
     async with retrying(handler) as client:
         with pytest.raises(ApiError):
-            await client.task(UUID(TASK["id"]))
+            await client.me()
     assert len(seen) == 1
 
 
 async def test_a_creating_call_is_retried_under_the_key_the_first_attempt_carried() -> None:
-    handler, seen = answering(httpx.Response(503), httpx.Response(201, json=TASK))
+    handler, seen = answering(httpx.Response(503), httpx.Response(201, json=CHOICE))
     async with retrying(handler) as client:
-        await client.create_task("one")
+        await client.create_org("Bakery")
     assert len(seen) == 2
     assert len({request.headers["idempotency-key"] for request in seen}) == 1
 
@@ -602,11 +628,11 @@ async def test_a_write_the_api_records_no_outcome_for_is_sent_once() -> None:
     so the failure is told to the caller instead."""
     handler, seen = answering(httpx.Response(503))
     async with retrying(handler) as client:
-        task_id = UUID(TASK["id"])
+        file_id, task_id = UUID(FILE["id"]), UUID(TASK["id"])
         for call in (
-            client.update_task(task_id, version=1, title="t"),
-            client.move_task(task_id, None, version=1),
-            client.delete_task(task_id, version=1),
+            client.request("PATCH", "/v1/me", json={"display_name": "Ann"}, if_match=1),
+            client.remove_attachment(task_id, file_id),
+            client.confirm_file(file_id),
             client.logout(),
         ):
             with pytest.raises(ApiError):
@@ -621,13 +647,84 @@ async def test_the_count_and_the_delay_arrive_through_the_constructor() -> None:
     handler, seen = answering(httpx.Response(503))
     async with retrying(handler, retries=4) as client:
         with pytest.raises(ApiError):
-            await client.task(UUID(TASK["id"]))
+            await client.me()
     assert len(seen) == 5
     handler, seen = answering(httpx.Response(503))
     async with retrying(handler, retries=0) as client:
         with pytest.raises(ApiError):
-            await client.task(UUID(TASK["id"]))
+            await client.me()
     assert len(seen) == 1
+
+
+# Media: the org's files. The in-process store cannot sign a form or a link,
+# so the bytes go through the API's content route both ways.
+
+
+async def test_a_file_is_read_and_deleted_by_its_id_and_the_usage_read() -> None:
+    file_id, task_id = UUID(FILE["id"]), UUID(TASK["id"])
+    usage = {"total_count": 0, "total_size_bytes": 0, "pending_size_bytes": 0, "purposes": []}
+    recorder = Recorder(
+        {
+            f"/v1/media/files/{file_id}": httpx.Response(200, json=FILE),
+            f"/v1/tasks/{task_id}/attachments/{file_id}": httpx.Response(200, json=FILE),
+            "/v1/media/usage": httpx.Response(200, json=usage),
+        }
+    )
+    async with client_over(recorder) as client:
+        read = await client.file(file_id)
+        removed = await client.remove_attachment(task_id, file_id)
+        counted = await client.storage_usage()
+    assert read.id == removed.id == file_id and counted.total_count == 0
+    assert [(r.method, r.url.path) for r in recorder.requests] == [
+        ("GET", f"/v1/media/files/{file_id}"),
+        ("DELETE", f"/v1/tasks/{task_id}/attachments/{file_id}"),
+        ("GET", "/v1/media/usage"),
+    ]
+
+
+async def test_the_bytes_go_through_the_api_when_the_store_cannot_sign() -> None:
+    file_id = UUID(FILE["id"])
+    base = f"/v1/media/files/{file_id}"
+    stored = FILE | {"status": "stored"}
+    no_form = {"url": None, "fields": [], "expires_at": "2026-09-18T12:15:00Z"}
+    no_link = {"url": None, "expires_at": "2026-09-18T12:15:00Z"}
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        match (request.method, request.url.path):
+            case ("POST", path) if path == f"{base}/upload":
+                return httpx.Response(200, json=no_form)
+            case ("PUT", path) if path == f"{base}/content":
+                return httpx.Response(200, json=FILE)
+            case ("POST", path) if path == f"{base}/confirm":
+                return httpx.Response(200, json=stored)
+            case ("GET", path) if path == f"{base}/download":
+                return httpx.Response(200, json=no_link)
+            case ("GET", path) if path == f"{base}/content":
+                return httpx.Response(200, content=b"%PDF-1.7 the spec")
+        raise AssertionError(request.url)
+
+    async with ApiClient(
+        "http://test",
+        app="cli",
+        app_version="cli@test",
+        token="ses_1",
+        transport=httpx.MockTransport(answer),
+    ) as client:
+        confirmed = await client.upload(FileView.model_validate(FILE), b"%PDF-1.7 the spec")
+        fetched = await client.download(file_id)
+    assert confirmed.status.value == "stored" and fetched == b"%PDF-1.7 the spec"
+    put = seen[1]
+    assert put.headers["content-type"] == "application/octet-stream"
+    assert put.read() == b"%PDF-1.7 the spec"
+    assert [(r.method, r.url.path.removeprefix(base)) for r in seen] == [
+        ("POST", "/upload"),
+        ("PUT", "/content"),
+        ("POST", "/confirm"),
+        ("GET", "/download"),
+        ("GET", "/content"),
+    ]
 
 
 # The operator plane: each method sends the route it stands for, under the
@@ -657,22 +754,22 @@ async def test_admin_create_org_is_a_creating_call_under_a_key() -> None:
     recorder = Recorder({"/v1/admin/orgs": httpx.Response(201, json=ORG)})
     async with client_over(recorder, token="lgn_1") as client:
         created = await client.admin_create_org(
-            "Acme", "acme", owner_email="ann@example.test", owner_name="Ann"
+            "Ajax", "ajax", owner_email="ann@example.test", owner_name="Ann"
         )
         again = await client.admin_create_org(
-            "Acme",
-            "acme",
+            "Ajax",
+            "ajax",
             owner_email="ann@example.test",
             owner_name="Ann",
             idempotency_key="given",
         )
-    assert created.slug == "acme" and again.id == created.id
+    assert created.slug == "ajax" and again.id == created.id
     minted, given = recorder.requests
     assert minted.method == "POST" and minted.url.path == "/v1/admin/orgs"
     UUID(minted.headers["idempotency-key"])
     assert given.headers["idempotency-key"] == "given"
     assert minted.read() == (
-        b'{"name":"Acme","slug":"acme","owner_email":"ann@example.test","owner_name":"Ann"}'
+        b'{"name":"Ajax","slug":"ajax","owner_email":"ann@example.test","owner_name":"Ann"}'
     )
 
 
@@ -746,7 +843,7 @@ async def test_admin_events_replays_one_tenants_stream() -> None:
     recorder = Recorder({path: httpx.Response(200, json=[operator_event])})
     async with client_over(recorder, token="lgn_1") as client:
         events = await client.admin_events(org_id, after_seq=3, limit=10)
-    assert [e.seq for e in events] == [1] and events[0].kind == "tasks.task.created"
+    assert [e.seq for e in events] == [1] and events[0].kind == "tenancy.invitation.created"
     assert str(events[0].request_id) == operator_event["request_id"] and events[0].app == "portal"
     sent = recorder.requests[0]
     assert sent.method == "GET" and sent.url.path == path

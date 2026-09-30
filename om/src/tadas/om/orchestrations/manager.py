@@ -4,9 +4,9 @@ cursor advanced one step at a time by whichever worker holds its work item.
 This namespace is the mechanism, the same for every kind: the record, its
 start, its failure, and the two ways a parked record wakes (the event that
 clears its reason, or a person). What one step of a kind does is the
-namespace whose rows it changes: the tasks namespace steps an import and a
-cleanup, and lands the record beside its own rows (`Step`), a park among
-them."""
+namespace whose rows it changes (the tasks namespace steps an import and a
+cleanup): that namespace lands the record beside its own rows (`Step`), a
+park among them."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID

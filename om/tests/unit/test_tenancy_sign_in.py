@@ -146,10 +146,10 @@ async def signed_in_at(
 
 
 async def owner_of_team(
-    manager: TenancyManagerImpl, email: str = "ann@acme.example"
+    manager: TenancyManagerImpl, email: str = "ann@ajax.example"
 ) -> TenantContext:
     """The owner of a team org, in a session there."""
-    _, org = await manager.bootstrap(request(), "Acme", "acme", email, "Ann")
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", email, "Ann")
     return await enter(manager, await manager.dev_sign_in(request(), email), org.id)
 
 
@@ -212,7 +212,7 @@ async def test_a_first_sign_in_makes_the_person_with_their_personal_org(
 async def test_a_person_the_seeding_made_is_linked_by_the_verified_email(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
 ) -> None:
-    _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     before = await storage.read_identity_by_email_digest(email_digest("ann@example.test"))
     assert before is not None and before.subject is None
     login = await manager.sign_in_with_code(request(), twin.issue_code("ann@example.test"))
@@ -228,14 +228,14 @@ async def test_a_person_the_seeding_made_is_linked_whatever_the_case_of_the_addr
     """The seeding typed `Dee@Example.test` and the provider vouches for
     `dee@EXAMPLE.test`: one address, so one person, linked on the first
     sign-in, and nobody new."""
-    _, org = await manager.bootstrap(request(), "Acme", "acme", "Dee@Example.test", "Dee")
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", "Dee@Example.test", "Dee")
     seeded = await storage.read_identity_by_email_digest(email_digest("dee@example.test"))
     assert seeded is not None and seeded.email == "dee@example.test"
     login = await manager.sign_in_with_code(request(), twin.issue_code("dee@EXAMPLE.test"))
     assert org.id in {m.org.id for m in login.memberships}
     linked = await storage.read_identity(seeded.id)
     assert linked is not None and linked.subject == twin.user("dee@EXAMPLE.test").id
-    assert await storage.count_orgs() == 2, "Acme and Dee's personal org"
+    assert await storage.count_orgs() == 2, "Ajax and Dee's personal org"
 
 
 async def test_a_linked_person_is_found_by_the_subject_whatever_their_address(
@@ -360,38 +360,38 @@ async def test_an_invitation_is_sent_through_the_provider_and_listed(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.ADMIN)
     assert invitation.state is InvitationState.PENDING and invitation.role is Role.ADMIN
     assert invitation.created_by == ann.user_id
     [sent] = twin.sent
-    assert sent.email == "bob@acme.example" and sent.id == invitation.provider_invitation_id
+    assert sent.email == "bob@ajax.example" and sent.id == invitation.provider_invitation_id
     # The org's organization at the provider was made once and kept.
     org = await storage.read_org(ann.org_id)
     assert org is not None and org.provider_org_id is not None
     assert org.provider_org_id == sent.organization_id
     assert twin.organizations[org.provider_org_id].external_id == str(org.id)
-    await manager.invite_member(ann, "cat@acme.example", Role.MEMBER)
+    await manager.invite_member(ann, "cat@ajax.example", Role.MEMBER)
     assert len(twin.organizations) == 1
     page = await manager.get_invitations(ann, None, limit=1)
-    assert [i.email for i in page.items] == ["cat@acme.example"] and page.has_more
+    assert [i.email for i in page.items] == ["cat@ajax.example"] and page.has_more
     rest = await manager.get_invitations(ann, page.items[-1].id, limit=1)
-    assert [i.email for i in rest.items] == ["bob@acme.example"] and not rest.has_more
+    assert [i.email for i in rest.items] == ["bob@ajax.example"] and not rest.has_more
 
 
 async def test_an_invitation_needs_a_member_manager_and_a_role_at_most_theirs(
     manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     ann = await owner_of_team(manager)
-    await manager.add_member(request(), "acme", "vic@acme.example", "Vic", Role.ADMIN)
-    vic = await enter(manager, await manager.dev_sign_in(request(), "vic@acme.example"), ann.org_id)
+    await manager.add_member(request(), "ajax", "vic@ajax.example", "Vic", Role.ADMIN)
+    vic = await enter(manager, await manager.dev_sign_in(request(), "vic@ajax.example"), ann.org_id)
     with pytest.raises(NotAuthorized):
-        await manager.invite_member(vic, "own@acme.example", Role.OWNER)
-    await manager.add_member(request(), "acme", "mem@acme.example", "Mem", Role.MEMBER)
-    mem = await enter(manager, await manager.dev_sign_in(request(), "mem@acme.example"), ann.org_id)
+        await manager.invite_member(vic, "own@ajax.example", Role.OWNER)
+    await manager.add_member(request(), "ajax", "mem@ajax.example", "Mem", Role.MEMBER)
+    mem = await enter(manager, await manager.dev_sign_in(request(), "mem@ajax.example"), ann.org_id)
     with pytest.raises(NotAuthorized):
-        await manager.invite_member(mem, "x@acme.example", Role.VIEWER)
+        await manager.invite_member(mem, "x@ajax.example", Role.VIEWER)
     for email, role in (
-        ("x@acme.example", Role.SERVICE),
+        ("x@ajax.example", Role.SERVICE),
         ("smoke@platform.tadas.invalid", Role.MEMBER),
         ("not-an-address", Role.MEMBER),
     ):
@@ -405,10 +405,10 @@ async def test_a_member_or_an_open_invitation_is_not_invited_again(
 ) -> None:
     ann = await owner_of_team(manager)
     with pytest.raises(Conflict):
-        await manager.invite_member(ann, "ann@acme.example", Role.MEMBER)
-    await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
+        await manager.invite_member(ann, "ann@ajax.example", Role.MEMBER)
+    await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER)
     with pytest.raises(Conflict):
-        await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
+        await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER)
     assert len(twin.sent) == 1
 
 
@@ -419,14 +419,14 @@ async def test_an_address_is_invited_once_in_any_case(
     spelling of a pending invitation's address, or of a member's, is the
     same address."""
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "Bob@Acme.example", Role.MEMBER)
-    assert invitation.email == "bob@acme.example"
+    invitation = await manager.invite_member(ann, "Bob@Ajax.example", Role.MEMBER)
+    assert invitation.email == "bob@ajax.example"
     [sent] = twin.sent
-    assert sent.email == "bob@acme.example"
+    assert sent.email == "bob@ajax.example"
     with pytest.raises(Conflict):
-        await manager.invite_member(ann, "bob@ACME.example", Role.MEMBER)
+        await manager.invite_member(ann, "bob@AJAX.example", Role.MEMBER)
     with pytest.raises(Conflict):
-        await manager.invite_member(ann, "ANN@acme.example", Role.MEMBER)
+        await manager.invite_member(ann, "ANN@ajax.example", Role.MEMBER)
     assert len(twin.sent) == 1
 
 
@@ -434,14 +434,14 @@ async def test_an_expired_invitation_is_replaced(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     ann = await owner_of_team(manager)
-    first = await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
+    first = await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER)
     await storage.write_invitation(
         ann.org_id, first.model_copy(update={"expires_at": utcnow() - timedelta(days=1)})
     )
     twin.invitations[first.provider_invitation_id] = twin.invitations[
         first.provider_invitation_id
     ].model_copy(update={"state": ProvidedState.EXPIRED})
-    second = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
+    second = await manager.invite_member(ann, "bob@ajax.example", Role.ADMIN)
     assert second.id != first.id and second.role is Role.ADMIN
     closed = await storage.read_invitation(ann.org_id, first.id)
     assert closed is not None and closed.state is InvitationState.REVOKED
@@ -468,8 +468,8 @@ async def test_a_rerun_under_one_attempt_answers_with_the_invitation_it_made(
         ),
     )
     attempt = Attempt(target_id=target, attempt_id=attempt_id)
-    first = await manager.invite_member(ann, "bob@acme.example", Role.MEMBER, attempt)
-    again = await manager.invite_member(ann, "bob@acme.example", Role.MEMBER, attempt)
+    first = await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER, attempt)
+    again = await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER, attempt)
     assert first.id == again.id == target and len(twin.sent) == 1
 
 
@@ -479,13 +479,13 @@ async def test_an_invitation_pending_at_the_provider_is_adopted(
     """An earlier attempt sent it and lost its answer: the provider refuses a
     second, and the one it holds is the one recorded."""
     ann = await owner_of_team(manager)
-    await manager.invite_member(ann, "cat@acme.example", Role.MEMBER)
+    await manager.invite_member(ann, "cat@ajax.example", Role.MEMBER)
     org = await storage.read_org(ann.org_id)
     assert org is not None and org.provider_org_id is not None
     lost = await twin.send_invitation(
-        email="bob@acme.example", organization_id=org.provider_org_id, expires_in_days=7
+        email="bob@ajax.example", organization_id=org.provider_org_id, expires_in_days=7
     )
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER)
     assert invitation.provider_invitation_id == lost.id
 
 
@@ -493,7 +493,7 @@ async def test_an_invitation_is_sent_again_or_revoked_while_pending(
     manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER)
     resent = await manager.resend_invitation(ann, invitation.id)
     assert resent.id == invitation.id and len(twin.sent) == 2
     revoked = await manager.revoke_invitation(ann, invitation.id)
@@ -512,7 +512,7 @@ async def test_an_accepted_invitation_lands_the_membership_with_its_role(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.ADMIN)
     code = twin.accept_invitation(invitation.provider_invitation_id)
     login = await manager.sign_in_with_code(request(), code)
     [place] = [m for m in login.memberships if m.org.id == ann.org_id]
@@ -529,11 +529,11 @@ async def test_an_invitation_accepted_with_another_address_of_the_domain_lands_i
     manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
-    code = twin.accept_invitation(invitation.provider_invitation_id, "robert@acme.example")
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.MEMBER)
+    code = twin.accept_invitation(invitation.provider_invitation_id, "robert@ajax.example")
     login = await manager.sign_in_with_code(request(), code)
     [place] = [m for m in login.memberships if m.org.id == ann.org_id]
-    assert place.user.email == "robert@acme.example" and place.role is Role.MEMBER
+    assert place.user.email == "robert@ajax.example" and place.role is Role.MEMBER
 
 
 async def test_a_member_accepting_an_invitation_keeps_their_place(
@@ -543,8 +543,8 @@ async def test_a_member_accepting_an_invitation_keeps_their_place(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
-    _, bob, _ = await manager.add_member(request(), "acme", "bob@acme.example", "Bob", Role.VIEWER)
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.ADMIN)
+    _, bob, _ = await manager.add_member(request(), "ajax", "bob@ajax.example", "Bob", Role.VIEWER)
     calls = counted(twin, monkeypatch)
     login = await manager.sign_in_with_code(
         request(), twin.accept_invitation(invitation.provider_invitation_id)
@@ -572,13 +572,13 @@ async def test_the_single_sign_on_link_is_a_team_orgs_for_a_member_manager(
     assert f"organization={org.provider_org_id}" in link and "intent=sso" in link
     with pytest.raises(ValidationFailed):
         await manager.sso_setup_link(ann, "sso", "https://evil.example/settings")
-    login = await manager.dev_sign_in(request(), "ann@acme.example")
+    login = await manager.dev_sign_in(request(), "ann@ajax.example")
     personal = next(m.org for m in login.memberships if m.org.personal)
     in_personal = await enter(manager, login, personal.id)
     with pytest.raises(ValidationFailed):
         await manager.sso_setup_link(in_personal, "sso", SETTINGS)
-    await manager.add_member(request(), "acme", "mem@acme.example", "Mem", Role.MEMBER)
-    mem = await enter(manager, await manager.dev_sign_in(request(), "mem@acme.example"), ann.org_id)
+    await manager.add_member(request(), "ajax", "mem@ajax.example", "Mem", Role.MEMBER)
+    mem = await enter(manager, await manager.dev_sign_in(request(), "mem@ajax.example"), ann.org_id)
     with pytest.raises(NotAuthorized):
         await manager.sso_setup_link(mem, "domain_verification", SETTINGS)
 
@@ -598,8 +598,8 @@ async def test_a_single_sign_on_in_a_verified_domain_lands_a_member(
     ann = await owner_of_team(manager)
     org = await provider_org(manager, storage, ann)
     assert org.provider_org_id is not None
-    twin.verify_domain(org.provider_org_id, "Acme.Example")
-    code = twin.issue_code("eve@acme.example", organization_id=org.provider_org_id, via_sso=True)
+    twin.verify_domain(org.provider_org_id, "Ajax.Example")
+    code = twin.issue_code("eve@ajax.example", organization_id=org.provider_org_id, via_sso=True)
     login = await manager.sign_in_with_code(request(), code)
     [place] = [m for m in login.memberships if m.org.id == org.id]
     assert place.role is Role.MEMBER
@@ -611,14 +611,14 @@ async def test_a_single_sign_on_outside_a_verified_domain_lands_nothing(
     ann = await owner_of_team(manager)
     org = await provider_org(manager, storage, ann)
     assert org.provider_org_id is not None
-    for email, via_sso in (("eve@acme.example", True), ("mal@other.example", True)):
+    for email, via_sso in (("eve@ajax.example", True), ("mal@other.example", True)):
         if email.endswith("other.example"):
-            twin.verify_domain(org.provider_org_id, "acme.example")
+            twin.verify_domain(org.provider_org_id, "ajax.example")
         code = twin.issue_code(email, organization_id=org.provider_org_id, via_sso=via_sso)
         login = await manager.sign_in_with_code(request(), code)
         assert org.id not in {m.org.id for m in login.memberships}
     # Verified, but not through the org's single sign-on: nothing either.
-    code = twin.issue_code("sam@acme.example", organization_id=org.provider_org_id)
+    code = twin.issue_code("sam@ajax.example", organization_id=org.provider_org_id)
     login = await manager.sign_in_with_code(request(), code)
     assert org.id not in {m.org.id for m in login.memberships}
 
@@ -626,15 +626,15 @@ async def test_a_single_sign_on_outside_a_verified_domain_lands_nothing(
 async def test_a_personal_org_never_gets_a_member_through_single_sign_on(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
 ) -> None:
-    login = await manager.dev_sign_in(request(), "ann@acme.example", "Ann")
+    login = await manager.dev_sign_in(request(), "ann@ajax.example", "Ann")
     personal = login.memberships[0].org
     ann = await enter(manager, login, personal.id)
     # Invited into the personal org, its organization at the provider exists.
-    await manager.invite_member(ann, "friend@acme.example", Role.MEMBER)
+    await manager.invite_member(ann, "friend@ajax.example", Role.MEMBER)
     org = await storage.read_org(personal.id)
     assert org is not None and org.provider_org_id is not None
-    twin.verify_domain(org.provider_org_id, "acme.example")
-    code = twin.issue_code("eve@acme.example", organization_id=org.provider_org_id, via_sso=True)
+    twin.verify_domain(org.provider_org_id, "ajax.example")
+    code = twin.issue_code("eve@ajax.example", organization_id=org.provider_org_id, via_sso=True)
     eve = await manager.sign_in_with_code(request(), code)
     assert personal.id not in {m.org.id for m in eve.memberships}
 
@@ -643,8 +643,8 @@ async def test_an_organization_that_names_no_living_org_joins_nothing(
     manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
 ) -> None:
     stray = await twin.ensure_organization(external_id="not-a-uuid", name="Stray")
-    twin.verify_domain(stray.id, "acme.example")
-    code = twin.issue_code("eve@acme.example", organization_id=stray.id, via_sso=True)
+    twin.verify_domain(stray.id, "ajax.example")
+    code = twin.issue_code("eve@ajax.example", organization_id=stray.id, via_sso=True)
     login = await manager.sign_in_with_code(request(), code)
     assert [m.org.kind for m in login.memberships] == [OrgKind.PERSONAL]
 
@@ -674,8 +674,8 @@ async def test_a_member_signing_in_through_the_organization_asks_the_provider_no
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ann = await owner_of_team(manager)
-    invitation = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
-    await manager.invite_member(ann, "cy@acme.example", Role.MEMBER)
+    invitation = await manager.invite_member(ann, "bob@ajax.example", Role.ADMIN)
+    await manager.invite_member(ann, "cy@ajax.example", Role.MEMBER)
     calls = counted(twin, monkeypatch)
     code = twin.accept_invitation(invitation.provider_invitation_id)
     await manager.sign_in_with_code(request(), code)
@@ -683,11 +683,11 @@ async def test_a_member_signing_in_through_the_organization_asks_the_provider_no
     assert calls == {"get_organization": 1, "accepted_invitation": 1}
     org = await storage.read_org(ann.org_id)
     assert org is not None and org.provider_org_id is not None
-    twin.verify_domain(org.provider_org_id, "acme.example")
+    twin.verify_domain(org.provider_org_id, "ajax.example")
     calls.clear()
     for via_sso in (False, True):
         code = twin.issue_code(
-            "bob@acme.example", organization_id=org.provider_org_id, via_sso=via_sso
+            "bob@ajax.example", organization_id=org.provider_org_id, via_sso=via_sso
         )
         login = await manager.sign_in_with_code(request(), code)
         [place] = [m for m in login.memberships if m.org.id == ann.org_id]
@@ -704,13 +704,13 @@ async def test_a_removed_member_signing_in_through_the_organization_is_looked_up
     ann = await owner_of_team(manager)
     org = await provider_org(manager, storage, ann)
     assert org.provider_org_id is not None
-    twin.verify_domain(org.provider_org_id, "acme.example")
-    code = twin.issue_code("eve@acme.example", organization_id=org.provider_org_id, via_sso=True)
+    twin.verify_domain(org.provider_org_id, "ajax.example")
+    code = twin.issue_code("eve@ajax.example", organization_id=org.provider_org_id, via_sso=True)
     login = await manager.sign_in_with_code(request(), code)
     [place] = [m for m in login.memberships if m.org.id == org.id]
     await manager.remove_member(ann, place.user.id)
     calls = counted(twin, monkeypatch)
-    code = twin.issue_code("eve@acme.example", organization_id=org.provider_org_id, via_sso=True)
+    code = twin.issue_code("eve@ajax.example", organization_id=org.provider_org_id, via_sso=True)
     login = await manager.sign_in_with_code(request(), code)
     assert org.id in {m.org.id for m in login.memberships}
     # No invitation is pending in the org, so the provider's are not read.

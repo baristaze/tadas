@@ -29,7 +29,7 @@ from tadas.services.api.container import AppContainer
 from tadas.services.api.settings import ApiSettings
 
 OWNER = {"email": "ann@example.test", "name": "Ann"}
-TOTP_KEY = "dGFkYXMtdGVzdHMtdG90cC1rZXktdGhpcnR5LXR3byE="
+TOTP_KEY = "YWNtZS10ZXN0cy10b3RwLWtleS10aGlydHktdHdvISE="
 """A Fernet-shaped key for the test container's TOTP secrets, tests only."""
 
 
@@ -126,7 +126,7 @@ async def sign_in(
     unless the test names another plan, or None for the Free every org
     starts on."""
     _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
     )
     if plan is not None:
         await on_plan(container, org.id, plan)

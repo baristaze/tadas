@@ -1236,6 +1236,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Identity Delivery */
+        post: operations["identity_delivery_webhooks_identity_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/webhooks/slack/commands": {
         parameters: {
             query?: never;
@@ -1584,7 +1601,7 @@ export interface components {
         };
         /**
          * DeliveryReceivedView
-         * @description The delivery checked out and is queued; the processor stops retrying.
+         * @description The delivery checked out and is queued; the provider stops retrying.
          */
         DeliveryReceivedView: {
             /** Received */
@@ -1719,8 +1736,9 @@ export interface components {
         };
         /**
          * FilePurpose
-         * @description Which domain context a file came from. The purpose decides the bounds an
-         *     upload is held to and what `subject_id` names.
+         * @description Which context a file came from. The purpose decides the bounds an
+         *     upload is held to and what `subject_id` names. A product adds a purpose
+         *     per kind of file it keeps, with its bounds (`media.rules.BOUNDS`).
          * @enum {string}
          */
         FilePurpose: "task_attachment" | "voice_dictation" | "task_import";
@@ -2900,9 +2918,9 @@ export interface components {
         /**
          * UpdateIdentityRequest
          * @description Where the person is, as an IANA name ("Europe/Istanbul"): the portal
-         *     sends the browser's own on sign-in. A due date's reminder goes out at
-         *     nine in the morning in it; with none sent, in UTC. A name that is not
-         *     one is 422.
+         *     sends the browser's own on sign-in, and a time shown or sent to the
+         *     person is in it (a due date's reminder goes out at nine in the morning
+         *     there); with none sent, in UTC. A name that is not one is 422.
          */
         UpdateIdentityRequest: {
             /** Time Zone */
@@ -6065,6 +6083,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    identity_delivery_webhooks_identity_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "WorkOS-Signature"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryReceivedView"];
                 };
             };
             /** @description Validation Error */

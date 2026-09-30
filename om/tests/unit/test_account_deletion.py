@@ -37,7 +37,7 @@ from tadas.om.tenancy.impl.manager import (
 )
 from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
-from tadas.om.work.types.work_item import WorkKind, work_row_kind
+from tadas.om.work.types.work_item import WorkKind, asks_for_work, work_row_kind
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 SIGNED_OUT = "http://localhost:5173/signed-out"
@@ -155,7 +155,7 @@ async def test_the_typed_email_must_be_the_accounts(
 
 
 async def test_an_api_key_never_deletes_its_person(manager: TenancyManagerImpl) -> None:
-    _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     ann = await dev(manager, "ann@example.test", org.id)
     key = await manager.create_api_key(ann, "ci", Role.MEMBER)
     program = await manager.authenticate(request(), key.key)
@@ -166,20 +166,20 @@ async def test_an_api_key_never_deletes_its_person(manager: TenancyManagerImpl) 
 async def test_the_last_owner_of_a_team_org_is_refused_and_told_which(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
-    _, acme = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, ajax = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     _, globex = await manager.bootstrap(request(), "Globex", "globex", "ann@example.test", "Ann")
-    ann = await dev(manager, "ann@example.test", acme.id)
+    ann = await dev(manager, "ann@example.test", ajax.id)
     with pytest.raises(LastOwner) as refused:
         await manager.delete_account(ann, "ann@example.test")
     assert sorted(refused.value.orgs) == sorted(
-        [(str(acme.id), "Acme", "acme"), (str(globex.id), "Globex", "globex")]
+        [(str(ajax.id), "Ajax", "ajax"), (str(globex.id), "Globex", "globex")]
     )
-    assert "Acme" in refused.value.message and "Globex" in refused.value.message
+    assert "Ajax" in refused.value.message and "Globex" in refused.value.message
     assert refused.value.http_status == 409
-    assert await storage.read_session(acme.id, ann.security.credential_id) is not None
+    assert await storage.read_session(ajax.id, ann.security.credential_id) is not None
 
     # Another owner in each, and the refusal is gone.
-    for org in (acme, globex):
+    for org in (ajax, globex):
         await manager.add_member(request(), org.slug, "bob@example.test", "Bob", Role.OWNER)
     await manager.delete_account(ann, "ann@example.test")
 
@@ -200,14 +200,14 @@ async def test_the_account_goes_in_one_commit_and_asks_for_the_rest(
     relay: SpyRelay,
     twin: IdentityProviderTwinImpl,
 ) -> None:
-    _, acme = await manager.bootstrap(request(), "Acme", "acme", "owner@example.test", "Owner")
-    _, bob_in_acme, _ = await manager.add_member(
-        request(), "acme", "bob@example.test", "Bob", Role.MEMBER
+    _, ajax = await manager.bootstrap(request(), "Ajax", "ajax", "owner@example.test", "Owner")
+    _, bob_in_ajax, _ = await manager.add_member(
+        request(), "ajax", "bob@example.test", "Bob", Role.MEMBER
     )
     # Bob signs in through the provider: it knows him by a subject.
     code = twin.issue_code("bob@example.test")
     login = await manager.sign_in_with_code(request(), code)
-    bob = await enter(manager, login.token, acme.id)
+    bob = await enter(manager, login.token, ajax.id)
     identity = await manager.get_identity(bob)
     assert identity.subject is not None
     personal = next(m.org for m in login.memberships if m.org.personal)
@@ -225,8 +225,8 @@ async def test_the_account_goes_in_one_commit_and_asks_for_the_rest(
     # The person is gone: identity, sign-in delay, and every place and credential.
     assert await storage.read_identity(identity.id) is None
     assert await storage.read_sign_in_delay(email_digest(identity.email)) is None
-    assert await storage.read_user(acme.id, bob_in_acme.id) is None
-    assert await storage.read_membership_for_user(acme.id, bob_in_acme.id) is None
+    assert await storage.read_user(ajax.id, bob_in_ajax.id) is None
+    assert await storage.read_membership_for_user(ajax.id, bob_in_ajax.id) is None
     for ctx in (bob, at_home):
         assert await storage.read_session(ctx.org_id, ctx.security.credential_id) is None
     assert await storage.read_api_key(personal.id, key.api_key.id) is None
@@ -234,14 +234,19 @@ async def test_the_account_goes_in_one_commit_and_asks_for_the_rest(
     for row in relay.rows:
         assert "bob" not in str(row.payload).lower()
     kinds = {(row.org_id, row.kind, row.target_id) for row in relay.rows}
-    assert (acme.id, "tenancy.user.deleted", bob_in_acme.id) in kinds
-    assert (acme.id, work_row_kind(WorkKind.UNASSIGN_TASKS), bob_in_acme.id) in kinds
-    assert (acme.id, "tenancy.session.revoked", bob.security.credential_id) in kinds
+    assert (ajax.id, "tenancy.user.deleted", bob_in_ajax.id) in kinds
+    assert (ajax.id, "tenancy.session.revoked", bob.security.credential_id) in kinds
     assert (personal.id, "tenancy.api_key.deleted", key.api_key.id) in kinds
-    # The unassignment runs as Bob in Acme; the rest in his personal org.
-    unassign = next(r for r in relay.rows if r.kind == work_row_kind(WorkKind.UNASSIGN_TASKS))
-    assert unassign.actor_id == bob_in_acme.id
-    rest = next(r for r in relay.rows if r.kind == work_row_kind(WorkKind.DELETE_ACCOUNT))
+    # The unassignment of his open tasks runs as Bob in Ajax, and the rest in
+    # his personal org: the work the commit asks for is those two.
+    work = [r for r in relay.rows if asks_for_work(r.kind)]
+    assert [r.kind for r in work] == [
+        work_row_kind(WorkKind.UNASSIGN_TASKS),
+        work_row_kind(WorkKind.DELETE_ACCOUNT),
+    ]
+    unassign, rest = work
+    assert (unassign.org_id, unassign.target_id) == (ajax.id, bob_in_ajax.id)
+    assert unassign.actor_id == bob_in_ajax.id
     assert (rest.org_id, rest.target_id) == (personal.id, personal.id)
     assert rest.payload == {"provider_user_id": identity.subject}
     # The personal org stays until the provider's side is done.
@@ -281,10 +286,10 @@ async def test_the_personal_org_goes_last_and_keeps_no_retention(
 
 
 async def test_only_a_deleted_persons_org_is_deleted_this_way(manager: TenancyManagerImpl) -> None:
-    _, acme = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, ajax = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     ann = await dev(manager, "ann@example.test")
     home = await manager.service_context(request(), ann.org_id, ann.user_id)
-    team = await manager.service_context(request(), acme.id, ann.user_id)
+    team = await manager.service_context(request(), ajax.id, ann.user_id)
     for ctx in (home, team):
         with pytest.raises(PersonalOrgFixed):
             await manager.delete_personal_org(ctx)

@@ -64,7 +64,7 @@ async def over_postgres(
         suffix = new_id().hex[-8:]
         email = f"ann-{suffix}@example.test"
         _, org = await container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", f"acme-{suffix}", email, OWNER["name"]
+            seed_request(), "Ajax", f"ajax-{suffix}", email, OWNER["name"]
         )
         yield container, client, await sign_in_as(client, email, org.id)
 

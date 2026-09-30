@@ -1,20 +1,28 @@
 """What an inbound delivery carries into a route: its body, byte for byte,
-and the provider's signature headers. The gateway reads them, and the
+and the provider's signature header. The gateway reads them, and the
 service checks the one against the other before anything is queued."""
 
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
-from tadas.services.api.services.billing import SignedDelivery
+from tadas.integrations.identity.deliveries import SIGNATURE_HEADER
 from tadas.services.api.services.slack import SlackRequest
+from tadas.services.api.services.webhooks import SignedDelivery
 
 
-async def signed_delivery(
+async def identity_delivery(
     request: Request,
-    stripe_signature: Annotated[str | None, Header(alias="Stripe-Signature")] = None,
+    signature: Annotated[str | None, Header(alias=SIGNATURE_HEADER)] = None,
 ) -> SignedDelivery:
-    return SignedDelivery(payload=await request.body(), signature=stripe_signature)
+    return SignedDelivery(payload=await request.body(), signature=signature)
+
+
+async def stripe_delivery(
+    request: Request,
+    signature: Annotated[str | None, Header(alias="Stripe-Signature")] = None,
+) -> SignedDelivery:
+    return SignedDelivery(payload=await request.body(), signature=signature)
 
 
 async def slack_request(
@@ -29,5 +37,6 @@ async def slack_request(
     )
 
 
-StripeDelivery = Annotated[SignedDelivery, Depends(signed_delivery)]
+IdentityDelivery = Annotated[SignedDelivery, Depends(identity_delivery)]
+StripeDelivery = Annotated[SignedDelivery, Depends(stripe_delivery)]
 SlackCall = Annotated[SlackRequest, Depends(slack_request)]

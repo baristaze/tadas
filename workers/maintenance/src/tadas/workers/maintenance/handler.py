@@ -1,4 +1,4 @@
-"""The handlers of the work kinds: NOOP, which keeps the loop honest, and
+"""The handlers of NOOP, the kind that keeps the loop honest, and of
 SYNC_SEATS, which holds a per-seat subscription's quantity to the org's
 active members.
 

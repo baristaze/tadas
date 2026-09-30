@@ -127,10 +127,10 @@ def test_no_source_spells_a_spread_inside_model_copy() -> None:
 def test_the_scan_sees_every_source_tree() -> None:
     seen = {str(path.relative_to(REPO)) for path in source_files()}
     assert {
-        "om/src/tadas/om/tasks/impl/manager.py",
+        "om/src/tadas/om/media/impl/manager.py",
         "om/src/tadas/om/tenancy/impl/manager.py",
         "infra/src/tadas/infra/base.py",
-        "services/api/src/tadas/services/api/services/impl/tasks.py",
+        "services/api/src/tadas/services/api/services/impl/media.py",
         "workers/maintenance/src/tadas/workers/maintenance/loop.py",
         "apps/cli/src/tadas/apps/cli/config.py",
         "clients/python/src/tadas/client/client.py",

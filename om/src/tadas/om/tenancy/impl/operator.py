@@ -83,7 +83,7 @@ class TenancyOperatorOptions(Platform):
 class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
     """Reads a tenant's rows through the storage of the namespace that owns
     them, under the tenant the operator named, never through that namespace's
-    manager: a tenant manager takes an `TenantContext`, and none exists on this
+    manager: a tenant manager takes a `TenantContext`, and none exists on this
     plane."""
 
     def __init__(

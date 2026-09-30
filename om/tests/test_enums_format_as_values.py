@@ -19,6 +19,8 @@ from tadas.om.context import (
     Permission,
     Role,
 )
+from tadas.om.media.types.file import FilePurpose, FileStatus
+from tadas.om.orchestrations.types.orchestration import OrchestrationKind, OrchestrationStatus
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.scopes import ScopeKind
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
@@ -37,6 +39,10 @@ ENUMS = [
     Role,
     DatabaseRole,
     ScopeKind,
+    FilePurpose,
+    FileStatus,
+    OrchestrationKind,
+    OrchestrationStatus,
     TaskScope,
     TaskStatus,
     WorkKind,

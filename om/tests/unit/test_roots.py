@@ -11,6 +11,10 @@ from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.media import MediaManagerInterface
 from tadas.om.media.storage import MediaStorageInterface
+from tadas.om.orchestrations import OrchestrationsManagerInterface
+from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
+from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.root import build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
@@ -20,7 +24,7 @@ from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
 from tadas.om.tenancy.storage import TenancyStorageInterface
-from tadas.om.work import WorkManagerInterface
+from tadas.om.work import WorkManagerInterface, WorkOperatorManagerInterface
 from tadas.om.work.storage import WorkStorageInterface
 
 
@@ -32,6 +36,8 @@ async def test_memory_root_serves_every_storage() -> None:
     assert isinstance(root.get_media_storage(), MediaStorageInterface)
     assert isinstance(root.get_idempotency_storage(), IdempotencyStorageInterface)
     assert isinstance(root.get_event_storage(), EventStorageInterface)
+    assert isinstance(root.get_outbox_storage(), OutboxStorageInterface)
+    assert isinstance(root.get_orchestrations_storage(), OrchestrationsStorageInterface)
     assert isinstance(root.get_billing_storage(), BillingStorageInterface)
     assert await root.healthcheck() is True
     await root.close()
@@ -90,10 +96,13 @@ def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     assert isinstance(managers.tenancy, TenancyManagerInterface)
     assert isinstance(managers.tenancy_operator, TenancyOperatorManagerInterface)
     assert isinstance(managers.work, WorkManagerInterface)
+    assert isinstance(managers.work_operator, WorkOperatorManagerInterface)
     assert isinstance(managers.media, MediaManagerInterface)
     assert isinstance(managers.tasks, TasksManagerInterface)
     assert isinstance(managers.idempotency, IdempotencyManagerInterface)
     assert isinstance(managers.events, EventsManagerInterface)
+    assert isinstance(managers.outbox, OutboxRelayInterface)
+    assert isinstance(managers.orchestrations, OrchestrationsManagerInterface)
     assert isinstance(managers.billing, BillingManagerInterface)
     assert isinstance(managers.billing_operator, BillingOperatorManagerInterface)
 

@@ -13,7 +13,7 @@ from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
 
-def make_org(name: str = "Acme") -> Org:
+def make_org(name: str = "Ajax") -> Org:
     now = utcnow()
     org_id = new_id()
     return Org(
