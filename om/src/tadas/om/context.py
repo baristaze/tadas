@@ -121,7 +121,7 @@ class SecurityContext(Platform):
 
 class AppContext(Platform):
     type: AppType
-    version: str  # e.g. "portal@0.9.0"
+    version: str  # e.g. "portal@0.10.0"
 
 
 # Stages: refinement by evidence.

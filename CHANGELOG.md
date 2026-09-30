@@ -4,6 +4,55 @@ Each release has an entry here, the newest first. An entry lists what
 changed since the previous tag. A project that clones Tadas at a release
 checks out its tag, such as `git clone --branch v0.7.0`.
 
+## 0.10.0 (2026-09-30)
+
+Tadas is its scaffold plus its product. Every file the scaffold also
+holds takes the scaffold's text, and what stays different is the
+product, the environments, and the history. The pin moves to guideline
+v0.41.0 by merging the scaffold. The API gains one route, for the
+identity provider's deliveries. No wire type, screen, or migration
+changes.
+
+- **The identity provider's signed deliveries come in.**
+  `POST /webhooks/identity` takes them, beside the payment processor's
+  and Slack's routes. It checks the signature and queues the delivery,
+  and the maintenance worker records an org's event as the audit entry
+  `identity.event.received`. With `TADAS_WORKOS_WEBHOOK_SECRET` unset
+  or `off`, the route answers 503 to every delivery. Each environment's
+  Terraform creates the secret and gives it to the API, and it stays
+  `off` until a person writes it. (#181, #182)
+- **The guideline pin moves to v0.41.0.** `main` holds the scaffold
+  base in its history and merges the `scaffold` branch at v0.41.0.
+  `make arch-check` passes at v0.41.0, and ADR 0083 records what the
+  release asks: nothing of it is a deviation. (#179, #184)
+- **The Python packages are the scaffold's, plus the product.** `om`,
+  `infra`, `integrations`, `services`, `workers`, `clients/python`, and
+  `ops` take the scaffold's text. The worker's consumer of deliveries
+  is the scaffold's registry of providers. (#182)
+- **The apps and the TypeScript client are the scaffold's, plus the
+  product.** Settings reads storage through the scaffold's storage
+  model. `ApiError` takes the plan's bound as its last argument. Stored
+  preferences drop a field they do not know, and a stored scope that is
+  not one reads as the default. (#183)
+- **The local stack takes the scaffold's defaults.** Every host port
+  the compose stack publishes is a knob in `.env.example`. MinIO's
+  local password and the bucket prefix `tadas-local` are the
+  scaffold's: an older `.env` takes `TADAS_S3_SECRET_KEY` and
+  `TADAS_S3_BUCKET_PREFIX` from `.env.example`. The local TOTP key is
+  the scaffold's too: a local operator enrolled under the old key
+  keeps that key in `.env`, or makes the local database again with
+  `make reset`. (#181, #184)
+- **The deployment** takes the scaffold's text. Each root's sign-in
+  client id is a variable that defaults to the real id, and the
+  dashboard's `SEARCH` quotes its namespace. (#181)
+- **The ops and audit skills** take the scaffold's text, and they name
+  the identity provider's deliveries. (#181, #184)
+- **The docs and the ADRs take the scaffold's text,** with Tadas's
+  product, environments, and history: `docs/`, the README, `llms.txt`,
+  `specs/architecture.md`, and the issue templates. ADRs 0010, 0027,
+  and 0061 keep their names and take the scaffold's text of the same
+  decisions. (#180)
+
 ## 0.9.0 (2026-09-30)
 
 Tadas's base is the guideline's scaffold, and the pin moves to v0.40.0
