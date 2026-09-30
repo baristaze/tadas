@@ -15,7 +15,7 @@ from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.body import MAX_BODY_BYTES
 
-PDF = b"%PDF-1.7 the plan"
+PDF = b"%PDF-1.7 the report"
 
 
 async def a_task(client: httpx.AsyncClient, headers: dict[str, str], title: str = "Ship") -> str:
@@ -28,7 +28,7 @@ async def start(
     client: httpx.AsyncClient,
     headers: dict[str, str],
     task_id: str,
-    name: str = "plan.pdf",
+    name: str = "report.pdf",
     content_type: str = "application/pdf",
     size: int = len(PDF),
 ) -> httpx.Response:
@@ -70,12 +70,17 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     )
     assert "key" not in pending, "where the bytes live is never on the wire"
     listed = await client.get(f"/v1/tasks/{task_id}/attachments", headers=owner)
+    assert listed.status_code == 200, listed.text
     assert listed.json() == {"items": [], "next_cursor": None}, "a pending file is not listed"
     early = await client.post(f"/v1/media/files/{pending['id']}/confirm", headers=owner)
     assert early.status_code == 422, "no object, no confirm"
 
     stored = await attach(client, owner, task_id)
-    assert (stored["status"], stored["name"], stored["extension"]) == ("stored", "plan.pdf", "pdf")
+    assert (stored["status"], stored["name"], stored["extension"]) == (
+        "stored",
+        "report.pdf",
+        "pdf",
+    )
     listed = await client.get(f"/v1/tasks/{task_id}/attachments", headers=owner)
     assert [f["id"] for f in listed.json()["items"]] == [stored["id"]]
 
@@ -84,7 +89,7 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     content = await client.get(f"/v1/media/files/{stored['id']}/content", headers=owner)
     assert content.status_code == 200 and content.content == PDF
     assert content.headers["content-type"] == "application/pdf"
-    assert content.headers["content-disposition"] == "attachment; filename*=UTF-8''plan.pdf"
+    assert content.headers["content-disposition"] == "attachment; filename*=UTF-8''report.pdf"
     preview = await client.get(
         f"/v1/media/files/{stored['id']}/content", headers=owner, params={"inline": "true"}
     )
@@ -98,6 +103,8 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     ] == []
     gone = await client.get(f"/v1/media/files/{stored['id']}", headers=owner)
     assert gone.status_code == 404
+    usage = (await client.get("/v1/media/usage", headers=owner)).json()
+    assert usage["total_count"] == 0, "a deleted file stops counting at once"
 
 
 async def test_a_retried_start_lands_one_file(
@@ -105,12 +112,14 @@ async def test_a_retried_start_lands_one_file(
 ) -> None:
     task_id = await a_task(client, owner)
     headers = {**owner, "Idempotency-Key": str(uuid4())}
-    body = {"name": "plan.pdf", "content_type": "application/pdf", "size_bytes": 10}
+    body = {"name": "report.pdf", "content_type": "application/pdf", "size_bytes": 10}
     first = await client.post(f"/v1/tasks/{task_id}/attachments", headers=headers, json=body)
     again = await client.post(f"/v1/tasks/{task_id}/attachments", headers=headers, json=body)
     assert first.status_code == again.status_code == 201
     assert first.json()["id"] == again.json()["id"]
     assert again.headers["idempotent-replayed"] == "true"
+    usage = (await client.get("/v1/media/usage", headers=owner)).json()
+    assert usage["pending_size_bytes"] == 10, "one pending file, not two"
 
 
 @pytest.mark.parametrize(
@@ -118,8 +127,8 @@ async def test_a_retried_start_lands_one_file(
     [
         ("page.html", "text/html", 10),
         ("image.svg", "image/svg+xml", 10),
-        ("plan.png", "application/pdf", 10),
-        ("plan.pdf", "application/pdf", 100 * 1024 * 1024 + 1),
+        ("report.png", "application/pdf", 10),
+        ("report.pdf", "application/pdf", 100 * 1024 * 1024 + 1),
         ("a/b.pdf", "application/pdf", 10),
     ],
 )
@@ -194,6 +203,30 @@ async def test_a_viewer_reads_attachments_and_starts_none(
     assert (await start(client, viewer, task_id)).status_code == 403
     removal = await client.delete(f"/v1/tasks/{task_id}/attachments/{stored['id']}", headers=viewer)
     assert removal.status_code == 403
+    kept = await client.get(f"/v1/media/files/{stored['id']}", headers=owner)
+    assert kept.status_code == 200 and kept.json()["deleted_at"] is None
+
+
+async def test_an_upload_is_its_starters_until_it_is_stored(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    """Another member reads a pending file but signs no form for it, moves no
+    bytes into it, and confirms it for nobody."""
+    task_id = await a_task(client, owner)
+    started = (await start(client, owner, task_id)).json()
+    org_id = UUID((await client.get("/v1/me", headers=owner)).json()["org"]["id"])
+    await add_member(container, org_id, "mia@example.test", Role.MEMBER)
+    mia = await sign_in_as(client, "mia@example.test", org_id)
+    file_id = started["id"]
+    assert (await client.get(f"/v1/media/files/{file_id}", headers=mia)).status_code == 200
+    moves: list[tuple[str, str, dict]] = [
+        ("POST", f"/v1/media/files/{file_id}/upload", {}),
+        ("PUT", f"/v1/media/files/{file_id}/content", {"content": PDF}),
+        ("POST", f"/v1/media/files/{file_id}/confirm", {}),
+    ]
+    for method, path, extra in moves:
+        refused = await client.request(method, path, headers=mia, **extra)
+        assert refused.status_code == 403, f"{method} {path}: {refused.status_code}"
 
 
 async def test_another_tenants_file_answers_as_a_missing_one(
@@ -233,7 +266,9 @@ async def test_the_namespaces_setting_mounts_the_media_routes_alone(tmp_path: Pa
     app = create_app(build_container(tmp_path, namespaces=["media"]))
     paths = set(app.openapi()["paths"])
     assert "/v1/media/usage" in paths
-    assert not any(p.startswith(("/v1/tasks", "/v1/auth", "/v1/events")) for p in paths)
+    assert not any(
+        p.startswith(("/v1/tasks", "/v1/auth", "/v1/events", "/v1/admin")) for p in paths
+    )
     whole = set(create_app(build_container(tmp_path)).openapi()["paths"])
     assert paths < whole
 

@@ -4,8 +4,10 @@ redeemed. An admitted socket lives as long as the credential behind its
 ticket and no longer."""
 
 import asyncio
+import itertools
 import logging
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -37,7 +39,35 @@ from tadas.services.api.services.realtime import (
     CREDENTIAL_REVOKED,
     MEMBERSHIP_ENDED,
     RIGHTS_CHANGED,
+    RealtimeServiceInterface,
 )
+
+
+def registrations(
+    service: RealtimeServiceInterface, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, int]:
+    """How many sockets the handler registered with the realtime service, and
+    how many it unregistered: a socket that ended and stayed registered is
+    one the bus still ends, and a tenant whose head the process still keeps."""
+    counts = {"attached": 0, "detached": 0}
+    attach = service.attach
+
+    def counted(
+        principal: SocketPrincipal,
+        end: Callable[[str], None],
+        recheck_now: Callable[[], None] = lambda: None,
+    ) -> Callable[[], None]:
+        counts["attached"] += 1
+        detach = attach(principal, end, recheck_now)
+
+        def counted_detach() -> None:
+            counts["detached"] += 1
+            detach()
+
+        return counted_detach
+
+    monkeypatch.setattr(service, "attach", counted)
+    return counts
 
 
 def test_a_refused_ticket_closes_the_accepted_socket_with_4401(tmp_path: Path) -> None:
@@ -69,7 +99,7 @@ def test_a_client_that_drops_mid_stream_is_not_an_error(
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
 
@@ -102,7 +132,7 @@ async def test_the_close_after_the_peer_left_is_not_an_error(
     is logged as an error."""
     container = build_container(tmp_path)
     _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
     )
     app = create_app(container)
     async with app.router.lifespan_context(app):
@@ -156,7 +186,7 @@ def test_a_binary_frame_is_a_bad_command_and_the_socket_stays_open(tmp_path: Pat
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:
@@ -174,7 +204,7 @@ def session_token(container: AppContainer) -> str:
     """Signs the owner in and returns the session token."""
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     tenancy = container.managers.tenancy
@@ -236,7 +266,7 @@ def test_revoking_the_session_behind_a_socket_closes_it_and_no_other(tmp_path: P
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:
@@ -258,7 +288,7 @@ def test_removing_a_member_closes_their_socket(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     bob = run(add_member(container, org.id, "bob@example.test", Role.MEMBER))
@@ -278,7 +308,7 @@ def test_revoking_an_api_key_closes_the_socket_it_opened(tmp_path: Path) -> None
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     run(on_plan(container, org.id, Plan.TEAM))
@@ -302,11 +332,12 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
     """The head read is the socket's first I/O and it can fail: a database out
     of reach is exactly when every client reconnects at once. The drainer must
     not exist yet when it does, or each of those reconnects leaves a task
-    waiting on its buffer for the life of the process."""
+    waiting on its buffer for the life of the process; and the socket,
+    registered before the read, is unregistered as it closes."""
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
 
@@ -314,6 +345,7 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
         raise BackendFailed("postgres", "read_head", "connection refused")
 
     monkeypatch.setattr(type(container.services.get_realtime_service()), "head", unreachable)
+    registered = registrations(container.services.get_realtime_service(), monkeypatch)
 
     drains: list[str] = []
     real_drain = SendBuffer.drain
@@ -333,6 +365,7 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
     # frame and not an HTTP response the server would refuse as a protocol error.
     assert closed.value.code == 1011
     assert closed.value.reason == "internal_error"
+    assert registered == {"attached": 1, "detached": 1}
 
 
 def test_a_revocation_during_the_hello_still_closes_the_socket(
@@ -345,7 +378,7 @@ def test_a_revocation_during_the_hello_still_closes_the_socket(
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     service = container.services.get_realtime_service()
@@ -392,7 +425,7 @@ def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
     container = build_container(tmp_path, realtime_head_max_age_seconds=0)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     service = type(container.services.get_realtime_service())
@@ -443,7 +476,7 @@ def test_a_socket_the_database_did_not_answer_in_time_logs_warnings(
     container = build_container(tmp_path, realtime_head_max_age_seconds=0)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     service = type(container.services.get_realtime_service())
@@ -538,7 +571,7 @@ def test_a_change_of_role_closes_the_socket_to_reconnect(tmp_path: Path) -> None
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     bob = run(add_member(container, org.id, "bob@example.test", Role.ADMIN))
@@ -564,7 +597,7 @@ def test_a_change_of_role_the_bus_lost_closes_the_socket_within_the_recheck(
     container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     bob = run(add_member(container, org.id, "bob@example.test", Role.ADMIN))
@@ -592,7 +625,7 @@ def test_a_downgrade_the_bus_lost_closes_the_keys_socket_within_the_recheck(
     container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
     run(on_plan(container, org.id, Plan.TEAM))
@@ -616,12 +649,49 @@ def test_a_downgrade_the_bus_lost_closes_the_keys_socket_within_the_recheck(
     assert closed.value.reason == "plan_limit_reached"
 
 
+async def test_the_recheck_runs_every_interval_until_it_is_refused(tmp_path: Path) -> None:
+    """The first check waits its phase, every later one the interval; a check
+    that holds keeps the loop going, and the first refusal ends the socket
+    with its reason and ends the loop."""
+    container = build_container(tmp_path)
+    tenancy = container.managers.tenancy
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
+    login = await tenancy.dev_sign_in(seed_request(), OWNER["email"])
+    identity = await tenancy.authenticate_login(seed_request(), login.token)
+    ctx = await tenancy.authenticate(
+        seed_request(), (await tenancy.exchange_login(identity, org.id)).token
+    )
+    principal = await tenancy.redeem_ticket(
+        seed_request(), (await tenancy.issue_ticket(ctx)).ticket
+    )
+    service = container.services.get_realtime_service()
+    answers = iter([None, None, "not_authenticated"])
+    asked: list[float] = []
+
+    async def recheck(asked_about: SocketPrincipal) -> str | None:
+        assert asked_about == principal
+        asked.append(time.monotonic())
+        return next(answers)
+
+    service.recheck = recheck  # type: ignore[method-assign]
+    ended: list[str] = []
+    began = time.monotonic()
+    await asyncio.wait_for(
+        recheck_until_refused(service, principal, ended.append, 0.05, phase=lambda _: 0.0),
+        timeout=2.0,
+    )
+    assert ended == ["not_authenticated"]
+    assert len(asked) == 3
+    assert asked[0] - began < 0.05, "the first check waits its phase, here none"
+    assert all(later - earlier >= 0.04 for earlier, later in itertools.pairwise(asked))
+
+
 async def test_a_nudge_runs_the_recheck_at_once(tmp_path: Path) -> None:
     """A recheck a nudge wakes runs at once, not at the end of the interval,
     and the interval starts again after it."""
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
     login = await tenancy.dev_sign_in(seed_request(), OWNER["email"])
     identity = await tenancy.authenticate_login(seed_request(), login.token)
     ctx = await tenancy.authenticate(
@@ -661,8 +731,8 @@ def test_a_recheck_that_cannot_be_made_closes_the_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A database out of reach is no proof the credential holds: the socket
-    closes with 1011, as on any failure of its handler, and the client
-    reconnects once a ticket can be minted again."""
+    closes with 1011, as on any failure of its handler, is unregistered, and
+    the client reconnects once a ticket can be minted again."""
     container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
     service = container.services.get_realtime_service()
 
@@ -670,6 +740,7 @@ def test_a_recheck_that_cannot_be_made_closes_the_socket(
         raise BackendFailed("postgres", "read_session", "connection refused")
 
     monkeypatch.setattr(service, "recheck", unreachable)
+    registered = registrations(service, monkeypatch)
     token = session_token(container)
     with TestClient(create_app(container)) as tc:
         with open_socket(tc, {"Authorization": f"Bearer {token}"}) as ws:
@@ -678,3 +749,4 @@ def test_a_recheck_that_cannot_be_made_closes_the_socket(
                 ws.receive_json()
     assert closed.value.code == 1011
     assert closed.value.reason == "internal_error"
+    assert registered == {"attached": 1, "detached": 1}
