@@ -1,12 +1,16 @@
 """The business-layer root: constructs every manager in dependency order and
 hands back one frozen object with a field per manager."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
-from tadas.infra.cache import CacheScope
+from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.root import InfraInterface
+from tadas.integrations.identity import IdentityProviderInterface
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.root import IntegrationsInterface
+from tadas.om.base import utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.idempotency import IdempotencyManagerInterface
@@ -19,8 +23,13 @@ from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
+from tadas.om.tenancy.impl.credentials import TenancyCredentialsManagerImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.impl.members import TenancyMembersManagerImpl
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
+from tadas.om.tenancy.impl.org import TenancyOrgManagerImpl
+from tadas.om.tenancy.impl.sign_in import TenancySignInManagerImpl
+from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.work import WorkManagerInterface, WorkOperatorManagerInterface
 from tadas.om.work.impl.manager import WorkManagerImpl, WorkOptions
 from tadas.om.work.impl.operator import WorkOperatorManagerImpl
@@ -37,6 +46,53 @@ class Managers:
     events: EventsManagerInterface
     outbox: OutboxRelayInterface
     orchestrations: OrchestrationsManagerInterface
+
+
+def build_tenancy(
+    storage: TenancyStorageInterface,
+    relay: OutboxRelayInterface,
+    cache: CacheInterface,
+    options: TenancyOptions,
+    clock: Callable[[], datetime] = utcnow,
+    *,
+    identity_provider: IdentityProviderInterface,
+) -> TenancyManagerInterface:
+    """The tenancy manager with its delegates, each built here and handed to
+    it: a caller outside the namespace reaches a delegate through the
+    manager, and no impl builds another. A delegate that calls a sibling
+    takes it here, by its interface, and one that needs an operation of the
+    manager takes that one operation as a callable. `clock` is the one the
+    second factor's time step is read from."""
+    sign_in = TenancySignInManagerImpl(
+        storage, relay, options, clock, identity_provider=identity_provider
+    )
+    # The account's deletion writes a row under each place its person holds,
+    # and a stage comes only from the manager's transition. The manager holds
+    # this delegate, so that one edge is bound at call time.
+    org = TenancyOrgManagerImpl(
+        storage,
+        relay,
+        options,
+        identity_provider=identity_provider,
+        service_context=lambda rctx, org_id, user_id: tenancy.service_context(
+            rctx, org_id, user_id
+        ),
+    )
+    members = TenancyMembersManagerImpl(
+        storage, relay, options, org=org, identity_provider=identity_provider
+    )
+    credentials = TenancyCredentialsManagerImpl(storage, relay, options)
+    tenancy = TenancyManagerImpl(
+        storage,
+        relay,
+        cache,
+        options,
+        sign_in=sign_in,
+        org=org,
+        members=members,
+        credentials=credentials,
+    )
+    return tenancy
 
 
 def build_managers(
@@ -71,7 +127,7 @@ def build_managers(
         infra.get_topics(),
         lambda: managers.work,
     )
-    tenancy = TenancyManagerImpl(
+    tenancy = build_tenancy(
         storage.get_tenancy_storage(),
         outbox,
         infra.get_cache(CacheScope.REALTIME_TICKET),

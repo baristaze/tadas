@@ -33,7 +33,7 @@ from tadas.om.tenancy.impl.creates import (
     create_org_with_owner,
     user_payload,
 )
-from tadas.om.tenancy.impl.manager import ended_by, exchange_sign_in, new_operator_token
+from tadas.om.tenancy.impl.shared import ended_by, exchange_sign_in, new_operator_token
 from tadas.om.tenancy.impl.totp import TotpSealer, new_totp_secret
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
 from tadas.om.tenancy.rules import (

@@ -16,8 +16,10 @@ from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationKind
+from tadas.om.root import build_tenancy
 from tadas.om.storage.impl.memory import StorageMemoryImpl
-from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
@@ -51,11 +53,11 @@ def request() -> RequestContext:
 
 def signing(
     container: WorkerContainer, identity_provider: IdentityProviderInterface | None = None
-) -> TenancyManagerImpl:
+) -> TenancyManagerInterface:
     """A tenancy manager over the worker's storage that signs people in: by
     address, with the local sign-in on, or through `identity_provider` when
     one is given. The worker signs nobody in itself."""
-    return TenancyManagerImpl(
+    return build_tenancy(
         container.storage.get_tenancy_storage(),
         container.managers.outbox,
         container.infra.get_cache(CacheScope.REALTIME_TICKET),
@@ -70,9 +72,9 @@ async def sign_in(container: WorkerContainer, slug: str = "ajax") -> TenantConte
     tenancy = container.managers.tenancy
     email = "ann@example.test" if slug == "ajax" else f"ann@{slug}.test"
     _, org = await tenancy.bootstrap(request(), slug.title(), slug, email, "Ann")
-    login = await signing(container).dev_sign_in(request(), email)
+    login = await signing(container).sign_in.dev_sign_in(request(), email)
     identity = await tenancy.authenticate_login(request(), login.token)
-    issued = await tenancy.exchange_login(identity, org.id)
+    issued = await tenancy.sign_in.exchange_login(identity, org.id)
     return await tenancy.authenticate(request(), issued.token)
 
 
