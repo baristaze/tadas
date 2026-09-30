@@ -154,20 +154,31 @@ runs once, before the passes. It is not a pass.
    carries `request_id` and `app` beside the actor, which the tenant's
    own feed leaves out, so it is the map from what the tenant did to
    the requests that did it. The rows themselves are the org and its
-   members of step 2, and its tasks, the open ones or the done ones,
-   read as those two are:
+   members of step 2, and its tasks, read as those two are. A read
+   answers one status, so the tasks are read twice: `<status>` is
+   `open`, then `done`.
 
    ```bash
    set -a; . ~/.config/tadas/ops/<env>.env; set +a
-   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/tasks?status=<open|done>" \
+   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/tasks?status=<status>" \
      | jq '{tasks: [.items[]? | {id, status, created_by, assignee_id, created_at, updated_at, archived_at, deleted_at, reminded_at}], next_cursor, error: .error.code}'
    ```
 
    The read keeps a task's ids, its status, and its timestamps, and
    drops what the tenant wrote: its `title`, its `notes`, and its
    `due_on`. Never run it without its `jq`. A page holds at most 50
-   tasks, and a next page is read as a next page of members is: with
-   `next_cursor` as `cursor`, through the same `jq`, at most 20 pages.
+   tasks. When `next_cursor` is not null, read the next page of the
+   same status with it as `cursor`, through the same `jq`:
+
+   ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
+   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/tasks?status=<status>&cursor=<next_cursor>" \
+     | jq '{tasks: [.items[]? | {id, status, created_by, assignee_id, created_at, updated_at, archived_at, deleted_at, reminded_at}], next_cursor, error: .error.code}'
+   ```
+
+   Read at most 20 pages of each status, 1,000 tasks. After the
+   twentieth the read of that status stops, and the report says "more
+   than 1,000 open tasks", or done ones.
 
    The feed reads only forward from `after_seq`, with no time filter,
    so the skill first finds the window's first `seq`, and never reads

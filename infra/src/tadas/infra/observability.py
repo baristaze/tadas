@@ -241,13 +241,15 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(line)
 
 
-HTTP_CLIENT_LOGGERS = ("httpx", "httpcore", "urllib3")
+HTTP_CLIENT_LOGGERS = ("httpx", "httpcore", "urllib3", "slack_sdk")
 """The HTTP clients' own loggers. Below WARNING they write a request's URL
 with its query: `httpx` every request at INFO, `urllib3` a redirect. A
 provider's lookup names what it looks for in its query, an invitee's address
 among them, and the line and the breadcrumb it becomes would carry it. So
 they write from WARNING up, whatever the level; the request's own breadcrumb
-keeps its method, its path, and its status (`outgoing_breadcrumb`)."""
+keeps its method, its path, and its status (`outgoing_breadcrumb`). Tadas's
+Slack client is one: its retry line writes a reply's whole URL at INFO, and
+that URL is a credential (`PATH_IS_A_CREDENTIAL`)."""
 
 
 def configure_logging(level: str, json_logs: bool) -> None:
@@ -345,13 +347,21 @@ def outgoing_breadcrumb(crumb: Any, hint: Any) -> Any:
     return crumb
 
 
+PATH_IS_A_CREDENTIAL = frozenset({"hooks.slack.com"})
+"""Hosts whose URL path is a credential, so a breadcrumb names them by their
+scheme and host alone. Tadas's: Slack's reply URL lets whoever holds it post
+into the channel as the app."""
+
+
 def _where_to(url: str) -> str | None:
-    """`url` without its credentials, its query, and its fragment."""
+    """`url` without its credentials, its query, and its fragment, and without
+    its path on a host of `PATH_IS_A_CREDENTIAL`."""
     try:
         parts = urlsplit(url)
     except ValueError:
         return None
-    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", ""))
+    path = "" if parts.hostname in PATH_IS_A_CREDENTIAL else parts.path
+    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], path, "", ""))
 
 
 def configure_error_reporting(
