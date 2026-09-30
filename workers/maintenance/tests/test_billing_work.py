@@ -27,6 +27,7 @@ from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, Wo
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import SyncSeatsHandlerImpl
+from tadas.workers.maintenance.main import build_consumer
 
 PORTAL = "http://portal.test/settings/billing"
 
@@ -36,12 +37,12 @@ def twin_of(container: WorkerContainer) -> PaymentsTwinImpl:
 
 
 def consumer_of(container: WorkerContainer) -> DeliveryConsumer:
-    return DeliveryConsumer(
-        queues=container.infra.get_queues(),
-        billing=container.managers.billing,
-        tenancy=container.managers.tenancy,
-        options=DeliveryOptions(worker_id="maintenance-test", wait=timedelta(0)),
+    """The worker's own consumer, with a long poll that answers at once."""
+    built = build_consumer(container)
+    built._options = DeliveryOptions(  # pyright: ignore[reportPrivateUsage]
+        worker_id="maintenance-test", wait=timedelta(0)
     )
+    return built
 
 
 async def queued(container: WorkerContainer, payload: bytes) -> QueueMessage:
@@ -113,9 +114,12 @@ async def test_the_consumer_runs_until_it_is_stopped(tmp_path: Path) -> None:
     ctx = await sign_in(container)
     payload = await checkout(container, ctx, Plan.TEAM, 1)
     delivery = delivery_of(json.loads(payload))
-    await container.infra.get_queues().send(
-        Queues.WEBHOOKS, json.dumps({"delivery": delivery.model_dump(mode="json")}).encode()
-    )
+    body = {
+        "idempotency_key": str(delivery.idempotency_key),
+        "provider": "stripe",
+        "delivery": delivery.model_dump(mode="json"),
+    }
+    await container.infra.get_queues().send(Queues.WEBHOOKS, json.dumps(body).encode())
     consumer = consumer_of(container)
     running = asyncio.create_task(consumer.run())
     for _ in range(100):

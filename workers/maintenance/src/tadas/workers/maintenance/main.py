@@ -28,7 +28,12 @@ from tadas.workers.maintenance.accounts import (
     UnassignTasksHandlerImpl,
 )
 from tadas.workers.maintenance.container import MEDIA_PURGE_BATCH, WorkerContainer
-from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
+from tadas.workers.maintenance.deliveries import (
+    DeliveryConsumer,
+    DeliveryOptions,
+    IdentityDeliveriesImpl,
+    StripeDeliveriesImpl,
+)
 from tadas.workers.maintenance.handler import NoopHandlerImpl, SyncSeatsHandlerImpl
 from tadas.workers.maintenance.health import Probe, WorkerHttpServer
 from tadas.workers.maintenance.loop import AcrossStep, LoopOptions, WorkerLoop
@@ -163,8 +168,11 @@ def build_consumer(container: WorkerContainer) -> DeliveryConsumer:
     the name the API queues them with."""
     return DeliveryConsumer(
         queues=container.infra.get_queues(),
-        billing=container.managers.billing,
         tenancy=container.managers.tenancy,
+        providers={
+            "identity": IdentityDeliveriesImpl(container.managers.events),
+            "stripe": StripeDeliveriesImpl(container.managers.billing),
+        },
         options=DeliveryOptions(worker_id=container.settings.worker_id),
     )
 
