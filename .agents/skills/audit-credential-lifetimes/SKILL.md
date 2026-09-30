@@ -117,13 +117,13 @@ no cloud credential, reads no environment, and reads no env file.
 
    ```bash
    uv run python ops/audit/auditdb.py create audit_credential_lifetimes_<yyyymmdd>
-   uv run python ops/audit/dbcalls.py run audit_credential_lifetimes_<yyyymmdd> --only auth,events \
+   uv run python ops/audit/dbcalls.py run audit_credential_lifetimes_<yyyymmdd> --only sign_in,events \
      --out ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json \
      [--flows ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/more_flows.py]
    uv run python ops/audit/dbcalls.py summary ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json
    ```
 
-   The built-in `auth` flow measures the session and the API key on
+   The built-in `sign_in` flow measures the session and the API key on
    `GET /v1/me` (area `baseline`) and the sign-in credential on
    `GET /v1/auth/memberships` (area `auth`); `events` measures the
    ticket's redemption and the socket's recheck (area `realtime`). The
