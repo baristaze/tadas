@@ -1,10 +1,11 @@
 // Envelopes route into the query cache, never into components. An
 // `entity_changed` push invalidates the queries that carry the entity named
-// inside its kind: by convention the queries whose key starts with the entity
-// name, and by the table below where the entity is read through another
-// query, or through none. A task is the exception: a live push about one
-// reads that one task and places it into the lists (`taskHints.ts`), since a
-// tick would otherwise read both whole lists in every open tab.
+// inside its kind (`<namespace>.<entity>.<action>`): by convention the queries
+// whose key starts with the entity name, and by the table below where the
+// entity is read through another query, or through none. A task is the
+// exception: a live push about one reads that one task and places it into the
+// lists (`taskHints.ts`), since a tick would otherwise read both whole lists
+// in every open tab.
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { keys } from "../queries/keys";
 import { entityOf, isEntityChanged, type Envelope } from "./envelopes";
@@ -25,13 +26,14 @@ export interface TaskHintSink {
 export const TASK_ENTITY = keys.tasks.all[0];
 
 // Entities the convention does not reach on its own. A membership is read as
-// the role and the permissions inside `me`, as the role in the person's
-// list of places the org chip reads, and as the role beside each member in
-// Settings; a user is read twice, as a row of
-// the member list and as the name and the email in `me`, so a user push
-// refreshes both; a revoked session is nobody's query, and this session's own
-// revocation arrives as a 4401 close, not as a push. A billing account is
-// read as the org's plan, with the seats and the active tasks beside it.
+// the role and the permissions inside `me`, as the role in the person's list
+// of places the org chip reads, and as the role beside each member in
+// Settings; a user is read twice, as a row of the member list and as the name
+// and the email in `me`, so a user push refreshes both. A revoked session is
+// nobody's query: this session's own revocation arrives as a 4401 close, not
+// as a push. A billing account is read as the org's plan, with the seats and
+// the active tasks beside it. An orchestration's record is an import's, read
+// under its own entity (`keys.imports`).
 const CARRIED_BY: Readonly<Record<string, readonly QueryKey[]>> = {
   account: [keys.billing],
   membership: [keys.me, keys.myMemberships.all, keys.memberships.all],
@@ -69,9 +71,10 @@ export function isKeptFresh(queryKey: QueryKey): boolean {
   return KEPT_FRESH.has(queryKey[0] as string);
 }
 
-/** Routes one envelope. With `tasks`, a push about a task is read as that
- * one task; without it (a replay, whose records are coalesced one per entity)
- * the task lists are read again, as every other entity's queries are. */
+/** Routes one envelope, live or read back from the stream: every query its
+ * entity is read from is read again. With `tasks`, a live push about a task
+ * is read as that one task instead; without it (a replay, whose records are
+ * coalesced one per entity) the task lists are read again. */
 export function routeEnvelope(queryClient: QueryClient, envelope: Envelope, tasks?: TaskHintSink): RouteOutcome {
   if (!isEntityChanged(envelope)) return { invalidated: [] };
   const entity = entityOf(envelope.payload.kind);

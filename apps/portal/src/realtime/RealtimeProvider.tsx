@@ -3,8 +3,8 @@
 // transport client, the connection store, and the page's visibility, and
 // shows the degraded banner. A paused socket shows none: it is not a failure.
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, type IssuedTicketView } from "@tadas/client";
 import { useEffect, type ReactNode } from "react";
+import { ApiError, type IssuedTicketView } from "@tadas/client";
 import { api } from "../app/api";
 import { forgetSessionIfHeld } from "../app/forgetSession";
 import { Banner } from "../design/kit";

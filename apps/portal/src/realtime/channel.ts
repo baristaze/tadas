@@ -165,10 +165,10 @@ export function openChannel(deps: ChannelDeps): Channel {
         }
         if (stopped) return;
         // One route per entity, not per record: routing invalidates every query
-        // the entity is read from, so a page of two hundred task records that
-        // each triggered a route would cancel and restart the list refetch two
-        // hundred times over. The last record of an entity is the one routed,
-        // and every record still moves the cursor.
+        // the entity is read from, so a page of two hundred records of one
+        // entity that each triggered a route would cancel and restart the same
+        // refetch two hundred times over. The last record of an entity is the
+        // one routed, and every record still moves the cursor.
         const last = new Map<string, Envelope>();
         for (const event of page) {
           apply(eventEnvelope(event), (routed) => {
