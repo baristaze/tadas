@@ -22,6 +22,9 @@ from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
 
 
 class OrchestrationKind(StrEnum):
+    """A product adds its kinds here, each with its input shape
+    (`ORCHESTRATION_INPUTS`) and the step the worker runs for it."""
+
     TASK_IMPORT = "task_import"  # tasks made from the rows of a CSV file the org uploaded
     TASK_CLEANUP = "task_cleanup"  # done tasks past an age archived; one record per org per day
 
@@ -90,7 +93,7 @@ class Orchestration(Identifiable, Trackable):
     cursor: int = 0
     # How many there are to read, once a step has counted them.
     total: int | None = None
-    # What the steps did: the tasks created, or the tasks archived.
+    # What the steps did: the rows their effects wrote.
     applied: int = 0
     # Rows a step passed over, and the first few of them with why.
     skipped: int = 0
@@ -133,8 +136,8 @@ ORCHESTRATION_INPUTS: dict[OrchestrationKind, type[Platform]] = {
 
 class Step(Platform):
     """A step's companion write: the record as the step leaves it, landed in
-    the same commit as the step's effect (tasks created, tasks archived) and
-    conditioned on the version the step read. The record's `applied` grows,
+    the same commit as the step's effect (the rows of the namespace it
+    changes) and conditioned on the version the step read. The record's `applied` grows,
     in that commit, by the rows the effect wrote, so a row another writer
     got to first is not counted twice."""
 
