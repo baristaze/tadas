@@ -121,6 +121,32 @@ async def test_every_write_of_a_request_relays_after_it(
     assert await container.storage.get_outbox_storage().oldest_pending_at() is None
 
 
+async def test_a_bulk_change_relays_a_row_per_task_after_the_answer(
+    app: FastAPI, container: AppContainer, owner: dict[str, str]
+) -> None:
+    """A bulk change lands a row a task; all of them follow the answer."""
+    heard = hints(container)
+    async with answered_client(app, _nothing) as client:
+        ids = [
+            (await client.post("/v1/tasks", headers=owner, json={"title": f"t{i}"})).json()["id"]
+            for i in range(3)
+        ]
+        heard.clear()
+        at_answer: list[int] = []
+
+        async def at_last_byte() -> None:
+            at_answer.append(len(heard))
+
+        async with answered_client(app, at_last_byte) as bulk_client:
+            response = await bulk_client.post(
+                "/v1/tasks/bulk", headers=owner, json={"action": "complete", "ids": ids}
+            )
+    assert response.status_code == 200, response.text
+    assert at_answer == [0]
+    assert sorted(str(h.target_id) for h in heard) == sorted(ids)
+    assert await container.storage.get_outbox_storage().oldest_pending_at() is None
+
+
 async def _nothing() -> None:
     return None
 
