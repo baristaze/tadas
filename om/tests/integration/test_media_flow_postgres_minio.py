@@ -43,7 +43,7 @@ async def store() -> AsyncIterator[tuple[BucketsS3Impl, str]]:
     settings = InfraSettings()
     session = aioboto3.Session(
         aws_access_key_id=settings.s3_access_key or "tadas",
-        aws_secret_access_key=settings.s3_secret_key or "tadastadas",
+        aws_secret_access_key=settings.s3_secret_key or "tadas-minio-local",
         region_name=settings.aws_region,
     )
     endpoint = "http://127.0.0.1:59000"
