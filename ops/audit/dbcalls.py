@@ -2,7 +2,7 @@
 the process.
 
     uv run python ops/audit/dbcalls.py run audit_<run> --out <results.json> \
-        [--flows <extra.py> ...] [--only tasks,sweep]
+        [--flows <extra.py> ...] [--only api_keys,sweep]
     uv run python ops/audit/dbcalls.py summary <results.json>
     uv run python ops/audit/dbcalls.py providers <results.json>
 
@@ -388,7 +388,7 @@ async def world(name: str) -> AsyncIterator[World]:
     settings = ApiSettings.model_validate(
         {
             **common,
-            "totp_encryption_key": "dGFkYXMtdGVzdHMtdG90cC1rZXktdGhpcnR5LXR3byE=",
+            "totp_encryption_key": "YWNtZS10ZXN0cy10b3RwLWtleS10aGlydHktdHdvISE=",
             "dev_sign_in_enabled": True,
             "sentry_dsn": None,
             "otel_endpoint": None,

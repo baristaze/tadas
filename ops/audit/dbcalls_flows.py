@@ -1,10 +1,12 @@
-"""The built-in flows `dbcalls.py run` drives, in order: the per-request
-baseline, sign-in, the tenancy routes, tasks, attachments, the event stream,
-billing, the worker's items, and the sweep. Each call is named the way the
-report names it: the route and what makes this call differ (an empty list,
-a full page, a keyed replay). area run covers every area once; an audit that
-needs a path these do not reach adds a flows file of its own (`--flows`),
-written the same way.
+"""The built-in flows `dbcalls.py run` drives, in order: sign-in and the
+per-request baseline, the members, the invitations, the API keys, a session
+switch, tasks, a file attached to a task, the event stream, billing, the
+worker's items (a task's reminder among them), an org deleted, an account
+deleted (each with the worker's item it starts), and the sweep. Each call is
+named the way the report names it: the route and what makes this call
+differ (a new identity, a keyed replay, a refusal). A run covers every area
+once; an audit that needs a path these do not reach adds a flows file of its
+own (`--flows`), written the same way.
 
 Flows run once per audit database: the people and orgs they make are
 unique within one run, not across two.
@@ -54,6 +56,19 @@ async def session(w: Any, email: str, org_id: Any) -> str:
     return r.json()["token"]
 
 
+async def personal_session(w: Any, email: str) -> str:
+    """A person's session in their personal org, which a first sign-in makes."""
+    token = await login(w, email)
+    r = await w.client.get("/v1/auth/memberships", headers=headers(token))
+    assert r.status_code == 200, r.text
+    personal = next(m for m in r.json()["items"] if m["org"]["kind"] == "personal")
+    r = await w.client.post(
+        "/v1/auth/sessions", json={"org_id": personal["org"]["id"]}, headers=headers(token)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["token"]
+
+
 async def make_tasks(w: Any, h: dict[str, str], n: int, prefix: str) -> list[str]:
     ids = []
     for i in range(n):
@@ -75,7 +90,7 @@ async def seed(w: Any) -> None:
     made = await w.measure(
         "cli",
         "bootstrap (tadas-api bootstrap)",
-        lambda: tenancy.bootstrap(seed_request(), "Acme", f"acme-{s}", st["owner_email"], "Owner"),
+        lambda: tenancy.bootstrap(seed_request(), "Ajax", f"ajax-{s}", st["owner_email"], "Owner"),
     )
     assert made is not None
     st["org"] = made[1]
@@ -85,10 +100,10 @@ async def seed(w: Any) -> None:
     st["bobH"] = headers(await session(w, f"bob-{s}@example.test", st["org"].id))
 
 
-# ---------------------------------------------------------------- auth and the baseline
+# ---------------------------------------------------------------- sign-in and the baseline
 
 
-async def auth(w: Any) -> None:
+async def sign_in(w: Any) -> None:
     st, s = w.state, w.state["s"]
     area = "auth"
     for label, email in (
@@ -124,7 +139,7 @@ async def auth(w: Any) -> None:
         base, "GET /v1/me (session, first use: touch)", "GET", "/v1/me", headers=headers(fresh)
     )
     await w.http(base, "GET /v1/me (session, warm)", "GET", "/v1/me", headers=headers(fresh))
-    await w.http(base, "GET /v1/me (unknown token)", "GET", "/v1/me", headers=headers("tds_s_nope"))
+    await w.http(base, "GET /v1/me (unknown token)", "GET", "/v1/me", headers=headers("ses_nope"))
     await w.http(base, "GET /v1/me (no header)", "GET", "/v1/me")
     await w.http(
         area,
@@ -166,12 +181,12 @@ async def auth(w: Any) -> None:
     await w.http(base, "GET /v1/me (api key)", "GET", "/v1/me", headers=st["keyH"])
 
 
-# ---------------------------------------------------------------- tenancy
+# ---------------------------------------------------------------- members
 
 
-async def tenancy(w: Any) -> None:
+async def members(w: Any) -> None:
     st, s, h = w.state, w.state["s"], w.state["H"]
-    area = "tenancy"
+    area = "members"
     await w.http(area, "GET /v1/me", "GET", "/v1/me", headers=h)
     await w.http(
         area, "PATCH /v1/me", "PATCH", "/v1/me", headers=h, json={"display_name": "Owner base."}
@@ -179,6 +194,23 @@ async def tenancy(w: Any) -> None:
     await w.http(area, "GET /v1/orgs/current", "GET", "/v1/orgs/current", headers=h)
     await w.http(area, "GET /v1/users", "GET", "/v1/users", headers=h)
     await w.http(area, "GET /v1/memberships", "GET", "/v1/memberships", headers=h)
+    tenancy = w.container.managers.tenancy
+    slug = st["org"].slug
+    added = await w.measure(
+        area,
+        "add_member (a new person: identity, personal org, user, membership)",
+        lambda: tenancy.add_member(
+            seed_request(), slug, f"dana-{s}@example.test", "Dana", Role.MEMBER
+        ),
+        note="tadas-api add-member and the operator plane's POST /v1/admin/orgs/{id}/members",
+    )
+    await w.measure(
+        area,
+        "add_member (already a member)",
+        lambda: tenancy.add_member(
+            seed_request(), slug, f"dana-{s}@example.test", "Dana", Role.MEMBER
+        ),
+    )
     bob = st["bob"].id
     await w.http(
         area,
@@ -196,7 +228,24 @@ async def tenancy(w: Any) -> None:
         headers=st["bobH"],
         json={"role": "admin"},
     )
-    await w.http(
+    if added is not None:
+        dana = added[1].id
+        await w.http(
+            area,
+            "DELETE /v1/memberships/{user}",
+            "DELETE",
+            f"/v1/memberships/{dana}",
+            headers=h,
+        )
+
+
+# ---------------------------------------------------------------- invitations
+
+
+async def invitations(w: Any) -> None:
+    s, h = w.state["s"], w.state["H"]
+    area = "invitations"
+    r = await w.http(
         area,
         "POST /v1/invitations",
         "POST",
@@ -204,6 +253,7 @@ async def tenancy(w: Any) -> None:
         headers=h,
         json={"email": f"inv-{s}@example.test", "role": "member"},
     )
+    invitation = r.json()["id"]
     keyed = {**h, "Idempotency-Key": f"inv-{s}"}
     body = {"email": f"inv2-{s}@example.test", "role": "member"}
     await w.http(
@@ -218,7 +268,28 @@ async def tenancy(w: Any) -> None:
         json=body,
     )
     await w.http(area, "GET /v1/invitations", "GET", "/v1/invitations", headers=h)
-    await w.http(area, "GET /v1/sessions", "GET", "/v1/sessions", headers=h)
+    await w.http(
+        area,
+        "POST /v1/invitations/{id}/resend",
+        "POST",
+        f"/v1/invitations/{invitation}/resend",
+        headers=h,
+    )
+    await w.http(
+        area,
+        "DELETE /v1/invitations/{id}",
+        "DELETE",
+        f"/v1/invitations/{invitation}",
+        headers=h,
+    )
+
+
+# ---------------------------------------------------------------- api keys
+
+
+async def api_keys(w: Any) -> None:
+    s, h = w.state["s"], w.state["H"]
+    area = "api-keys"
     await w.http(area, "GET /v1/api-keys", "GET", "/v1/api-keys", headers=h)
     r = await w.http(
         area,
@@ -229,12 +300,53 @@ async def tenancy(w: Any) -> None:
         json={"name": "k1", "role": "member"},
     )
     key_id = r.json()["api_key"]["id"]
-    await w.http(area, "DELETE /v1/api-keys/{id}", "DELETE", f"/v1/api-keys/{key_id}", headers=h)
-    await w.http(area, "POST /v1/orgs", "POST", "/v1/orgs", headers=h, json={"name": f"Team {s}"})
-    carl = await add_member(w.container, st["org"].id, f"carl-{s}@example.test", Role.MEMBER)
+    keyed = {**h, "Idempotency-Key": f"key-{s}"}
+    body = {"name": "k2", "role": "member", "ttl_days": 1}
     await w.http(
-        area, "DELETE /v1/memberships/{user}", "DELETE", f"/v1/memberships/{carl.id}", headers=h
+        area, "POST /v1/api-keys (keyed)", "POST", "/v1/api-keys", headers=keyed, json=body
     )
+    await w.http(
+        area, "POST /v1/api-keys (keyed replay)", "POST", "/v1/api-keys", headers=keyed, json=body
+    )
+    await w.http(area, "DELETE /v1/api-keys/{id}", "DELETE", f"/v1/api-keys/{key_id}", headers=h)
+
+
+# ---------------------------------------------------------------- a session switch
+
+
+async def switch(w: Any) -> None:
+    st, s = w.state, w.state["s"]
+    area = "switch"
+    h = headers(await session(w, st["owner_email"], st["org"].id))
+    r = await w.http(
+        area, "POST /v1/orgs", "POST", "/v1/orgs", headers=h, json={"name": f"Team {s}"}
+    )
+    team = r.json()["org"]["id"]
+    await w.http(
+        area,
+        "GET /v1/auth/memberships (session)",
+        "GET",
+        "/v1/auth/memberships",
+        headers=h,
+    )
+    r = await w.http(
+        area,
+        "POST /v1/auth/sessions (switch: presented with a session)",
+        "POST",
+        "/v1/auth/sessions",
+        json={"org_id": team},
+        headers=h,
+    )
+    switched = headers(r.json()["token"])
+    r = await w.http(area, "GET /v1/sessions", "GET", "/v1/sessions", headers=switched)
+    known = {row["id"] for row in r.json()}
+    await session(w, st["owner_email"], team)
+    listed = await w.client.get("/v1/sessions", headers=switched)
+    other = next(row["id"] for row in listed.json() if row["id"] not in known)
+    await w.http(
+        area, "DELETE /v1/sessions/{id}", "DELETE", f"/v1/sessions/{other}", headers=switched
+    )
+    st["team"] = {"id": team, "name": f"Team {s}", "H": switched}
 
 
 # ---------------------------------------------------------------- tasks
@@ -361,7 +473,7 @@ async def tasks(w: Any) -> None:
     )
 
 
-# ---------------------------------------------------------------- attachments
+# ---------------------------------------------------------------- a file attached to a task
 
 
 async def attachments(w: Any) -> None:
@@ -369,7 +481,7 @@ async def attachments(w: Any) -> None:
     area = "attachments"
     task = (await w.client.post("/v1/tasks", headers=h, json={"title": "with files"})).json()
     tid = task["id"]
-    body = {"name": "plan.pdf", "content_type": "application/pdf", "size_bytes": len(PDF)}
+    body = {"name": "notes.pdf", "content_type": "application/pdf", "size_bytes": len(PDF)}
     r = await w.http(
         area,
         "POST /v1/tasks/{id}/attachments",
@@ -399,6 +511,14 @@ async def attachments(w: Any) -> None:
     )
     await w.http(
         area, "GET /v1/tasks/{id}/attachments", "GET", f"/v1/tasks/{tid}/attachments", headers=h
+    )
+    await w.http(area, "GET /v1/media/files/{id}", "GET", f"/v1/media/files/{fid}", headers=h)
+    await w.http(
+        area,
+        "GET /v1/media/files/{id}/download",
+        "GET",
+        f"/v1/media/files/{fid}/download",
+        headers=h,
     )
     await w.http(area, "GET /v1/media/usage", "GET", "/v1/media/usage", headers=h)
     current = (await w.client.get(f"/v1/tasks/{tid}", headers=h)).json()
@@ -463,7 +583,7 @@ async def events(w: Any) -> None:
             lambda: realtime.head(ctx),
             note="the hello; a ping when the head heard is older than the bound",
         )
-        await w.client.post("/v1/tasks", headers=h, json={"title": "a hint for the pong"})
+        await w.client.patch("/v1/me", headers=h, json={"display_name": "A hint for the pong"})
         await w.measure(
             area,
             "WS /v1/realtime: ping, head heard on the bus",
@@ -499,7 +619,7 @@ async def billing(w: Any) -> None:
     )
 
 
-# ---------------------------------------------------------------- worker
+# ---------------------------------------------------------------- the worker
 
 
 async def drain(w: Any, label: str = "", most: int = 100) -> None:
@@ -512,9 +632,9 @@ async def drain(w: Any, label: str = "", most: int = 100) -> None:
         if not claimed:
             w.record("worker", f"claim (nothing ready){label}", "none", w.since(mark))
             return
-        ((task, (_, item)),) = list(loop._running.items())
+        ((running, (_, item)),) = list(loop._running.items())
         try:
-            await task
+            await running
         except Exception:
             pass
         rows = await w.sql(f"SELECT status FROM queue.work_items WHERE id = '{item.id}'")
@@ -540,6 +660,71 @@ async def worker(w: Any) -> None:
         " WHERE status = 'queued' AND available_at > now()"
     )
     await drain(w)
+
+
+# ---------------------------------------------------------------- an org deleted
+
+
+async def team_org(w: Any) -> dict[str, Any]:
+    """A team org the owner makes and switches to, uncounted: what `switch`
+    leaves behind, for a run that names `org_deleted` without it."""
+    st, name = w.state, f"Doomed {w.state['s']}"
+    h = headers(await session(w, st["owner_email"], st["org"].id))
+    r = await w.client.post("/v1/orgs", headers=h, json={"name": name})
+    team = r.json()["org"]["id"]
+    r = await w.client.post("/v1/auth/sessions", json={"org_id": team}, headers=h)
+    return {"id": team, "name": name, "H": headers(r.json()["token"])}
+
+
+async def org_deleted(w: Any) -> None:
+    """The team org the switch made, deleted by its owner, and the DELETE_ORG
+    item that closes it at the provider and removes it."""
+    st = w.state
+    team = st.get("team") or await team_org(w)
+    area = "deletion"
+    left = headers(await session(w, st["owner_email"], team["id"]))
+    await w.http(
+        area,
+        "POST /v1/orgs/current/deletion (not the owner: refused)",
+        "POST",
+        "/v1/orgs/current/deletion",
+        headers=w.state["bobH"],
+        json={"name": "Ajax"},
+    )
+    await w.http(
+        area,
+        "POST /v1/orgs/current/deletion",
+        "POST",
+        "/v1/orgs/current/deletion",
+        headers=team["H"],
+        json={"name": team["name"]},
+    )
+    await w.http(area, "GET /v1/me (a session of the deleted org)", "GET", "/v1/me", headers=left)
+    await drain(w, " (an org deleted)")
+
+
+# ---------------------------------------------------------------- an account deleted
+
+
+async def account_deleted(w: Any) -> None:
+    """A person with a personal org alone deletes their account, and the
+    DELETE_ACCOUNT item that ends them at the provider and removes the org."""
+    s = w.state["s"]
+    area = "deletion"
+    email = f"leaving-{s}@example.test"
+    h = headers(await personal_session(w, email))
+    await w.http(
+        area,
+        "POST /v1/me/deletion (the wrong address: refused)",
+        "POST",
+        "/v1/me/deletion",
+        headers=h,
+        json={"email": f"other-{s}@example.test"},
+    )
+    await w.http(
+        area, "POST /v1/me/deletion", "POST", "/v1/me/deletion", headers=h, json={"email": email}
+    )
+    await drain(w, " (an account deleted)")
 
 
 # ---------------------------------------------------------------- sweep
@@ -575,4 +760,20 @@ async def health(w: Any) -> None:
         await w.http("health", f"GET {path}", "GET", path)
 
 
-FLOWS = [seed, auth, tenancy, tasks, attachments, events, billing, worker, sweep, health]
+FLOWS = [
+    seed,
+    sign_in,
+    members,
+    invitations,
+    api_keys,
+    switch,
+    tasks,
+    attachments,
+    events,
+    billing,
+    worker,
+    org_deleted,
+    account_deleted,
+    sweep,
+    health,
+]
