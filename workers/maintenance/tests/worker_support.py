@@ -10,9 +10,12 @@ from uuid import UUID
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.identity import IdentityProviderInterface
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
+from tadas.om.media.types.file import File, FilePurpose
+from tadas.om.orchestrations.types.orchestration import Orchestration
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
@@ -46,29 +49,94 @@ def request() -> RequestContext:
     )
 
 
-async def sign_in(container: WorkerContainer, slug: str = "acme") -> TenantContext:
-    """A session in a seeded org, `acme` unless named, whose owner is
-    `ann@<slug>.test`. The worker signs nobody in, so the sign-in runs
-    through a manager over the same storage with the local sign-in on."""
-    tenancy = container.managers.tenancy
-    email = "ann@example.test" if slug == "acme" else f"ann@{slug}.test"
-    _, org = await tenancy.bootstrap(request(), slug.title(), slug, email, "Ann")
-    signing = TenancyManagerImpl(
+def signing(
+    container: WorkerContainer, identity_provider: IdentityProviderInterface | None = None
+) -> TenancyManagerImpl:
+    """A tenancy manager over the worker's storage that signs people in: by
+    address, with the local sign-in on, or through `identity_provider` when
+    one is given. The worker signs nobody in itself."""
+    return TenancyManagerImpl(
         container.storage.get_tenancy_storage(),
         container.managers.outbox,
         container.infra.get_cache(CacheScope.REALTIME_TICKET),
-        TenancyOptions(dev_sign_in=True),
-        identity_provider=IdentityProviderAbsentImpl(),
+        TenancyOptions(dev_sign_in=identity_provider is None),
+        identity_provider=identity_provider or IdentityProviderAbsentImpl(),
         entitlements=container.managers.billing,
     )
-    login = await signing.dev_sign_in(request(), email)
+
+
+async def sign_in(container: WorkerContainer, slug: str = "ajax") -> TenantContext:
+    """A session in a seeded org, `ajax` unless named, whose owner is
+    `ann@<slug>.test`, signed in by address."""
+    tenancy = container.managers.tenancy
+    email = "ann@example.test" if slug == "ajax" else f"ann@{slug}.test"
+    _, org = await tenancy.bootstrap(request(), slug.title(), slug, email, "Ann")
+    login = await signing(container).dev_sign_in(request(), email)
     identity = await tenancy.authenticate_login(request(), login.token)
     issued = await tenancy.exchange_login(identity, org.id)
     return await tenancy.authenticate(request(), issued.token)
 
 
+async def upload(
+    container: WorkerContainer, ctx: TenantContext, name: str = "note.webm", *, confirm: bool = True
+) -> File:
+    """A file the person stored in the org, a dictation, which has no subject:
+    its row, and its object in the store. Unconfirmed, the upload is started
+    and never finished: a pending row, and no object."""
+    data = b"\x1aE\xdf\xa3" + b"0" * 64
+    now = utcnow()
+    media = container.managers.media
+    file = await media.create_file(
+        ctx,
+        File(
+            id=new_id(),
+            name=name,
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            content_type="audio/webm",
+            size_bytes=len(data),
+            purpose=FilePurpose.VOICE_DICTATION,
+        ),
+    )
+    if not confirm:
+        return file
+    await media.put_content(ctx, file.id, data)
+    return await media.confirm_file(ctx, file.id)
+
+
+async def start_import(container: WorkerContainer, ctx: TenantContext, rows: int) -> Orchestration:
+    """An import of a file of `rows` tasks, started by the person: it lands
+    running, with the work row of its first step."""
+    data = ("title\n" + "".join(f"Task {n}\n" for n in range(1, rows + 1))).encode()
+    now = utcnow()
+    file = await container.managers.tasks.create_import_file(
+        ctx,
+        File(
+            id=new_id(),
+            name="tasks.csv",
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            content_type="text/csv",
+            size_bytes=len(data),
+            purpose=FilePurpose.TASK_IMPORT,
+        ),
+    )
+    await container.managers.media.put_content(ctx, file.id, data)
+    await container.managers.media.confirm_file(ctx, file.id)
+    return await container.managers.tasks.start_import(ctx, new_id(), file.id)
+
+
 def make_item(
-    ctx: TenantContext, *, target_id: UUID | None = None, traceparent: str | None = None
+    ctx: TenantContext,
+    *,
+    kind: WorkKind = WorkKind.NOOP,
+    payload: Platform | None = None,
+    target_id: UUID | None = None,
+    traceparent: str | None = None,
 ) -> WorkItem:
     """The item a caller enqueues under its own context: the request that caused
     the work and its trace context are the caller's, and the enqueue leaves
@@ -80,11 +148,12 @@ def make_item(
         updated_at=now,
         created_by=ctx.user_id,
         updated_by=ctx.user_id,
-        kind=WorkKind.NOOP,
+        kind=kind,
         target_id=target_id or new_id(),
         idempotency_key=new_id(),
         request_id=ctx.request_id,
         traceparent=traceparent,
+        payload={} if payload is None else payload.model_dump(mode="json"),
         available_at=now,
     )
 
