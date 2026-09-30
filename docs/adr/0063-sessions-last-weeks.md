@@ -1,9 +1,6 @@
 # ADR 0063: Sessions last weeks
 
-**Status**: accepted (2026-09-26). Amends
-[ADR 0026](0026-what-0-31-0-leaves-as-a-choice.md): its bullet on the
-session lifetimes. The lifetimes are longer than the guideline's
-defaults now, not shorter.
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -54,7 +51,7 @@ runbook says where they are. WorkOS's settings never end Tadas's
 session early or keep it alive: Tadas reads the access token once, for
 its session id, and never refreshes it.
 
-**Nothing else moves.**
+**Every other bound is its own.**
 
 - A revoked session is refused at its next request, since every request
   reads it. An open socket closes at once when the bus carries the

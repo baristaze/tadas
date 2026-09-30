@@ -1,9 +1,6 @@
 # ADR 0021: Each environment has an AWS account of its own
 
-**Status**: accepted (2026-09-21). Supersedes [ADR 0017](0017-the-operators-principal-is-one-user-that-only-assumes.md).
-Amends [ADR 0013](0013-each-environment-has-its-own-deploy-credential.md):
-its three roles and their subjects stand, and they now live in two
-accounts.
+**Status**: accepted (2026-09-21)
 
 ## Context
 

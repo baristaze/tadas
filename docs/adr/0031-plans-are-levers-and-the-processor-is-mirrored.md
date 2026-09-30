@@ -1,10 +1,10 @@
 # ADR 0031: Plans are levers, and the payment processor is mirrored
 
-**Status**: accepted (2026-09-22). The key's name and kind are superseded by [ADR 0032](0032-two-restricted-stripe-keys.md).
+**Status**: accepted (2026-09-22)
 
 ## Context
 
-Tadas gains plans: Free, Pro, Team, and Max, each bounding an org's
+Tadas has plans: Free, Pro, Team, and Max, each bounding an org's
 members, its API keys, its active tasks, and its room for files, and each
 paid for through Stripe. Two systems then hold a view of what an org may
 do. Stripe owns money, customers, and subscriptions; Tadas owns what a
@@ -69,8 +69,8 @@ seat, and so does the operator plane's add.
 
 **The Max quantity follows the members through the queue.** A member added
 or removed on Max lands a second outbox row, `work.SYNC_SEATS`, in the
-change's commit, on the path reminders and Slack posts took first (ADR
-0012). The handler reads the member count when it runs, so items that
+change's commit, on the path a reminder and a Slack post take. The
+handler reads the member count when it runs, so items that
 run late or twice converge, and sets the quantity with
 `proration_behavior=none` under a key made of the item and the count: a
 seat is billed from the next invoice, with no prorated line per change
@@ -95,13 +95,14 @@ account's commit, so a second copy changes nothing.
 platform's, not a tenant's, so they are not read through
 `SecretsInterface`, whose names carry a tenant; they reach the API and the
 worker at start, like the error tracker's DSN, from
-`<prefix>stripe_org_key` and `<prefix>stripe_webhook_secret`, which
+`<prefix>stripe_runtime_key` and `<prefix>stripe_webhook_secret`, which
 Terraform creates as "off" and never writes again. "off" leaves billing
 unconfigured: every org keeps its plan and a checkout answers 503. The
 account id is committed per environment and sent as `Stripe-Context` on
 every call, with a pinned `Stripe-Version`. A process refuses a key whose
 mode is not its environment's: production a live key, everything else a
-test key.
+test key. The key is a restricted key of one account
+([ADR 0032](0032-two-restricted-stripe-keys.md)).
 
 **A change between paid plans happens in Stripe's portal.** Tadas starts a
 checkout only for an org with no paid plan and refuses a second one

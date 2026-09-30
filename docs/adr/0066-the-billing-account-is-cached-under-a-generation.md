@@ -1,6 +1,6 @@
 # ADR 0066: The billing account is cached under a generation
 
-**Status**: accepted (2026-09-26).
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -17,8 +17,8 @@ processor. Each of those is a method of a billing manager.
 
 An api key's principal is read in one statement that joins the account,
 so the key's own plan check reads nothing more. The handler behind it
-still asked for the plan again, so a key's `POST /v1/tasks` read the
-account twice.
+asks for the plan again, so without a cache a key's `POST /v1/tasks`
+reads the account twice.
 
 The guideline puts caching in the manager (Caching is a business-layer
 concern). A read cache is a projection with a generation. The TTL is a
@@ -36,7 +36,13 @@ The logic is in `om/src/tadas/om/billing/impl/cache.py`.
   then the entry `account:<generation>`. A miss reads storage and puts
   the account, or its absence, under that key. The generation is read
   before storage, so an account read before a write and put after its
-  bump lands under a generation nobody reads any more.
+  bump lands under a generation nobody reads any more. It is a
+  generation, never one key per org that a write invalidates: a
+  generation is what the guideline names, and it orphans whatever else
+  this scope holds for the org.
+- **The entry is the account, never the plan.** The plan depends on the
+  clock: a subscription set to end carries its plan until the period's
+  end. The account is what does not change until a write.
 - **Every write bumps the generation after its commit.** One
   `increment`, in `_write`, in the two creates, in `apply_delivery` when
   its commit lands, in `purge_tenant`, and in the operator plane's
@@ -55,18 +61,18 @@ The logic is in `om/src/tadas/om/billing/impl/cache.py`.
   one cannot read, and a Valkey that cannot be reached are each a read of
   storage.
 - **A counter reads back through `get`.** Valkey keeps an `INCR` counter
-  as a string, so `get` answers it. The memory impl now keeps counters in
+  as a string, so `get` answers it. The memory impl keeps counters in
   the same map as values, so it answers the same way, and a contract
   test holds both to it.
 
 **The usage counts stay fresh.** Members, files, and active tasks are
 other managers' rows, and a bound is enforced on an exact count.
 
-**The key's plan check is unchanged.** It still reads the account in the
+**The key's plan check reads no cache.** It reads the account in the
 principal's statement and decides with `entitlements_of`.
 
-**The double read on `POST /v1/tasks` goes through the cache.** The
-other way was to carry the account the principal read along to the
+**The handler's read on `POST /v1/tasks` goes through the cache.** The
+other way is to carry the account the principal read along to the
 handler. That helps an api key only, since a session's principal does
 not join the account, and it puts the account on the context every
 manager takes. The cache removes the handler's read for both
@@ -74,10 +80,11 @@ credentials, with no new parameter.
 
 ## Measured
 
-`ops/audit/dbcalls.py` on the local stack, warm round trips, before and
-after, with the built-in flows and a flows file of the run's own:
+`ops/audit/dbcalls.py` on the local stack, warm round trips, without
+the cache and with it, with the built-in flows and a flows file of the
+run's own:
 
-| Call | Before | After |
+| Call | Without the cache | With it |
 |------|--------|-------|
 | `POST /v1/tasks`, session, cache warm | 25 trips, 8 transactions | 22, 7 |
 | `POST /v1/tasks`, api key, cache warm | 25, 8 | 22, 7 |
@@ -88,17 +95,6 @@ after, with the built-in flows and a flows file of the run's own:
 
 A read that hits costs two Valkey round trips: the generation and the
 entry.
-
-## Alternatives
-
-- **Invalidate one key per org instead of a generation.** It works while
-  the account is the only entry. A generation is what the guideline
-  names, and it orphans whatever else this scope holds for the org
-  later.
-- **Carry the principal's account to the handler.** Rejected above.
-- **Cache the plan instead of the account.** The plan depends on the
-  clock: a subscription set to end carries its plan until the period's
-  end. The account is what does not change until a write.
 
 ## Consequences
 

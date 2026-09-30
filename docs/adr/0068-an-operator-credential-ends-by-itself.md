@@ -1,10 +1,6 @@
 # ADR 0068: An operator credential ends by itself
 
-**Status**: accepted (2026-09-26). Amends
-[ADR 0018](0018-the-operator-allowlist-carries-a-role.md): a sign-in with
-a second factor mints one token and does nothing else on the plane. Amends
-[ADR 0037](0037-a-sign-in-is-exchanged-once.md): the second factor ends the
-sign-in it verified, and the mint of a token is an exchange too.
+**Status**: accepted (2026-09-26)
 
 ## Context
 

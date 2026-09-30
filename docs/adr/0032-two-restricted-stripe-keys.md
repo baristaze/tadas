@@ -1,10 +1,6 @@
 # ADR 0032: Two restricted Stripe keys, one for the processes and one for the bootstrap
 
-**Status**: accepted (2026-09-23). Supersedes the key's name and kind in
-[ADR 0031](0031-plans-are-levers-and-the-processor-is-mirrored.md); the
-rest of that record stands. The rollback's room is closed (2026-09-25):
-`<prefix>stripe_org_key` is gone from every environment, and so is the
-boot's refusal of `TADAS_STRIPE_ORG_KEY`.
+**Status**: accepted (2026-09-23)
 
 ## Context
 
@@ -25,9 +21,9 @@ permissions is also easy to get wrong: Stripe's editor lists **Checkout
 Sessions** as a group of its own, and setting Core or Billing to Write
 does not include it.
 
-The name `TADAS_STRIPE_ORG_KEY` says "organization key". An
-organization key reaches every account of the organization. What the
-secret should hold is a restricted key of one account.
+An organization key reaches every account of the organization, and a
+secret key may do everything in its account. What a process should hold
+is a restricted key of one account.
 
 Stripe's documentation says the same three things: use restricted keys
 instead of secret keys, give each key the least it needs, and use one
@@ -61,25 +57,12 @@ editor's group. A key refused on every read is named as revoked or of
 another account. A processor that does not answer leaves the check
 open, and the process starts either way: billing is one part of it.
 
-**The rename is a clean cut for the processes, with one release of
-room for a rollback.** The processes read the new name only. A
-process that finds `TADAS_STRIPE_ORG_KEY` set refuses to boot and
-names the two new variables, so a leftover line in a laptop's `.env`
-is not a silent "not configured". The old secret container stays for
-one release, and the serving tasks' execution roles keep reading it,
-because the release before injects it and a rollback starts that
-release. The release after this one removes it.
-
-Reading the old name as a fallback was the other way. It is not taken:
-the old secret holds the one key with both sets of permissions, and a
-fallback would keep that key serving until someone noticed.
-
 ## Consequences
 
-After the merge, staging's billing is unconfigured until a person makes
-the runtime key and writes it into `tadas/staging/stripe_runtime_key`.
-The deploy makes that secret holding `off`. Every org keeps its plan in
-between, and a checkout answers `503`.
+An environment's billing is unconfigured until a person makes the
+runtime key and writes it into `tadas/<env>/stripe_runtime_key`. The
+deploy makes that secret holding `off`. Every org keeps its plan
+meanwhile, and a checkout answers `503`.
 
 A person who runs the bootstrap makes and keeps a second key. Rotating
 it touches no environment. Rotating the runtime key touches no

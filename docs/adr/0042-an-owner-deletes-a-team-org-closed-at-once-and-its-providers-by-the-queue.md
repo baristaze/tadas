@@ -1,7 +1,6 @@
 # ADR 0042: An owner deletes a team org, closed at once, and its providers by the queue
 
-**Status**: accepted (2026-09-26). Builds on ADR 0041; deviates from
-nothing.
+**Status**: accepted (2026-09-26)
 
 ## Context
 

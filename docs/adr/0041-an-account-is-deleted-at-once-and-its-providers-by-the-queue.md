@@ -1,14 +1,6 @@
 # ADR 0041: An account is deleted at once, and its providers by the queue
 
-**Status**: accepted (2026-09-26), amended (2026-09-26): a provider
-that refuses the call fails the item at once, and an operator requeues
-it; amended (2026-09-26): the last owner's two ways out are in Settings,
-so no account waits on an operator
-([ADR 0042](0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
-A deviation from CTX-34 for the unassignment. Since v0.40.0 it is no
-longer one from STO-32, which names an account deleted at once as the
-one hard delete outside the sweep
-([ADR 0082](0082-what-0-40-0-asks.md)).
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -19,7 +11,9 @@ A person asks to delete their account. What that means is decided:
   no grace period and no undo. Signing up again with the same address
   makes a new person.
 - It is refused while the person is the last owner of a team org, and
-  refused for an operator, who leaves the allowlist first.
+  refused for an operator, who leaves the allowlist first. A last owner
+  has two ways out in Settings, so no account waits on an operator
+  ([ADR 0042](0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
 - What they made in a team org stays the org's, under their id only:
   tasks, events, outbox rows, files, Slack posts. Their user and their
   membership there go, and their open tasks go unassigned.

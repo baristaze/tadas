@@ -1,16 +1,6 @@
 # ADR 0038: A dead column leaves the mapping one release before it leaves the table
 
-**Status**: accepted (2026-09-25). Supersedes when the dead columns are
-dropped in [ADR 0026](0026-what-0-31-0-leaves-as-a-choice.md) (the
-last paragraph), [ADR 0028](0028-sign-in-is-the-identity-providers.md)
-("Tadas keeps no password"), and
-[ADR 0034](0034-a-task-is-due-on-a-date.md) (the contract half); the
-rest of each record stands. The first release takes
-`identities.password_hash`, `identities.failed_sign_ins`,
-`identities.last_failed_sign_in_at`, and `tasks.remind_at` out of the
-mapping, stops writing `remind_at`, and clears the password hashes with
-the code-linked Slack channel's two tables. The second step is done
-(2026-09-25): migration 202609290000 drops the four columns.
+**Status**: accepted (2026-09-25)
 
 ## Context
 
