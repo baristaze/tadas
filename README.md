@@ -92,23 +92,22 @@ works on one service at a time.
 ## Deploy and operate
 
 `main` is staging and `release` is production. A merge to `main`
-deploys staging. A person fast-forwards `release` through its workflow
-and approves the production plan.
-[The deploy runbook](docs/runbooks/deploy.md) has the steps and the
-rollback. A deployed environment has no seed: a person signs in
-through WorkOS, and a first sign-in is the sign-up.
+deploys staging. A person fast-forwards `release` and approves the
+production plan. [The deploy runbook](docs/runbooks/deploy.md) has the
+steps and the rollback. A deployed environment has no seed: a person
+signs in through WorkOS, and a first sign-in is the sign-up.
 
-People steer, agents maintain. Each operational task is a skill a
-person runs with an agent, and the credential the skill holds is its
-boundary. [ops/README.md](ops/README.md) names the
-roles, the skills, and the audits. [The runbooks](docs/runbooks/README.md)
-hold the procedures a person follows by hand.
+Each operational task is a skill a person runs with an agent, and the
+credential the skill holds is its boundary. [ops/README.md](ops/README.md)
+names the roles, the skills, and the audits.
+[The runbooks](docs/runbooks/README.md) hold the procedures a person
+follows by hand.
 
 ## Layout
 
 - [om/](om/README.md): the object model: namespaces, storage, migrations.
 - [infra/](infra/README.md): cache, buckets, topics, queues, secrets, observability.
-- [integrations/](integrations/README.md): Slack, WorkOS, and Stripe, each an interface, a client, and a twin.
+- [integrations/](integrations/README.md): Slack, WorkOS, and Stripe, each an interface, a client, and a twin, and the webhook check.
 - [services/api/](services/api/README.md): the API, its gateway, and the realtime socket.
 - [workers/maintenance/](workers/maintenance/README.md): the work queue's worker and the sweep.
 - `apps/`: the [portal](apps/portal/README.md), the [CLI](apps/cli/README.md), and the
