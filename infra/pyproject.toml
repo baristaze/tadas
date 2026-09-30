@@ -1,6 +1,6 @@
 [project]
 name = "tadas-infra"
-version = "0.8.0"
+version = "0.9.0"
 description = "Tadas infrastructure capabilities: cache, buckets, topics, queues, secrets, observability."
 requires-python = ">=3.14"
 dependencies = [

@@ -1674,7 +1674,7 @@ wheels = [
 
 [[package]]
 name = "tadas-api"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "services/api" }
 dependencies = [
     { name = "fastapi" },
@@ -1695,7 +1695,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-cli"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "apps/cli" }
 dependencies = [
     { name = "tadas-client" },
@@ -1710,7 +1710,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-client"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "clients/python" }
 dependencies = [
     { name = "httpx" },
@@ -1729,7 +1729,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-infra"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "infra" }
 dependencies = [
     { name = "aioboto3" },
@@ -1760,7 +1760,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-integrations"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "integrations" }
 dependencies = [
     { name = "aiohttp" },
@@ -1787,7 +1787,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-maintenance"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "workers/maintenance" }
 dependencies = [
     { name = "pydantic-settings" },
@@ -1806,7 +1806,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-om"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "om" }
 dependencies = [
     { name = "alembic" },
@@ -1833,7 +1833,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-ops"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "ops" }
 dependencies = [
     { name = "aioboto3" },
@@ -1856,7 +1856,7 @@ requires-dist = [
 
 [[package]]
 name = "tadas-workspace"
-version = "0.8.0"
+version = "0.9.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
