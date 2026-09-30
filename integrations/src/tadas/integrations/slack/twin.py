@@ -224,7 +224,9 @@ class SlackTwinImpl(SlackInterface):
             raise SlackChannelUnusable("not_in_channel")
         ts = f"twin.{len(self.posts) + 1:06d}"
         self.posts.append(TwinPost(team, channel_id, text, ts, thread_ts))
-        log.info("slack twin posted %s to %s: %s", ts, channel_id, text)
+        # The text holds a task's title, a tenant's own words: the line names
+        # the post and says how long it is, and `posts` keeps the text.
+        log.info("slack twin posted %s to %s: %d characters", ts, channel_id, len(text))
         return ts
 
     async def user_email(self, token: str, user_id: str) -> str | None:
@@ -240,7 +242,7 @@ class SlackTwinImpl(SlackInterface):
             raise SlackFailed("invalid_response_url", "a response_url that is not Slack's")
         self._maybe_fail("response_url")
         self.responses.append((response_url, text))
-        log.info("slack twin answered a command: %s", text)
+        log.info("slack twin answered a command: %d characters", len(text))
 
     def _authorized(self, token: str, method: str) -> str:
         self._maybe_fail(method)
