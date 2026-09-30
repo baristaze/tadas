@@ -26,7 +26,7 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # value, and no code change. A name the image does not host refuses the
     # boot.
     namespaces: list[str] = []
-    version: str = "0.8.0"
+    version: str = "0.9.0"
     host: str = "127.0.0.1"
     port: int = 8000
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
