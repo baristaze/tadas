@@ -29,13 +29,12 @@ error tracker. `--since` is the window, a day by default.
 A run follows at most 5 request ids, one pass each: the first five
 given, in the order given, or without `--request-id`, the five newest
 failing requests tied to the symptom (the Y of "tenant X sees Y"),
-never the newest failures of any kind. The symptom is the one the
-prompt names or the investigation's report gives. A run without
-`--request-id` whose symptom neither names asks for it before the
-first step, as for `--env`; a run given ids needs none. A pass
-that finds no cause reports "not found" for its id. After the fifth
-pass the skill stops and writes the report. It lists every id past
-the fifth as not followed, for a second run to take.
+never the newest failures of any kind. Without `--request-id`, the
+symptom is the one the prompt or the investigation's report names;
+when neither names one, ask for it, as for `--env`. A pass that finds
+no cause reports "not found" for its id. After the fifth pass the
+skill stops and writes the report. It lists every id past the fifth
+as not followed, for a second run to take.
 
 `local` reads the compose stack and its twins; no cloud is needed.
 
@@ -65,8 +64,7 @@ The processes are `api` and `maintenance`, as `deployment/README.md`
 lists them.
 
 Steps 4 to 8 are one pass, for one request id, and each id gets one
-pass. A pass reads each signal once, through steps 4 to 6 or through
-step 7's one call, never both: a signal that answers nothing is
+pass. A pass reads each signal once: a signal that answers nothing is
 written as empty, never read a second time with a wider window or
 another filter. Without `--request-id`, the pick of ids in steps 3
 and 4 runs once, before the passes. It is not a pass, and its reads
@@ -90,8 +88,8 @@ do not use up the first pass's one read of each signal.
    With `--user`, keep that member alone. A route that answers 403 or
    404 ends the run: the token is not allowed, or the tenant does
    not exist, and neither is guessed around.
-3. Read the tenant's activity of the window: the events feed and the
-   entity rows the product exposes on the plane:
+3. Read the tenant's activity of the window, the operator's events
+   feed:
 
    ```bash
    set -a; . ~/.config/tadas/ops/<env>.env; set +a
@@ -101,24 +99,25 @@ do not use up the first pass's one read of each signal.
    The operator's feed carries `request_id` and `app` beside the
    actor, which the tenant's own feed leaves out, so it is the map from
    what the tenant did to the requests that did it. The rows themselves
-   are `/v1/admin/orgs/<org_id>/tasks?status=open|done` and
-   `.../members`. Without `--request-id`, pick the request ids of the
-   window's failed or missing writes here and in step 4, at most five,
-   the newest first among those tied to the symptom of Input.
+   are the org and its members of step 2, and its tasks
+   (`/v1/admin/orgs/<org_id>/tasks?status=open|done`). Without `--request-id`, pick
+   the request ids of the window's failed or missing writes here and in
+   step 4, at most five, the newest first among those tied to the
+   symptom.
 
    The feed reads only forward from `after_seq`, with no time filter,
    so the skill first finds the window's first `seq`, and never reads
    from `after_seq=0` unless the tenant's first event is inside the
-   window. An event's time is its `produced_at`; the feed publishes no
-   `id`. Probe with `limit=1`: `after_seq=0`, then 1, 2, 4, 8,
-   doubling, until the event returned is inside the window or none is
-   returned. Then bisect between the last probe before the window and
-   the first one inside it or past the last event, until the two are
-   one apart. The probes take about twice the base-2 log of the
-   tenant's event count: about 28 calls for 10,000 events, about 40
-   for a million. Read the feed forward from `after_seq` at the later
-   of the two, 200 events a page, until a page comes back short: the
-   window bounds the read, and no page count cuts it.
+   window. An event's time is its `produced_at`. Probe with `limit=1`:
+   `after_seq=0`, then 1, 2, 4, 8, doubling, until the event returned
+   is inside the window or none is returned. Then bisect between the
+   last probe before the window and the first one inside it or past
+   the last event, until the two are one apart. The probes take about
+   twice the base-2 log of the tenant's event count: about 28 calls
+   for 10,000 events, about 40 for a million. Read the feed forward
+   from `after_seq` at the later of the two, 200 events a page, until
+   a page comes back short: the window bounds the read, and no page
+   count cuts it.
 4. The error tracker, by request id or by tenant window. One project
    holds the product's errors for every environment, so the read names
    it and asks for this environment:

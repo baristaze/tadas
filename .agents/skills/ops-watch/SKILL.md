@@ -217,7 +217,7 @@ wait.
 # Watch: <env>, <start> to <end>, every <interval>
 
 **Credential.** <profile and the Arn it resolved to, or local>
-**Size.** <tenants> tenants, <users> users, <n> written in the last day, counted <age> ago
+**Size.** <tenants> tenants, <users> users, <n> tasks and <n> events in the last day, counted <age> ago
 **Ended.** <window passed | 30th batch, <start> to <end> not watched | escalated on <alarm> at <time> | credential ended at <time>>
 
 ## Alarms

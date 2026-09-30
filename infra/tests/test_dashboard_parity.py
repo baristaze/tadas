@@ -95,9 +95,12 @@ def test_the_cloud_dashboard_reads_the_application_metrics_from_the_tadas_namesp
     text = CLOUD.read_text()
     # The exporter adds OTelLib to every series, and a schema that leaves out
     # a dimension the series has matches nothing.
-    schemas = re.findall(r"SEARCH\('\{Tadas,[^}]*\}", text)
+    # The namespace is in double quotes, which a name with a space needs; the
+    # template is JSON, so each quote reads as an escaped one.
+    schemas = re.findall(r"SEARCH\('\{[^}]*\}", text)
     assert schemas, "the application widgets search the Tadas namespace"
-    assert all(schema.startswith("SEARCH('{Tadas,OTelLib,") for schema in schemas)
+    quoted = "SEARCH('{" + '\\"Tadas\\"' + ",OTelLib,"
+    assert all(schema.startswith(quoted) for schema in schemas), schemas
     for metric in ("tadas_http_requests_total", "tadas_outcomes_total"):
         assert f'MetricName=\\"{metric}\\"' in text
 

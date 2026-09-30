@@ -93,11 +93,11 @@ Each statement is measured where its cost differs, not once:
 - the generic plan (`-- params:`) for every statement that runs on every
   request or every write, since that is the plan it runs under.
 
-## Contention, when `--focus` asks for it
+## Contention, when `--contention` asks for it
 
 A lock held across round trips (the event cursor on every append, a
-claim) is measured by running the storage call from several tasks at
-once, through the real storage impl on the run's database. Write the
+claim) is measured by running the storage call from several coroutines
+at once, through the real storage impl on the run's database. Write the
 script into the evidence folder, never into the repository:
 
 ```python
@@ -114,8 +114,8 @@ storage = StoragePostgresImpl(
     {r: pool for r in DatabaseRole},
     system_urls={r: values["TADAS_DATABASE_SYSTEM_URL"] for r in DatabaseRole},
 )
-# Call one storage method from 1, 4, 16, and 32 tasks for a few seconds
-# each; report calls per second, p50, and p99 per level.
+# Call one storage method from 1, 4, 16, and 32 coroutines for a few
+# seconds each; report calls per second, p50, and p99 per level.
 ```
 
 Run it with `uv run python <script>` from the repository root with

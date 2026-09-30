@@ -1,7 +1,7 @@
 [project]
 name = "tadas-workspace"
 version = "0.9.0"
-description = "Tadas: a multi-tenant to-do application for teams of people and the programs that work alongside them."
+description = "Tadas: a multi-tenant to-do application for teams of people and the agents that work alongside them."
 requires-python = ">=3.14"
 
 [tool.uv]

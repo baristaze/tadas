@@ -51,13 +51,13 @@ no cloud credential, reads no environment, and reads no env file.
    not the options' own defaults, which can differ. Add every other
    proof the code trusts: an inbound provider delivery's signature
    (read at `services/api/src/tadas/services/api/gateway/webhooks.py`,
-   checked in `integrations/src/tadas/integrations/payments/deliveries.py`
-   and `integrations/src/tadas/integrations/slack/requests.py`), a
+   checked in `integrations/src/tadas/integrations/identity/deliveries.py`,
+   `payments/deliveries.py`, and `slack/requests.py` beside it), a
    provider's token the platform holds (Slack's, in
    `om/src/tadas/om/slack/`), and the identity provider's own session
-   behind a sign-in (ended at sign-out, `_provider_logout` in the tenancy
-   manager). Each goes in the row of the channel that uses it. A kind the
-   code has and this list misses is a finding of its own.
+   behind a sign-in (ended at sign-out, `_provider_logout` in the
+   tenancy manager). Each goes in the row of the channel that uses it.
+   A kind the code has and this list misses is a finding of its own.
 3. List the channels, and which kinds reach each:
    - HTTP request: the gateway's dependencies in
      `services/api/src/tadas/services/api/gateway/auth.py`
@@ -80,11 +80,14 @@ no cloud credential, reads no environment, and reads no env file.
      is reconnecting.
    - Worker: a work item runs under a context the claim mints
      (`claim` in `om/src/tadas/om/work/impl/manager.py`, through the
-     tenancy manager's `service_context`), and a handler may mint another
-     (`member_context`, as `workers/maintenance/src/tadas/workers/maintenance/slack_inbound.py`
-     does); read whether a handler checks the actor's credential,
-     membership, or role again when it runs, or acts on what the request
-     knew when it enqueued.
+     tenancy manager's `service_context`), a delivery from a provider
+     is applied under its org's service context
+     (`workers/maintenance/src/tadas/workers/maintenance/deliveries.py`),
+     and a handler may mint another (`member_context`, as
+     `slack_inbound.py` beside it does);
+     read whether a handler (the deletions in `accounts.py` beside it)
+     checks the actor's credential, membership, or role again when it
+     runs, or acts on what the request knew when it enqueued.
    A kind that never travels a channel is `n/a` in that cell, with the
    reason in a word (a socket ticket on a worker).
 4. Fill each cell from the code, each fact with its file:line:
@@ -98,9 +101,10 @@ no cloud credential, reads no environment, and reads no env file.
      recheck interval, a cache's TTL, the credential's own expiry. A
      path that depends on a message the bus may drop takes the next
      bound that does not;
-   - how a change of role, the member's teams, the membership's end, or
-     the org's plan (a plan without API keys) reaches it: read again on
-     the next check, pushed and closed, or never until expiry;
+   - how a change of role, the member's teams, the membership's end,
+     the org's plan (a plan without API keys), or the org's deletion
+     reaches it: read again on the next check, pushed and closed, or
+     never until expiry;
    - its rate limit or budget
      (`services/api/src/tadas/services/api/gateway/ratelimit.py`, the
      settings), or none;
@@ -113,13 +117,13 @@ no cloud credential, reads no environment, and reads no env file.
 
    ```bash
    uv run python ops/audit/auditdb.py create audit_credential_lifetimes_<yyyymmdd>
-   uv run python ops/audit/dbcalls.py run audit_credential_lifetimes_<yyyymmdd> --only auth,events \
+   uv run python ops/audit/dbcalls.py run audit_credential_lifetimes_<yyyymmdd> --only sign_in,events \
      --out ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json \
      [--flows ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/more_flows.py]
    uv run python ops/audit/dbcalls.py summary ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json
    ```
 
-   The built-in `auth` flow measures the session and the API key on
+   The built-in `sign_in` flow measures the session and the API key on
    `GET /v1/me` (area `baseline`) and the sign-in credential on
    `GET /v1/auth/memberships` (area `auth`); `events` measures the
    ticket's redemption and the socket's recheck (area `realtime`). The
