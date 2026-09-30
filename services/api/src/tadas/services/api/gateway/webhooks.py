@@ -31,10 +31,26 @@ async def slack_request(
     signature: Annotated[str | None, Header(alias="X-Slack-Signature")] = None,
     retry_num: Annotated[str | None, Header(alias="X-Slack-Retry-Num")] = None,
 ) -> SlackRequest:
-    retry = int(retry_num) if retry_num and retry_num.isdigit() else 0
     return SlackRequest(
-        payload=await request.body(), timestamp=timestamp, signature=signature, retry_num=retry
+        payload=await request.body(),
+        timestamp=timestamp,
+        signature=signature,
+        retry_num=retry_number(retry_num),
     )
+
+
+def retry_number(header: str | None) -> int:
+    """Which of Slack's retries a call is, from `X-Slack-Retry-Num`: 0 for the
+    first call, and for a header that is no number. It is read before the
+    signature is checked, so it is whatever a caller wrote. A number is ASCII
+    digits alone: `isdigit` admits the digits of every script, some of which
+    `int` refuses, and `int` reads a number only up to its digit limit."""
+    if header is None or not (header.isascii() and header.isdigit()):
+        return 0
+    try:
+        return int(header)
+    except ValueError:
+        return 0
 
 
 IdentityDelivery = Annotated[SignedDelivery, Depends(identity_delivery)]

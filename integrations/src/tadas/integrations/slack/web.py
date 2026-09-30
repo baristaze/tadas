@@ -50,6 +50,22 @@ log = logging.getLogger(__name__)
 
 AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 
+DEFAULT_RETRY_AFTER = timedelta(seconds=30)
+"""How long a throttled call waits when Slack's answer does not say."""
+
+
+def retry_after_of(header: str | None) -> timedelta:
+    """How long Slack asks a throttled caller to wait, from `Retry-After`:
+    whole seconds, in ASCII digits. An absent header, or one that is anything
+    else, a date or a number no wait counts to among them, is the default:
+    the answer is a throttle whatever came with it, never an exception."""
+    if header is None or not (header.isascii() and header.isdigit()):
+        return DEFAULT_RETRY_AFTER
+    try:
+        return timedelta(seconds=int(header))
+    except ValueError, OverflowError:
+        return DEFAULT_RETRY_AFTER
+
 
 def tokens_of(answer: Any) -> SlackTokens:
     """The bot token of an `oauth.v2.access` answer, and, with token rotation
@@ -202,7 +218,7 @@ class SlackWebImpl(SlackInterface):
             retry_after: timedelta | None = None
             if response.status_code == 429:
                 header = response.headers.get("Retry-After") or response.headers.get("retry-after")
-                retry_after = timedelta(seconds=int(header or 30))
+                retry_after = retry_after_of(header)
             raise error_for(code, retry_after) from None
         except SlackError:
             raise

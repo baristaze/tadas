@@ -106,6 +106,32 @@ def test_a_delivery_that_does_not_check_out_is_refused(header: str | None) -> No
     assert SECRET not in refused.value.message
 
 
+@pytest.mark.parametrize(
+    "digest",
+    ["\u00e9" * 64, "\uff11" * 64, "abc\udcff"],
+    ids=["a byte past ASCII", "digits of another script", "a lone surrogate"],
+)
+def test_a_signature_outside_its_alphabet_is_a_bad_signature(digest: str) -> None:
+    """A header's bytes reach the check as text, one character each, so a
+    byte past ASCII is a character the SDK's compare refuses to take: it is
+    a bad signature like any other, never an exception."""
+    payload = event("invoice.paid", {})
+    with pytest.raises(DeliveryRefused, match="did not check out"):
+        verified(payload, f"t={int(time.time())},v1={digest}", SECRET)
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    ["yesterday", "\u00b2", "9" * 5000, "9" * 400, "-" + "9" * 400],
+    ids=["a word", "a digit int refuses", "past int's digits", "past a float", "before any clock"],
+)
+def test_a_timestamp_no_clock_reads_is_a_bad_signature(stamp: str) -> None:
+    payload = event("invoice.paid", {})
+    digest = sign(payload, SECRET).partition(",v1=")[2]
+    with pytest.raises(DeliveryRefused, match="did not check out"):
+        verified(payload, f"t={stamp},v1={digest}", SECRET)
+
+
 def test_a_delivery_outside_the_replay_window_is_refused() -> None:
     payload = event("invoice.paid", {})
     stale = sign(payload, SECRET, int(time.time()) - 3600)

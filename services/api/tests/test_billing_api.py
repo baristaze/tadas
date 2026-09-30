@@ -191,8 +191,19 @@ async def test_a_member_reads_the_plan_and_is_refused_every_change(
 async def test_a_delivery_that_does_not_check_out_is_refused_and_queues_nothing(
     client: httpx.AsyncClient, container: AppContainer, free: dict[str, str]
 ) -> None:
+    """No header, a header signed with another secret, and a header no signer
+    writes (a byte past ASCII in the signature, a timestamp `int` refuses):
+    each is 400 and nothing reaches the queue."""
     payload = b'{"id": "evt_forged", "type": "invoice.paid", "created": 1}'
-    for headers in ({}, {"Stripe-Signature": sign(payload, "whsec_not_ours")}):
+    stamp, _, digest = sign(payload, "whsec_not_ours").encode().partition(b",v1=")
+    cases: tuple[dict[str, str] | dict[bytes, bytes], ...] = (
+        {},
+        {"Stripe-Signature": sign(payload, "whsec_not_ours")},
+        {b"Stripe-Signature": stamp + b",v1=" + b"\xe9" * 64},
+        {b"Stripe-Signature": b"t=\xb2,v1=" + digest},
+        {b"Stripe-Signature": b"t=" + b"9" * 5000 + b",v1=" + digest},
+    )
+    for headers in cases:
         refused = await client.post("/webhooks/stripe", content=payload, headers=headers)
         assert refused.status_code == 400, refused.text
         assert refused.json()["error"]["code"] == "webhook_signature_invalid"
