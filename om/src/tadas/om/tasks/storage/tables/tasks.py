@@ -22,11 +22,9 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("ix_tasks_org_id_status_rank", "org_id", "status", "rank"),
-        # The rank as a float: in the table and out of the mapping. The
-        # release before names it in every insert and reads it as a number,
-        # so a trigger keeps it the rank's float on every row this release
-        # writes (migration 202610200000). No statement of this release names
-        # it, and the release after this one drops it and this line (ADR
+        # The rank as a float: in the table and out of the mapping. No
+        # statement names it, and a trigger keeps it the rank's float on
+        # every row written. This line goes when the column is dropped (ADR
         # 0038, ADR 0050).
         Column("position", Double(), nullable=False),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),

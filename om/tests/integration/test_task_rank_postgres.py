@@ -140,7 +140,7 @@ async def test_the_sweep_respaces_a_long_run_in_one_write(
     page = await tasks.get_open_tasks(ctx, team(ctx), None, 200)
     assert not any(needs_respace(task.rank) for task in page.items)
     assert await task_storage.read_long_place(ctx.org_id) is None
-    # The release before reads the position this release never writes: every
+    # No statement here writes the position, and the database keeps it: every
     # row created, moved ninety times, and respaced holds its rank's float.
     sessions = storage._sessions  # type: ignore[attr-defined]
     async with sessions[DatabaseRole.CORE]() as session:

@@ -95,23 +95,21 @@ path = "om/src/tadas/om/work/storage/tables/work_items.py"
 adr = "docs/adr/0026-a-work-items-key-is-unique-within-its-tenant.md"
 reason = "the unique index is (org_id, idempotency_key), led by the tenant as the lens asks"
 
-# A build before the rank writes a task's position and cannot write its rank;
-# a trigger gives such a row the rank its position names, until the column
-# goes.
+# A trigger gives a row written with a position and no rank the rank its
+# position names, until the column goes.
 [[tool.arch-check.exception]]
 rule = "STO-05"
 path = "om/migrations/sql/core/202610120000_task_rank.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
-reason = "expand scaffolding for the release before, which cannot write the rank; it goes with the position in the contract release"
+reason = "a trigger copies a task's position into its rank on a row written without one; it goes with the position's column"
 
-# This release names no position; the release before reads it as a number. A
-# trigger gives every row this release writes its rank's float, until the
-# column goes.
+# No statement names a task's position. A trigger gives every row written
+# its rank's float, until the column goes.
 [[tool.arch-check.exception]]
 rule = "STO-05"
 path = "om/migrations/sql/core/202610200000_task_position_unmapped.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
-reason = "contract scaffolding for the release before, which reads the position this release no longer writes; it goes with the column"
+reason = "a trigger copies a task's rank into its position, which no statement writes; it goes with the column"
 
 # The company site is a page, not an app: HTML and CSS on Vite, no script,
 # so no React. A substitution for one page (ADR 0002), named by path, since
