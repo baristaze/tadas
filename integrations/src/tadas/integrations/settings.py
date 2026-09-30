@@ -30,6 +30,12 @@ class IntegrationsSettings(BaseSettings):
     workos_base_url: str = "https://api.workos.com"
     workos_timeout_seconds: float = Field(default=10.0, gt=0)
 
+    # The signing secret of the endpoint the provider delivers its events
+    # to (`/webhooks/identity`). A process credential, injected at start;
+    # empty or "off" leaves the route refusing every delivery. The twin signs
+    # with its own and ignores this one.
+    workos_webhook_secret: SecretStr | None = Field(default=None, repr=False)
+
     # The payment processor: Stripe, or its twin in memory (the tests, and
     # one process on a laptop), which is refused outside local and test.
     # Stripe with no key is unconfigured: every org keeps its plan.
@@ -70,6 +76,7 @@ class IntegrationsSettings(BaseSettings):
         return value
 
     @field_validator(
+        "workos_webhook_secret",
         "stripe_runtime_key",
         "stripe_webhook_secret",
         "slack_client_secret",

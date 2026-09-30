@@ -116,11 +116,13 @@ def identity_provider_for(settings: IntegrationsSettings) -> IdentityProviderInt
             return IdentityProviderAbsentImpl("TADAS_WORKOS_CLIENT_ID is not set")
         if settings.workos_api_key is None:
             return IdentityProviderAbsentImpl("TADAS_WORKOS_API_KEY is not set")
+        secret = settings.workos_webhook_secret
         return IdentityProviderWorkOSImpl(
             client_id=settings.workos_client_id,
             api_key=settings.workos_api_key.get_secret_value(),
             base_url=settings.workos_base_url,
             timeout=timedelta(seconds=settings.workos_timeout_seconds),
+            webhook_secret=None if secret is None else secret.get_secret_value(),
         )
     return IdentityProviderAbsentImpl()
 

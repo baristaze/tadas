@@ -142,6 +142,8 @@ async def test_the_absent_provider_refuses_every_call() -> None:
         root.get_payments().describe(),
         root.get_slack().describe(),
     ]
+    with pytest.raises(ProviderUnavailable, match="closed"):
+        absent.verify_delivery(b"{}", "t=1, v1=x")
     await root.close()
 
 

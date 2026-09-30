@@ -82,29 +82,29 @@ async def test_a_device_sign_in_is_pending_until_confirmed_then_spent() -> None:
 
 async def test_an_organization_is_made_once_per_external_id() -> None:
     twin = IdentityProviderTwinImpl()
-    first = await twin.ensure_organization(external_id="ext-1", name="Acme")
+    first = await twin.ensure_organization(external_id="ext-1", name="Ajax")
     assert await twin.ensure_organization(external_id="ext-1", name="Other") == first
-    twin.verify_domain(first.id, "Acme.Example")
-    assert (await twin.get_organization(first.id)).verified_domains == ("acme.example",)
+    twin.verify_domain(first.id, "Ajax.Example")
+    assert (await twin.get_organization(first.id)).verified_domains == ("ajax.example",)
     with pytest.raises(ProviderRefused):
         await twin.get_organization("twin_org_missing")
 
 
 async def test_an_invitation_is_sent_once_resent_revoked_and_accepted() -> None:
     twin = IdentityProviderTwinImpl()
-    org = await twin.ensure_organization(external_id="ext-1", name="Acme")
+    org = await twin.ensure_organization(external_id="ext-1", name="Ajax")
     sent = await twin.send_invitation(
-        email="bob@acme.example", organization_id=org.id, expires_in_days=7
+        email="bob@ajax.example", organization_id=org.id, expires_in_days=7
     )
     with pytest.raises(ProviderConflict):
         await twin.send_invitation(
-            email="bob@acme.example", organization_id=org.id, expires_in_days=7
+            email="bob@ajax.example", organization_id=org.id, expires_in_days=7
         )
-    found = await twin.find_pending_invitation(email="bob@acme.example", organization_id=org.id)
+    found = await twin.find_pending_invitation(email="bob@ajax.example", organization_id=org.id)
     assert found == sent
     await twin.resend_invitation(sent.id)
     assert len(twin.sent) == 2
-    code = twin.accept_invitation(sent.id, "robert@acme.example")
+    code = twin.accept_invitation(sent.id, "robert@ajax.example")
     signed_in = await twin.authenticate_code(code, code_verifier=None)
     assert signed_in.organization_id == org.id
     accepted = await twin.accepted_invitation(
@@ -114,14 +114,14 @@ async def test_an_invitation_is_sent_once_resent_revoked_and_accepted() -> None:
     with pytest.raises(ProviderRefused):
         await twin.revoke_invitation(sent.id)
     other = await twin.send_invitation(
-        email="cat@acme.example", organization_id=org.id, expires_in_days=7
+        email="cat@ajax.example", organization_id=org.id, expires_in_days=7
     )
     assert (await twin.revoke_invitation(other.id)).state is InvitationState.REVOKED
 
 
 async def test_a_portal_link_is_for_an_organization_it_holds() -> None:
     twin = IdentityProviderTwinImpl()
-    org = await twin.ensure_organization(external_id="ext-1", name="Acme")
+    org = await twin.ensure_organization(external_id="ext-1", name="Ajax")
     link = await twin.portal_link(organization_id=org.id, intent="sso", return_url="http://x/s")
     assert f"organization={org.id}" in link
     with pytest.raises(ProviderRefused):
