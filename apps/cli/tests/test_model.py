@@ -1,21 +1,32 @@
-"""The pure rules: describing a change, the mine filter, short ids."""
+"""The pure rules: telling a change, the mine filter, short ids, reading a
+size, choosing an org, and a due date."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
 
 from tadas.apps.cli.model import (
     attachment_table,
+    choose_org,
     describe,
     human_size,
     is_mine,
+    org_lines,
+    parse_due,
     resolve,
     resolve_file,
     short_id,
     task_table,
 )
-from tadas.client.types import FilePurpose, FileStatus, FileView, TaskStatus, TaskView
+from tadas.client.types import (
+    FilePurpose,
+    FileStatus,
+    FileView,
+    MembershipChoiceView,
+    TaskStatus,
+    TaskView,
+)
 
 ME, BOB = uuid4(), uuid4()
 NAMES = {ME: "Ann", BOB: "Bob"}
@@ -109,9 +120,19 @@ def test_the_table_has_a_header_and_one_line_per_task() -> None:
     assert lines[0].index("ASSIGNEE") == lines[1].index("Bob")
 
 
-def membership(slug: str, name: str, role: str = "member", kind: str = "team"):
-    from tadas.client.types import MembershipChoiceView
+def test_a_size_reads_in_the_unit_a_person_reads() -> None:
+    assert [human_size(n) for n in (0, 1023, 1024, 1536, 25 * 1024 * 1024)] == [
+        "0 B",
+        "1023 B",
+        "1.0 KB",
+        "1.5 KB",
+        "25.0 MB",
+    ]
 
+
+def membership(
+    slug: str, name: str, role: str = "member", kind: str = "team"
+) -> MembershipChoiceView:
     return MembershipChoiceView.model_validate(
         {
             "org": {
@@ -133,32 +154,26 @@ def membership(slug: str, name: str, role: str = "member", kind: str = "team"):
 
 
 def test_choose_org_takes_the_slug_or_the_only_one() -> None:
-    from tadas.apps.cli.model import choose_org
-
-    acme, beta = membership("acme", "Acme"), membership("beta", "Beta")
-    assert choose_org([acme], None) == acme
-    assert choose_org([acme, beta], "beta") == beta
-    with pytest.raises(LookupError, match=r"^acme, beta$"):
-        choose_org([beta, acme], None)
-    with pytest.raises(LookupError, match=r"^acme$"):
-        choose_org([acme], "nope")
+    ajax, beta = membership("ajax", "Ajax"), membership("beta", "Beta")
+    assert choose_org([ajax], None) == ajax
+    assert choose_org([ajax, beta], "beta") == beta
+    with pytest.raises(LookupError, match=r"^ajax, beta$"):
+        choose_org([beta, ajax], None)
+    with pytest.raises(LookupError, match=r"^ajax$"):
+        choose_org([ajax], "nope")
     with pytest.raises(LookupError, match=r"^none$"):
         choose_org([], None)
 
 
 def test_choose_org_takes_the_personal_org_when_none_is_named() -> None:
-    from tadas.apps.cli.model import choose_org
-
-    acme, mine = membership("acme", "Acme"), membership("ann-1x2y", "Ann", "owner", "personal")
-    assert choose_org([acme, mine], None) == mine
-    assert choose_org([acme, mine], "acme") == acme
+    ajax, mine = membership("ajax", "Ajax"), membership("ann-1x2y", "Ann", "owner", "personal")
+    assert choose_org([ajax, mine], None) == mine
+    assert choose_org([ajax, mine], "ajax") == ajax
 
 
 def test_org_lines_sort_by_name_and_mark_the_current_org() -> None:
-    from tadas.apps.cli.model import org_lines
-
-    lines = org_lines([membership("z-team", "Zeta"), membership("acme", "Acme", "owner")], "z-team")
-    assert lines == "  acme    Acme (owner)\n* z-team  Zeta (member)"
+    lines = org_lines([membership("z-team", "Zeta"), membership("ajax", "Ajax", "owner")], "z-team")
+    assert lines == "  ajax    Ajax (owner)\n* z-team  Zeta (member)"
     mine = org_lines([membership("ann-1x2y", "Ann", "owner", "personal")], None)
     assert mine == "  ann-1x2y  Ann (owner, personal)"
 
@@ -179,16 +194,6 @@ def a_file(name: str, size: int) -> FileView:
     )
 
 
-def test_a_size_reads_in_the_unit_a_person_reads() -> None:
-    assert [human_size(n) for n in (0, 1023, 1024, 1536, 25 * 1024 * 1024)] == [
-        "0 B",
-        "1023 B",
-        "1.0 KB",
-        "1.5 KB",
-        "25.0 MB",
-    ]
-
-
 def test_the_attachment_table_and_its_short_ids() -> None:
     files = [a_file("a.pdf", 10), a_file("b.pdf", 2048)]
     lines = attachment_table(files).splitlines()
@@ -201,10 +206,6 @@ def test_the_attachment_table_and_its_short_ids() -> None:
 
 @pytest.mark.parametrize("text", ["soon", "2026-10-01T09:00", "+1d", "2026-02-30", "20261001"])
 def test_a_due_date_is_a_date_and_never_a_time(text: str) -> None:
-    from datetime import date
-
-    from tadas.apps.cli.model import parse_due
-
     assert parse_due(" 2026-10-01 ") == date(2026, 10, 1)
     with pytest.raises(ValueError, match="give one as 2026-10-01"):
         parse_due(text)

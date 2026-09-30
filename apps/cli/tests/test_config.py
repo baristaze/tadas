@@ -21,8 +21,8 @@ def test_the_session_file_is_owner_only_from_creation(
         token="sess_secret",
         email="ann@example.test",
         display_name="Ann",
-        org_slug="acme",
-        org_name="Acme",
+        org_slug="ajax",
+        org_name="Ajax",
     )
     previous = os.umask(0o022)
     try:
@@ -47,8 +47,8 @@ def kept_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             token="ses_kept",
             email="ann@example.test",
             display_name="Ann",
-            org_slug="acme",
-            org_name="Acme",
+            org_slug="ajax",
+            org_name="Ajax",
         )
     )
 

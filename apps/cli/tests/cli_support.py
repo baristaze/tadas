@@ -120,11 +120,11 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
     container = build_container(tmp_path, integrations=IntegrationsOverImpl(twin))
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+            seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
         )
     )
-    # Team: two people and more tasks than Free allows, the case most commands
-    # are about; the plan's own refusal has a test of its own.
+    # Two people: the owner, and Bob as a member, on Team, which allows more
+    # tasks than Free; the plan's own refusal has a test of its own.
     run(on_plan(container, org.id, Plan.TEAM))
     run(add_member(container, org.id, BOB["email"], Role.MEMBER))
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
