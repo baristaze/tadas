@@ -20,9 +20,9 @@ describe("the short name", () => {
   });
 
   it("is what the server accepts", () => {
-    expect(isSlug("acme-labs")).toBe(true);
-    expect(isSlug("acme--labs")).toBe(false);
-    expect(isSlug("-acme")).toBe(false);
+    expect(isSlug("ajax-labs")).toBe(true);
+    expect(isSlug("ajax--labs")).toBe(false);
+    expect(isSlug("-ajax")).toBe(false);
     expect(isSlug("a".repeat(49))).toBe(false);
   });
 
@@ -34,7 +34,7 @@ describe("the short name", () => {
 
 describe("newOrgRefusal", () => {
   it("says a taken short name as the server did, as a sentence", () => {
-    const taken = new ApiError(409, "conflict", "org slug 'acme' is taken", "r1");
-    expect(newOrgRefusal(taken)).toBe("Org slug 'acme' is taken.");
+    const taken = new ApiError(409, "conflict", "org slug 'ajax' is taken", "r1");
+    expect(newOrgRefusal(taken)).toBe("Org slug 'ajax' is taken.");
   });
 });

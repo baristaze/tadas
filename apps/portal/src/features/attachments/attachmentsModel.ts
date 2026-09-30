@@ -1,13 +1,7 @@
 // Pure: how a file is shown, and what type a file the browser could not name
 // is sent as. Values in, values out; the server decides what it accepts.
 import type { FileView } from "@tadas/client";
-
-/** Bytes as a person reads them: B under a kilobyte, then KB and MB. */
-export function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { humanSize } from "../settings/storageModel";
 
 // The types a browser often leaves empty; the server holds the name's
 // extension to the type, so the guess follows the same table.
@@ -73,9 +67,4 @@ export function attachmentRow(file: FileView): AttachmentRow {
     contentType: file.content_type,
     preview: previewKind(file.content_type),
   };
-}
-
-/** "3 files, 1.2 MB": the storage line the settings page shows. */
-export function usageLine(count: number, bytes: number): string {
-  return `${count} ${count === 1 ? "file" : "files"}, ${humanSize(bytes)}`;
 }

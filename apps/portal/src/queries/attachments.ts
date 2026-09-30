@@ -5,7 +5,6 @@ import type {
   FileView,
   IssuedDownloadView,
   IssuedUploadView,
-  StorageUsageView,
 } from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
@@ -20,14 +19,6 @@ export function useAttachments(taskId: string, enabled = true) {
     enabled,
     queryFn: ({ signal }) =>
       api.get<FilePageView>(`/v1/tasks/${taskId}/attachments?limit=${ATTACHMENTS_PAGE_SIZE}`, { signal }),
-  });
-}
-
-export function useStorageUsage(enabled = true) {
-  return useQuery({
-    queryKey: keys.files.usage,
-    enabled,
-    queryFn: ({ signal }) => api.get<StorageUsageView>("/v1/media/usage", { signal }),
   });
 }
 

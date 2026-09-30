@@ -46,6 +46,11 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => root.render(null)); });
 
+it("is titled Settings and opens on the members", () => {
+  expect(container.querySelector("h1")!.textContent).toBe("Settings");
+  expect(container.querySelector("#members h2")!.textContent).toBe("Members");
+});
+
 it("puts a way back to Tasks above the title", async () => {
   const back = container.querySelector(".tadas-back a") as HTMLAnchorElement;
   expect(back.textContent).toBe("← Tasks");
