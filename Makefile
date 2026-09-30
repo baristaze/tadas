@@ -45,7 +45,7 @@ SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 # follows, on the project's Python: the checker refuses a Python older than
 # .python-version. Offline, point it at a checkout:
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
-ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.46.0\#subdirectory=checkers" arch-check
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.47.0\#subdirectory=checkers" arch-check
 
 .PHONY: help setup up down reset urls infra-up buckets devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-gif-dark demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
@@ -154,10 +154,12 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 # team of three, so the seed grants it Team; the second stays on Free.
 # Then the two local operators, the platform's own identities of
 # tadas.ops.environments.LOCAL_OPERATORS: a read operator and the
-# provisioner, which writes. Their tokens go into the owner-only
-# ~/.config/tadas/ops/local.env beside the local stack's addresses, when that
-# file is absent; `uv run tadas-ops token --env local --identity
-# operator|provisioner` mints a fresh one into it, since each lasts an hour.
+# provisioner, which writes. The read operator's token goes into the
+# owner-only ~/.config/tadas/ops/local.env beside the local stack's addresses,
+# and the provisioner's into local.provisioner.env beside it, which no skill
+# that reads sources, each when its file is absent; `uv run tadas-ops token
+# --env local --identity operator|provisioner` mints a fresh one into it,
+# since each lasts an hour.
 seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as, and the two local operators; a no-op once they exist
 	uv run --package tadas-api tadas-api bootstrap --if-absent --plan team \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
@@ -174,9 +176,13 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 	uv run --package tadas-api tadas-api grant-operator --permission write \
 		--email provisioner@platform.tadas.invalid
 	@if [ -e "$$HOME/.config/tadas/ops/local.env" ]; then \
-		echo "~/.config/tadas/ops/local.env is there already; \`uv run tadas-ops token --env local --identity operator|provisioner\` writes a fresh token into it"; \
+		echo "~/.config/tadas/ops/local.env is there already; \`uv run tadas-ops token --env local --identity operator\` writes a fresh token into it"; \
 	else \
-		uv run --package tadas-ops tadas-ops token --env local --identity operator && \
+		uv run --package tadas-ops tadas-ops token --env local --identity operator; \
+	fi
+	@if [ -e "$$HOME/.config/tadas/ops/local.provisioner.env" ]; then \
+		echo "~/.config/tadas/ops/local.provisioner.env is there already; \`uv run tadas-ops token --env local --identity provisioner\` writes a fresh token into it"; \
+	else \
 		uv run --package tadas-ops tadas-ops token --env local --identity provisioner; \
 	fi
 
