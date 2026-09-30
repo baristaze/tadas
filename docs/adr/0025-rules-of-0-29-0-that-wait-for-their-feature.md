@@ -7,7 +7,10 @@ covers a handler's calls (`WORK_ENQUEUE_PERMISSIONS`, held by the
 worker's tests since the first user-caused kinds) hold now and
 are gone from the list; trimmed (2026-09-26): the work queue's and the
 outbox's alarms (`OPS-15`) hold, from the gauges the worker's sweep
-writes. Each item left names what closes it.
+writes; trimmed (2026-09-29): the release push (`DEL-38`) and the kept
+build (`DEL-31`) are the deviations of
+[ADR 0024](0024-what-staging-hands-production-is-recorded-and-verified.md).
+Each item left names what closes it.
 
 ## Context
 
@@ -20,18 +23,6 @@ today, and the items below still hold at it.
 
 These are deviations, each recorded with its reason and its route back:
 
-- **The release push by an app token (`DEL-38`).** No ruleset restricts
-  who may push to `release`, so the workflow token's fast-forward is
-  allowed and the workflow dispatches the production deploy itself
-  (ADR 0024). The app becomes the one bypass actor the day `release` is
-  locked.
-- **A kept build that refuses a second write (`DEL-31`).** Production's
-  artifacts bucket refuses every direct write and delete under
-  `builds/portal/`, the administrator's included, so only replication
-  writes there. A changed source object still replicates as a new
-  version, because S3 has no condition that refuses a replicated
-  overwrite. The recorded digest catches it before any plan, and
-  `resolve` refuses it (ADR 0024).
 - **The desired count left to autoscaling.** The guideline puts
   `desired_count` in `ignore_changes`. Tadas keeps it out, as the service
   module says: autoscaling is off by default, and with it off an ignored
