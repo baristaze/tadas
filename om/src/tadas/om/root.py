@@ -1,0 +1,133 @@
+"""The business-layer root: constructs every manager in dependency order and
+hands back one frozen object with a field per manager."""
+
+from dataclasses import dataclass
+
+from tadas.infra.cache import CacheScope
+from tadas.infra.root import InfraInterface
+from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.root import IntegrationsInterface
+from tadas.om.events import EventsManagerInterface
+from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
+from tadas.om.idempotency import IdempotencyManagerInterface
+from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl, IdempotencyOptions
+from tadas.om.media import MediaManagerInterface
+from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
+from tadas.om.orchestrations import OrchestrationsManagerInterface
+from tadas.om.orchestrations.impl.manager import OrchestrationsManagerImpl, OrchestrationsOptions
+from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.storage.root import StorageInterface
+from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
+from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
+from tadas.om.work import WorkManagerInterface, WorkOperatorManagerInterface
+from tadas.om.work.impl.manager import WorkManagerImpl, WorkOptions
+from tadas.om.work.impl.operator import WorkOperatorManagerImpl
+
+
+@dataclass(frozen=True)
+class Managers:
+    tenancy: TenancyManagerInterface
+    tenancy_operator: TenancyOperatorManagerInterface
+    work: WorkManagerInterface
+    work_operator: WorkOperatorManagerInterface
+    media: MediaManagerInterface
+    idempotency: IdempotencyManagerInterface
+    events: EventsManagerInterface
+    outbox: OutboxRelayInterface
+    orchestrations: OrchestrationsManagerInterface
+
+
+def build_managers(
+    storage: StorageInterface,
+    infra: InfraInterface,
+    tenancy_options: TenancyOptions | None = None,
+    operator_options: TenancyOperatorOptions | None = None,
+    integrations: IntegrationsInterface | None = None,
+    *,
+    media_options: MediaOptions | None = None,
+    idempotency_options: IdempotencyOptions | None = None,
+    events_options: EventsOptions | None = None,
+    work_options: WorkOptions | None = None,
+    orchestrations_options: OrchestrationsOptions | None = None,
+) -> Managers:
+    """`integrations` is the root of the hosted services the managers front:
+    the identity provider, which the tenancy manager signs people in and
+    invites them through. None is a process that signs nobody in, and every
+    call that would reach the provider is refused as unavailable.
+
+    The options after `integrations` are what the process that sweeps sets
+    on the managers it purges through: each one's retention and batch. None
+    keeps that manager's defaults."""
+    # The relay every core-role manager hands its outbox rows to. It reaches
+    # the work manager through the root below, because a row of kind
+    # `work.<kind>` is enqueued there: the work manager needs the tenancy
+    # manager, which needs this relay, so that one edge is bound at call time
+    # and the graph the root hands back is still whole.
+    outbox = OutboxRelayImpl(
+        storage.get_outbox_storage(),
+        storage.get_event_storage(),
+        infra.get_topics(),
+        lambda: managers.work,
+    )
+    tenancy = TenancyManagerImpl(
+        storage.get_tenancy_storage(),
+        outbox,
+        infra.get_cache(CacheScope.REALTIME_TICKET),
+        tenancy_options or TenancyOptions(),
+        identity_provider=(
+            IdentityProviderAbsentImpl()
+            if integrations is None
+            else integrations.get_identity_provider()
+        ),
+    )
+    events = EventsManagerImpl(
+        storage.get_event_storage(), tenancy, events_options or EventsOptions()
+    )
+    work = WorkManagerImpl(
+        storage.get_work_storage(),
+        tenancy,
+        events,
+        infra.get_topics(),
+        work_options or WorkOptions(),
+    )
+    media = MediaManagerImpl(
+        storage.get_media_storage(),
+        infra.get_buckets(),
+        tenancy,
+        outbox,
+        media_options or MediaOptions(),
+    )
+    orchestrations = OrchestrationsManagerImpl(
+        storage.get_orchestrations_storage(),
+        tenancy,
+        outbox,
+        orchestrations_options or OrchestrationsOptions(),
+    )
+    idempotency = IdempotencyManagerImpl(
+        storage.get_idempotency_storage(), idempotency_options or IdempotencyOptions()
+    )
+    tenancy_operator = TenancyOperatorManagerImpl(
+        storage.get_tenancy_storage(),
+        storage.get_event_storage(),
+        outbox,
+        operator_options or TenancyOperatorOptions(),
+    )
+    managers = Managers(
+        tenancy=tenancy,
+        tenancy_operator=tenancy_operator,
+        work=work,
+        work_operator=WorkOperatorManagerImpl(
+            storage.get_work_storage(),
+            storage.get_tenancy_storage(),
+            storage.get_event_storage(),
+            infra.get_topics(),
+        ),
+        media=media,
+        idempotency=idempotency,
+        events=events,
+        outbox=outbox,
+        orchestrations=orchestrations,
+    )
+    return managers

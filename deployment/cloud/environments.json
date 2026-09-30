@@ -1,0 +1,31 @@
+{
+  "region": "us-west-2",
+  "domain": "tadas.example",
+  "github_repository": "tadas-org/tadas",
+  "github_repository_id": "0",
+  "github_repository_owner_id": "0",
+  "environments": {
+    "staging": {
+      "account_id": "111111111111",
+      "admin_profile": "tadas-staging-admin",
+      "sso_profile": "tadas-staging",
+      "sso_role_name": "PowerUserAccess",
+      "bootstrap_root": "bootstrap/staging",
+      "environment_root": "environments/staging",
+      "api_domain_name": "api.staging.tadas.example",
+      "app_domain_name": "app.staging.tadas.example",
+      "site_domain_name": "staging.tadas.example"
+    },
+    "production": {
+      "account_id": "222222222222",
+      "admin_profile": "tadas-prod-admin",
+      "sso_profile": "tadas-prod",
+      "sso_role_name": "ReadOnlyAccess",
+      "bootstrap_root": "bootstrap/prod",
+      "environment_root": "environments/prod",
+      "api_domain_name": "api.tadas.example",
+      "app_domain_name": "app.tadas.example",
+      "site_domain_name": "tadas.example"
+    }
+  }
+}
