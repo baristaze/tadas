@@ -31,6 +31,13 @@ x-app-env: &app-env
   TADAS_OTEL_ENDPOINT: http://jaeger:4318
   TADAS_SENTRY_DSN: http://0123456789abcdef0123456789abcdef@glitchtip:8000/1
   TADAS_CORS_ORIGINS: '["http://localhost:${TADAS_PORTAL_PORT:-55173}","http://127.0.0.1:${TADAS_PORTAL_PORT:-55173}"]'
+  # The payment processor: the sandbox account, and the runtime key and the
+  # signing secret from .env or the shell, empty by default, which leaves billing
+  # unconfigured (every org keeps its plan; a checkout answers 503).
+  TADAS_BILLING_BACKEND: ${TADAS_BILLING_BACKEND:-stripe}
+  TADAS_STRIPE_ACCOUNT_ID: ${TADAS_STRIPE_ACCOUNT_ID:-acct_1UIfVX45a2t9JoiY}
+  TADAS_STRIPE_RUNTIME_KEY: ${TADAS_STRIPE_RUNTIME_KEY:-}
+  TADAS_STRIPE_WEBHOOK_SECRET: ${TADAS_STRIPE_WEBHOOK_SECRET:-}
 
 services:
   api:
@@ -48,7 +55,7 @@ services:
       # local sign-in by address still works; with a key of another
       # application, the API refuses to start.
       TADAS_IDENTITY_PROVIDER: workos
-      TADAS_WORKOS_CLIENT_ID: ${TADAS_WORKOS_CLIENT_ID:-client_STAGING_PLACEHOLDER}
+      TADAS_WORKOS_CLIENT_ID: ${TADAS_WORKOS_CLIENT_ID:-client_01M3640D8WBF9KC0P89YW4E72N}
       TADAS_WORKOS_API_KEY: ${TADAS_WORKOS_API_KEY:-}
       TADAS_WORKOS_WEBHOOK_SECRET: ${TADAS_WORKOS_WEBHOOK_SECRET:-}
       # A sign-in and a sign-out come back to the portal: this stack's, on
@@ -75,7 +82,7 @@ services:
       # account's person there. Without the key, that step waits, and the
       # account's personal org waits with it.
       TADAS_IDENTITY_PROVIDER: workos
-      TADAS_WORKOS_CLIENT_ID: ${TADAS_WORKOS_CLIENT_ID:-client_STAGING_PLACEHOLDER}
+      TADAS_WORKOS_CLIENT_ID: ${TADAS_WORKOS_CLIENT_ID:-client_01M3640D8WBF9KC0P89YW4E72N}
       TADAS_WORKOS_API_KEY: ${TADAS_WORKOS_API_KEY:-}
     depends_on:
       postgres:
