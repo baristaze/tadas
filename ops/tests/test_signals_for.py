@@ -21,7 +21,7 @@ def environment(name: str, *, tracker: bool) -> Environment:
         provisioner_token=None,
         error_tracker_url="https://sentry.example.test" if tracker else None,
         error_tracker_token="stok" if tracker else None,
-        error_tracker_org="acme",
+        error_tracker_org="ajax",
         error_tracker_project="tadas",
         prometheus_url="http://prom" if name == "local" else None,
         jaeger_url="http://jaeger" if name == "local" else None,
@@ -35,7 +35,7 @@ def test_a_deployed_environment_with_a_tracker_reads_error_events() -> None:
     signals = signals_for(environment("staging", tracker=True))
     assert isinstance(signals, SignalsCloudImpl) and signals.reads_error_events
     assert (
-        "errors: Sentry https://sentry.example.test org acme project tadas "
+        "errors: Sentry https://sentry.example.test org ajax project tadas "
         "by environment staging and tag request_id"
     ) in signals.describe()
 

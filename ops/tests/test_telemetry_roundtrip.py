@@ -293,10 +293,9 @@ def stores(env: Environment) -> None:
 @pytest.fixture(scope="module")
 def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Served]:
     """The round trip's API: a real process on a free port, with the devx
-    collector aimed at that port while it runs. The port used to have to be
-    8000, the collector's one host target; now the target follows the
-    process, so the round trip runs beside whatever already holds 8000 and
-    puts the collector back when it is done."""
+    collector aimed at that port while it runs. The collector's target
+    follows the process, so the round trip runs beside whatever holds 8000
+    and puts the collector back when it is done."""
     knobs = compose_knobs()
     with serving(
         free_port(),
@@ -413,7 +412,7 @@ async def test_an_error_event_carries_the_request_id(env: Environment, broken_ap
     request_id = str(uuid4())
     async with httpx.AsyncClient(base_url=broken_api.base_url, timeout=15.0) as http:
         response = await http.get(
-            "/v1/tasks",
+            "/v1/users",
             headers={
                 "x-request-id": request_id,
                 "Authorization": "Bearer ses_none",

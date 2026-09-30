@@ -19,8 +19,8 @@ NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC).isoformat()
 
 ORG = {
     "id": str(ORG_ID),
-    "name": "Acme",
-    "slug": "acme",
+    "name": "Ajax",
+    "slug": "ajax",
     "kind": "team",
     "created_at": NOW,
     "deleted_at": None,
@@ -177,7 +177,7 @@ class FakeApi:
             self._event("tasks.task.created", task["id"])
             return httpx.Response(201, json=task)
         if (method, path) == ("POST", "/v1/realtime/tickets"):
-            return httpx.Response(200, json={"ticket": "wst_1", "expires_in_seconds": 30})
+            return httpx.Response(201, json={"ticket": "tkt_1", "expires_in_seconds": 30})
         if (method, path) == ("GET", "/v1/events"):
             after = int(request.url.params.get("after_seq", 0))
             return httpx.Response(200, json=[e for e in self.events if e["seq"] > after])

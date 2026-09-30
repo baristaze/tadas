@@ -35,7 +35,7 @@ from tadas.ops.traffic import (
     seat_order,
 )
 
-PERSON = Person("owner@example.test", "acme")
+PERSON = Person("owner@example.test", "ajax")
 SEAT = Seat(PERSON, "ses_1", OWNER_ID)
 """The seat the fake's sign-in hands out: `ses_1` is the token it accepts."""
 
@@ -67,16 +67,15 @@ def local_env() -> Environment:
         jaeger_url=None,
         aws_profile=None,
         aws_region=None,
-        seed=SeedPeople("acme", "owner@example.test", "owner@example.test"),
+        seed=SeedPeople("ajax", "owner@example.test", "owner@example.test"),
     )
 
 
 def test_ids_in_a_path_read_as_a_template() -> None:
     assert (
-        route_template("/v1/tasks/0199a4c0-0000-7000-8000-000000000001/move")
-        == "/v1/tasks/{id}/move"
+        route_template("/v1/api-keys/0199a4c0-0000-7000-8000-000000000001") == "/v1/api-keys/{id}"
     )
-    assert route_template("/v1/tasks") == "/v1/tasks"
+    assert route_template("/v1/api-keys") == "/v1/api-keys"
 
 
 def test_the_people_to_sign_in_are_taken_one_org_at_a_time() -> None:
@@ -352,7 +351,7 @@ async def test_a_run_over_the_seeded_org_bounds_sessions_and_reports() -> None:
     assert any(
         r.route == "/v1/tasks" and r.method == "POST" and r.status == 201 for r in report.routes
     )
-    assert report.notes[0] == "orgs 0: the seeded org 'acme' and its two people"
+    assert report.notes[0] == "orgs 0: the seeded org 'ajax' and its two people"
     # The run says what the profile did and hands out one request id to read
     # the signals back by; the fake transport answers no x-request-id, so it
     # says so instead of inventing one.

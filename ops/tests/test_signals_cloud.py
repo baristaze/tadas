@@ -52,15 +52,15 @@ class FakeCloudWatch:
 
     def __init__(self) -> None:
         self.metrics = [
-            series(route="/v1/tasks", status="200"),
-            series(route="/v1/tasks", status="201"),
-            series(route="/v1/tasks", status="503"),
+            series(route="/v1/api-keys", status="200"),
+            series(route="/v1/api-keys", status="201"),
+            series(route="/v1/api-keys", status="503"),
             series(route="/v1/me", status="500"),
         ]
         self.values = {
-            ("/v1/tasks", "200"): [3.0, 4.0],
-            ("/v1/tasks", "201"): [2.0],
-            ("/v1/tasks", "503"): [1.0],
+            ("/v1/api-keys", "200"): [3.0, 4.0],
+            ("/v1/api-keys", "201"): [2.0],
+            ("/v1/api-keys", "503"): [1.0],
             ("/v1/me", "500"): [5.0],
         }
         self.listed: list[dict[str, Any]] = []
@@ -129,7 +129,7 @@ class FakeSentry:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         assert request.headers["authorization"] == "Bearer stok"
-        if request.url.path == "/api/0/projects/acme/tadas/issues/":
+        if request.url.path == "/api/0/projects/ajax/tadas/issues/":
             query = request.url.params["query"]
             wanted = [e for e in self.events if f"environment:{e['tags']['environment']}" in query]
             return httpx.Response(200, json=[{"id": 99, "title": "boom"}] if wanted else [])
@@ -158,7 +158,7 @@ def reader(session: FakeSession, *, environment: str = "staging") -> SignalsClou
         region="us-east-1",
         sentry_url="https://sentry.example.test",
         sentry_token="stok",
-        sentry_org="acme",
+        sentry_org="ajax",
         sentry_project="tadas",
         session=session,
         transport=httpx.MockTransport(sentry),
@@ -217,7 +217,7 @@ async def test_the_metric_delta_picks_series_by_exact_label_or_pattern() -> None
     server_errors = await impl.metric_delta("tadas_http_requests_total", {"status": "~5.."}, NOW)
     assert server_errors == 6.0
     both = await impl.metric_delta(
-        "tadas_http_requests_total", {"route": "/v1/tasks", "status": "~5.."}, NOW
+        "tadas_http_requests_total", {"route": "/v1/api-keys", "status": "~5.."}, NOW
     )
     assert both == 1.0
 
@@ -250,7 +250,7 @@ async def test_the_error_event_reads_the_products_project_for_this_environment()
     )
     assert impl.sentry.queries() == [f"environment:staging request_id:{RID}"]  # type: ignore[attr-defined]
     assert (
-        "errors: Sentry https://sentry.example.test org acme project tadas "
+        "errors: Sentry https://sentry.example.test org ajax project tadas "
         "by environment staging and tag request_id"
     ) in impl.describe()
 
