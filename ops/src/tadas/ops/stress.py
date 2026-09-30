@@ -193,11 +193,11 @@ def verdict(scenario: Scenario, report: Report, readback: Readback) -> Verdict:
     is not one of the signals the verdict holds to, so an environment that
     names none still passes or fails on the counter it did read.
 
-    The p95 is the working requests': the task and event routes, and the
-    socket's ticket. A run makes one sign-in and one sign-out per person, so
-    holding a target to a p95 over both would judge how often the generator
-    signs in. They are reported
-    beside the verdict, with their own p95. The error ratio is over every
+    The p95 is the working requests': every route a session calls, the
+    socket's ticket included. A run makes one sign-in and one sign-out per
+    person, so holding a target to a p95 over both would judge how often the
+    generator signs in. They are reported beside the verdict, with their own
+    p95. The error ratio is over every
     request, sign-in and sign-out included: a refused sign-in is a refusal
     whoever made it."""
     reasons: list[str] = []

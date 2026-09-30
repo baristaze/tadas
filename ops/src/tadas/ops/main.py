@@ -1,11 +1,11 @@
 """`tadas-ops`: traffic, stress, signals check, size, token (and the list
 and the revoke of one's own), work requeue, and stripe-bootstrap, each
 against one named environment, and workos-bootstrap against one WorkOS
-environment. Exit 0 when the run did
-what was asked, 1 when a stress target was missed, a reader found nothing, a
-redirect needs the WorkOS dashboard, or the operator plane refused a
-requeue, 2 for a bad invocation, a credential the operator plane refused, or
-a WorkOS key that is not the application's."""
+environment. Exit 0 when the run did what was asked, 1 when a stress target
+was missed, a reader found nothing, a redirect needs the WorkOS dashboard,
+or the operator plane refused a requeue, 2 for a bad invocation, a
+credential the operator plane refused, or a WorkOS key that is not the
+application's."""
 
 import argparse
 import asyncio

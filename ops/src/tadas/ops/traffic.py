@@ -113,8 +113,8 @@ def app_version() -> str:
 
 
 def route_template(path: str) -> str:
-    """`/v1/tasks/<uuid>/move` reads `/v1/tasks/{id}/move`: the report groups
-    by route, and an id per line would be a line per request."""
+    """`/v1/api-keys/<uuid>` reads `/v1/api-keys/{id}`: the report groups by
+    route, and an id per line would be a line per request."""
     return _UUID.sub("{id}", path)
 
 
@@ -202,8 +202,8 @@ class SessionOutcome:
     failure: str | None = None
     saw_own_change: bool = False
     write_request_ids: list[str] = field(default_factory=list)
-    """The request ids of the creating calls, first to last, for a caller
-    that reads the signals back by one of them."""
+    """The request ids of the creating calls (the tasks'), first to last,
+    for a caller that reads the signals back by one of them."""
     conflicts: int = 0
     """The 412s the session met on a write and answered by reading the task
     afresh."""
