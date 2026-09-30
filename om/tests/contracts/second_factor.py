@@ -13,7 +13,7 @@ from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl
 from tadas.om.tenancy.rules import TOTP_STEP, totp_code, totp_step
 from tadas.om.tenancy.types.issued import IssuedLogin
 
-TOTP_KEY = "dGFkYXMtdGVzdHMtdG90cC1rZXktdGhpcnR5LXR3byE="
+TOTP_KEY = "YWNtZS10ZXN0cy10b3RwLWtleS10aGlydHktdHdvISE="
 """A Fernet-shaped key (URL-safe base64 of 32 bytes), for tests only."""
 
 
