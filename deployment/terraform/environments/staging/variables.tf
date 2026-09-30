@@ -42,9 +42,9 @@ variable "site_domain_name" {
 }
 
 variable "workos_client_id" {
-  description = "The client id of the Tadas App, the WorkOS application people of staging sign in through; deployment/workos/environments.yaml names the same id. Not a secret. The default is a placeholder: set the real id here before the first deploy, and scripts/cloud_create.sh refuses to run while it is one."
+  description = "The client id of the Tadas App, the WorkOS application people of staging sign in through; deployment/workos/environments.yaml names the same id. Not a secret. scripts/cloud_create.sh refuses to run while the default is a placeholder."
   type        = string
-  default     = "client_STAGING_PLACEHOLDER"
+  default     = "client_01M3640D8WBF9KC0P89YW4E72N"
 }
 
 variable "cors_origins" {

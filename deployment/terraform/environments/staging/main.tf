@@ -22,8 +22,17 @@ module "environment" {
   # its secret.
   workos_client_id  = var.workos_client_id
   portal_sentry_dsn = var.portal_sentry_dsn
+  # This environment's Slack app (deployment/slack/manifest.staging.json).
+  # A client id is public; the app's client secret and signing secret are its
+  # secrets. The staging app's id, from its Basic Information page
+  # (docs/runbooks/providers/slack.md).
+  slack_client_id = "842588338401.12123745580357"
 
-  # Scale: size XS (deployment/cloud/README.md prices every size).
+  # The payment processor's account, the Tadas sandbox: test mode, no real money. The process refuses a key
+  # whose mode is not this environment's.
+  stripe_account_id = "acct_1UIfVX45a2t9JoiY"
+
+  # Scale: size XS, the demo posture (deployment/cloud/README.md prices every size).
   # Everything below is what makes this environment the smaller one. The
   # pool is sized to the instance at the autoscaling ceilings, so the flip
   # below is safe: a db.t4g.micro takes about 80 connections, and

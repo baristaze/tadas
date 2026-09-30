@@ -23,8 +23,15 @@ module "environment" {
   # its secret.
   workos_client_id  = var.workos_client_id
   portal_sentry_dsn = var.portal_sentry_dsn
+  # This environment's Slack app (deployment/slack/manifest.production.json),
+  # made when production opens. Empty until then: Slack is unconfigured here.
+  slack_client_id = ""
 
-  # Scale: size S (deployment/cloud/README.md prices every size; M and
+  # The payment processor's account, the live account. The process refuses a key
+  # whose mode is not this environment's.
+  stripe_account_id = "acct_1UIfTS4Dj4HbbS1T"
+
+  # Scale: size S, the demo posture (deployment/cloud/README.md prices every size; M and
   # above keep a second zone for the database and the cache). Everything
   # below is what differs from staging: the graph does not. The pool is
   # sized to the instance at the autoscaling ceilings, so the flip below is

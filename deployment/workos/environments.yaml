@@ -22,39 +22,39 @@
 
 staging:
   api_key_variable: WORKOS_API_KEY
-  client_id: client_STAGING_PLACEHOLDER
+  client_id: client_01M3640D8WBF9KC0P89YW4E72N
   redirect_uris:
     - http://localhost:55173/auth/callback
     - http://localhost:5173/auth/callback
-    - https://app.staging.tadas.example/auth/callback
+    - https://app.staging.tadas.fyi/auth/callback
   # The deployed callback, so nothing WorkOS sends on its own lands on a
   # laptop's port.
-  default_redirect_uri: https://app.staging.tadas.example/auth/callback
-  login_initiation_uri: https://app.staging.tadas.example/login
-  app_homepage_url: https://app.staging.tadas.example
+  default_redirect_uri: https://app.staging.tadas.fyi/auth/callback
+  login_initiation_uri: https://app.staging.tadas.fyi/login
+  app_homepage_url: https://app.staging.tadas.fyi
   sign_out_uris:
     - http://localhost:55173/signed-out
     - http://localhost:5173/signed-out
-    - https://app.staging.tadas.example/signed-out
+    - https://app.staging.tadas.fyi/signed-out
   # The deployed page, for the same reason as the default redirect.
-  default_sign_out_uri: https://app.staging.tadas.example/signed-out
+  default_sign_out_uri: https://app.staging.tadas.fyi/signed-out
   # Where the provider delivers its organization events; the endpoint is
   # made on the dashboard, with its secret in TADAS_WORKOS_WEBHOOK_SECRET.
   webhooks:
-    - https://api.staging.tadas.example/webhooks/identity
+    - https://api.staging.tadas.fyi/webhooks/identity
 
 production:
   api_key_variable: WORKOS_PRODUCTION_API_KEY
-  client_id: client_PRODUCTION_PLACEHOLDER
+  client_id: client_01M363XVP5FGF2P45FHK9B7MJD
   redirect_uris:
-    - https://app.tadas.example/auth/callback
-  default_redirect_uri: https://app.tadas.example/auth/callback
-  login_initiation_uri: https://app.tadas.example/login
-  app_homepage_url: https://app.tadas.example
+    - https://app.tadas.fyi/auth/callback
+  default_redirect_uri: https://app.tadas.fyi/auth/callback
+  login_initiation_uri: https://app.tadas.fyi/login
+  app_homepage_url: https://app.tadas.fyi
   sign_out_uris:
-    - https://app.tadas.example/signed-out
-  default_sign_out_uri: https://app.tadas.example/signed-out
+    - https://app.tadas.fyi/signed-out
+  default_sign_out_uri: https://app.tadas.fyi/signed-out
   # Where the provider delivers its organization events; the endpoint is
   # made on the dashboard, with its secret in TADAS_WORKOS_WEBHOOK_SECRET.
   webhooks:
-    - https://api.tadas.example/webhooks/identity
+    - https://api.tadas.fyi/webhooks/identity
