@@ -21,7 +21,7 @@ const net = vi.hoisted(() => ({
 
 const at = "2026-09-01T00:00:00Z";
 const user = { id: "u1", email: "owner@example.test", display_name: "Owner", created_at: at } as UserView;
-const org = { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: at, deleted_at: null } as OrgView;
+const org = { id: "o1", name: "Ajax", slug: "ajax", kind: "team", created_at: at, deleted_at: null } as OrgView;
 
 vi.mock("./api", () => ({
   api: {
@@ -66,10 +66,10 @@ beforeEach(async () => {
   net.logout = { provider_logout_url: null };
   localStorage.clear();
   usePreferencesStore.setState({ theme: "system" });
-  useSessionStore.getState().setSession("ses_acme", "acme");
+  useSessionStore.getState().setSession("ses_ajax", "ajax");
   router = createMemoryRouter(
     [
-      { path: "/", Component: page("tasks") },
+      { path: "/", Component: page("home") },
       { path: "/settings", Component: page("settings") },
     ],
     { initialEntries: ["/settings"] },
@@ -90,14 +90,14 @@ afterEach(async () => {
 it("has no tab menu and no theme button, only the chip, the gear, and the account", () => {
   const nav = q("nav")!;
   const links = [...nav.querySelectorAll("a")].map((a) => a.textContent?.trim() || a.getAttribute("aria-label"));
-  expect(links).toEqual(["AAcmeTeam", "Settings"]);
+  expect(links).toEqual(["AAjaxTeam", "Settings"]);
   expect([...nav.querySelectorAll("a")].some((a) => a.textContent?.trim() === "Tasks")).toBe(false);
   expect(nav.querySelector("button[aria-label*='theme']")).toBeNull();
   expect(trigger().textContent).toContain("owner@example.test");
 });
 
 it("goes home from the org's name, and to Settings from the gear", async () => {
-  const home = [...container.querySelectorAll("a")].find((a) => a.textContent?.includes("Acme"))!;
+  const home = [...container.querySelectorAll("a")].find((a) => a.textContent?.includes("Ajax"))!;
   expect(home.getAttribute("href")).toBe("/");
   await act(async () => home.click());
   expect(router.state.location.pathname).toBe("/");
@@ -122,7 +122,7 @@ it("opens the account menu on a click, not on hover, with the email, the org, Se
   await act(async () => trigger().click());
   expect(trigger().getAttribute("aria-expanded")).toBe("true");
   expect(menu()!.textContent).toContain("owner@example.test");
-  expect(menu()!.textContent).toContain("Acme");
+  expect(menu()!.textContent).toContain("Ajax");
   const items = [...menu()!.querySelectorAll("[role^='menuitem']")].map((node) => node.textContent);
   expect(items).toEqual(["Settings", "System", "Light", "Dark", "Sign out"]);
   expect(document.activeElement).toBe(item("Settings"));

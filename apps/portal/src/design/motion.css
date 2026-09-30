@@ -1,5 +1,7 @@
-/* The two motions the task list uses: an item arriving and an item leaving.
-   Both last one second; people who ask for less motion get none. */
+/* The motion a banner and a toast arrive with. People who ask for less
+   motion get none: kit.css turns it off for them. The task list's two, an
+   item arriving and an item leaving, last one second each, and are off
+   below for the same people. */
 @keyframes tadas-fade-in {
   from {
     opacity: 0;

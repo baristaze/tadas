@@ -41,9 +41,9 @@ describe("adoptSession", () => {
     const { adoptSession } = await import("./adoptSession");
     const { queryClient } = await import("./queryClient");
     const { useSessionStore } = await import("../store/session");
-    useSessionStore.getState().setSession("ses_old", "acme");
-    queryClient.setQueryData(["me"], { org: { slug: "acme" } });
-    queryClient.setQueryData(["task", "open", "team"], { items: [{ title: "Acme's task" }] });
+    useSessionStore.getState().setSession("ses_old", "ajax");
+    queryClient.setQueryData(["me"], { org: { slug: "ajax" } });
+    queryClient.setQueryData(["user", "list", 200], { pages: [{ items: [{ display_name: "Ajax's member" }] }] });
 
     adoptSession({ token: "ses_new", org: org("beta") });
 
@@ -57,7 +57,7 @@ describe("adoptSession", () => {
   it("holds a token at every change the store announces, so the tab never looks signed out", async () => {
     const { adoptSession } = await import("./adoptSession");
     const { useSessionStore } = await import("../store/session");
-    useSessionStore.getState().setSession("ses_old", "acme");
+    useSessionStore.getState().setSession("ses_old", "ajax");
     const seen: (string | null)[] = [];
     const stop = useSessionStore.subscribe((state) => seen.push(state.token));
 

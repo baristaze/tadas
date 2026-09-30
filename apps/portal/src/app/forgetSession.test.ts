@@ -39,9 +39,9 @@ describe("forgetSession", () => {
     const { forgetSession } = await import("./forgetSession");
     const { queryClient } = await import("./queryClient");
     const { useSessionStore } = await import("../store/session");
-    useSessionStore.getState().setSession("tok_1", "acme");
+    useSessionStore.getState().setSession("tok_1", "ajax");
     queryClient.setQueryData(["me"], { role: "owner" });
-    queryClient.setQueryData(["task", "open", "all"], { items: [] });
+    queryClient.setQueryData(["user", "list", 200], { pages: [], pageParams: [] });
 
     forgetSession();
 
