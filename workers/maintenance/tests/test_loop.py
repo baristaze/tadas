@@ -33,9 +33,9 @@ from tadas.om.events.impl.manager import EventsOptions
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import LeaseLost, Unavailable
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
+from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationKind
 from tadas.om.outbox.storage import OutboxStorageInterface
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
-from tadas.om.tasks.types.task import Task
+from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
@@ -376,12 +376,12 @@ def start_loop(
         work=work or container.managers.work,
         outbox=container.managers.outbox,
         purges={
-            "tasks": container.managers.tasks.purge_tenant,
+            "media": container.managers.media.purge_tenant,
             "tenancy": container.managers.tenancy.purge_tenant,
             "events": container.managers.events.purge_tenant,
         },
         across={
-            "tasks": container.managers.tasks.purge_across_tenants,
+            "media": unstaged(container.managers.media.purge_across_tenants),
             "tenancy": unstaged(container.managers.tenancy.purge_across_tenants),
             "idempotency": unstaged(container.managers.idempotency.purge_across_tenants),
             "events": unstaged(container.managers.events.purge_across_tenants),
@@ -860,29 +860,31 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     now = utcnow()
-    task = Task(
+    record = Orchestration(
         id=new_id(),
         created_at=now,
         updated_at=now,
         created_by=ctx.user_id,
         updated_by=ctx.user_id,
-        title="left behind",
+        kind=OrchestrationKind.TASK_IMPORT,
     )
-    row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).model_copy(
+    row = outbox_row(ctx, "orchestrations.orchestration.created", record.id, {}).model_copy(
         update={"created_at": now - timedelta(minutes=1)}  # older than the relay's grace
     )
-    await container.storage.get_tasks_storage().create_task(ctx.org_id, task, (row,))
+    await container.storage.get_orchestrations_storage().create_orchestration(
+        ctx.org_id, record, (row,)
+    )
     outbox = container.storage.get_outbox_storage()
     assert [r.id for r in await claim_all(outbox)] == [row.id]
-    loop, task_ = start_loop(
+    loop, task = start_loop(
         container, RecordingHandler(), fast_options(outbox_retention=timedelta(0))
     )
     await until(lambda: loop.sweeps >= 2)
     loop.stop()
-    await task_
+    await task
     assert await claim_all(outbox) == [], "the sweep relayed the row"
     events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
-    assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, task.id)]
+    assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, record.id)]
     # With no retention the second sweep purged the done row: nothing pending,
     # nothing done, and the relay of a purged row is never asked for.
     assert await outbox.purge_done(utcnow(), 1000) == 0
@@ -1094,7 +1096,7 @@ def aged_event(ctx: TenantContext, produced_at: datetime) -> Event:
     return Event(
         id=new_id(),
         org_id=ctx.org_id,
-        kind="tasks.task.created",
+        kind="tenancy.test.noted",
         target_id=new_id(),
         produced_at=produced_at,
         actor_id=ctx.user_id,
