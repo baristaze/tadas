@@ -1,5 +1,6 @@
-"""The media manager over the memory storage and the local store, and the task
-attachments composed on top of it."""
+"""The media manager over the memory storage and the local store, the files
+of a subject another namespace composes it for, and the task attachments
+the tasks namespace composes."""
 
 import re
 from datetime import datetime, timedelta
@@ -327,6 +328,61 @@ async def test_a_tenant_past_its_retention_loses_every_file(
     members.expired = True
     assert await media.purge_tenant(ctx) == 1
     assert not await infra.get_buckets().exists(ctx.org_id, Buckets.USER_FILE_UPLOADS, kept.key)
+
+
+# A subject's files: what another namespace composes media for.
+
+
+async def test_a_subjects_stored_files_list_apart_from_another_subjects(
+    media: MediaManagerImpl,
+) -> None:
+    ctx = context(Role.MEMBER)
+    one, two = new_id(), new_id()
+    stored = await uploaded(media, ctx, a_file(ctx, subject_id=one))
+    await media.create_file(ctx, a_file(ctx, subject_id=one))  # pending, not listed
+    other = await uploaded(media, ctx, a_file(ctx, subject_id=two))
+    assert (await media.get_files(ctx, FilePurpose.TASK_ATTACHMENT, one, None, 10)).items == (
+        stored,
+    )
+    assert (await media.get_files(ctx, FilePurpose.TASK_ATTACHMENT, two, None, 10)).items == (
+        other,
+    )
+
+
+async def test_a_subjects_files_go_with_it_and_no_other_subjects(media: MediaManagerImpl) -> None:
+    """What a namespace calls when its record goes: every live file of the
+    subject, pending or stored, is deleted, and another subject's are kept."""
+    ctx = context(Role.MEMBER)
+    one, two = new_id(), new_id()
+    await uploaded(media, ctx, a_file(ctx, subject_id=one))
+    await media.create_file(ctx, a_file(ctx, subject_id=one))  # pending, gone too
+    kept = await uploaded(media, ctx, a_file(ctx, subject_id=two))
+    assert await media.delete_subject_files(ctx, FilePurpose.TASK_ATTACHMENT, one) == 2
+    usage = await media.get_usage(ctx)
+    assert (usage.total_count, usage.pending_size_bytes) == (1, 0)
+    assert (await media.get_files(ctx, FilePurpose.TASK_ATTACHMENT, two, None, 10)).items == (kept,)
+    assert await media.delete_subject_files(ctx, FilePurpose.TASK_ATTACHMENT, one) == 0, (
+        "idempotent"
+    )
+
+
+async def test_another_tenants_subject_deletes_nothing(media: MediaManagerImpl) -> None:
+    ann, eve = context(Role.MEMBER), context(Role.OWNER)
+    subject = new_id()
+    stored = await uploaded(media, ann, a_file(ann, subject_id=subject))
+    assert await media.delete_subject_files(eve, FilePurpose.TASK_ATTACHMENT, subject) == 0
+    assert (await media.get_files(eve, FilePurpose.TASK_ATTACHMENT, subject, None, 10)).items == ()
+    assert (await media.get_file(ann, stored.id)).deleted_at is None
+
+
+async def test_a_viewer_cannot_delete_a_subjects_files(media: MediaManagerImpl) -> None:
+    org = make_org()
+    ann, viewer = context(Role.MEMBER, org), context(Role.VIEWER, org)
+    subject = new_id()
+    stored = await uploaded(media, ann, a_file(ann, subject_id=subject))
+    with pytest.raises(NotAuthorized):
+        await media.delete_subject_files(viewer, FilePurpose.TASK_ATTACHMENT, subject)
+    assert (await media.get_file(ann, stored.id)).deleted_at is None
 
 
 # Task attachments: the tasks namespace composes media.
