@@ -266,14 +266,14 @@ TENANT_READ = re.compile(
 
 
 def test_the_root_cause_reads_of_a_tenant_keep_no_text_the_tenant_wrote() -> None:
-    """The org, its members, a next page of them, and its tasks are read
-    through `jq`, which keeps the ids, the kind, the status, and the
-    timestamps: no read is printed whole."""
+    """The org, its members, a next page of them, its tasks, and a next page
+    of those are read through `jq`, which keeps the ids, the kind, the status,
+    and the timestamps: no read is printed whole."""
     reads = list(TENANT_READ.finditer(_skill("ops-root-cause")))
-    assert len(reads) == 4, (
+    assert len(reads) == 5, (
         "ops-root-cause no longer reads the org, its members, and its tasks as this test sees them"
     )
-    assert sum("/tasks" in read[0] for read in reads) == 1
+    assert sum("/tasks" in read[0] for read in reads) == 2
     for read in reads:
         assert read["piped"], f"a read of the tenant is printed whole: {read[0]}"
         assert not set(re.findall(r"[a-z_]+", read["kept"])) & TENANT_TEXT, read["kept"]
@@ -300,7 +300,8 @@ ROOT_CAUSE_READS = [
     "orgs/<org_id>",
     "orgs/<org_id>/members",
     "orgs/<org_id>/members?cursor=<next_cursor>",
-    "orgs/<org_id>/tasks?status=<open|done>",
+    "orgs/<org_id>/tasks?status=<status>",
+    "orgs/<org_id>/tasks?status=<status>&cursor=<next_cursor>",
     "orgs/<org_id>/events?after_seq=<n>&limit=1",
     "orgs/<org_id>/events?after_seq=<seq>&limit=200",
 ]
@@ -313,9 +314,9 @@ def test_every_read_of_the_operator_plane_goes_through_jq(name: str) -> None:
 
 
 def test_the_root_cause_writes_each_read_it_makes() -> None:
-    """The operator, the tenant, its members and their next page, its tasks,
-    a probe of the feed, and a page of it: each is a command of the skill, so
-    no run writes its own."""
+    """The operator, the tenant, its members and their next page, its tasks
+    and theirs, a probe of the feed, and a page of it: each is a command of
+    the skill, so no run writes its own."""
     reads = [read["route"] for read in OPERATOR_READ.finditer(_skill("ops-root-cause"))]
     assert reads == ROOT_CAUSE_READS
 
