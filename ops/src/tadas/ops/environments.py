@@ -250,7 +250,9 @@ def environment_of(
         api_url=api_url.rstrip("/"),
         operator_token=get("TADAS_OPERATOR_TOKEN"),
         provisioner_token=provisioner_token,
-        error_tracker_url=get("TADAS_ERROR_TRACKER_URL", LOCAL_ERROR_TRACKER_URL if local else None),
+        error_tracker_url=get(
+            "TADAS_ERROR_TRACKER_URL", LOCAL_ERROR_TRACKER_URL if local else None
+        ),
         error_tracker_token=get(
             "TADAS_ERROR_TRACKER_TOKEN", LOCAL_ERROR_TRACKER_TOKEN if local else None
         ),
