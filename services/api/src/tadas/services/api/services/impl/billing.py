@@ -1,25 +1,17 @@
-import json
 from urllib.parse import urlsplit
 
-from tadas.infra.queues import Queues, QueuesInterface
-from tadas.integrations.payments import PaymentsInterface
 from tadas.om.billing import BillingManagerInterface
 from tadas.om.billing.rules import PLAN_LIMITS, PLAN_PRICES, monthly_price_cents
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
-from tadas.om.context import Permission, RequestContext, TenantContext
+from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media import MediaManagerInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.services.api.services.billing import (
-    BillingServiceInterface,
-    SignedDelivery,
-    WebhooksServiceInterface,
-)
+from tadas.services.api.services.billing import BillingServiceInterface
 from tadas.services.api.types.billing import (
     BillingView,
-    DeliveryReceivedView,
     OpenPortalRequest,
     PlanLimitsView,
     PlanOfferView,
@@ -127,24 +119,3 @@ class BillingServiceImpl(BillingServiceInterface):
             can_manage=ctx.has(Permission.MANAGE_BILLING),
             plans=PLANS,
         )
-
-
-class WebhooksServiceImpl(WebhooksServiceInterface):
-    """The edge of an outside producer: the check, then the queue. What the
-    delivery means is the worker's to apply, under the org it names."""
-
-    def __init__(self, payments: PaymentsInterface, queues: QueuesInterface) -> None:
-        self._payments = payments
-        self._queues = queues
-
-    async def receive_stripe(
-        self, rctx: RequestContext, delivery: SignedDelivery
-    ) -> DeliveryReceivedView:
-        verified = self._payments.verify_delivery(delivery.payload, delivery.signature)
-        body = {
-            "idempotency_key": str(verified.idempotency_key),
-            "provider": "stripe",
-            "delivery": verified.model_dump(mode="json"),
-        }
-        await self._queues.send(Queues.WEBHOOKS, json.dumps(body).encode(), deadline=rctx.deadline)
-        return DeliveryReceivedView(received=True)

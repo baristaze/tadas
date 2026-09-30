@@ -104,9 +104,3 @@ class CompPlanRequest(RequestBody):
     the grant back."""
 
     plan: Plan | None
-
-
-class DeliveryReceivedView(View):
-    """The delivery checked out and is queued; the processor stops retrying."""
-
-    received: bool

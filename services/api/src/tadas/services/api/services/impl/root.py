@@ -19,13 +19,14 @@ from tadas.services.api.services import (
     WebhooksServiceInterface,
 )
 from tadas.services.api.services.impl.admin import AdminServiceImpl
-from tadas.services.api.services.impl.billing import BillingServiceImpl, WebhooksServiceImpl
+from tadas.services.api.services.impl.billing import BillingServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
 from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
 from tadas.services.api.services.impl.slack import SlackServiceImpl
 from tadas.services.api.services.impl.tasks import TasksServiceImpl
 from tadas.services.api.services.impl.tenancy import TenancyServiceImpl
+from tadas.services.api.services.impl.webhooks import WebhooksServiceImpl
 
 
 class ServicesImpl(ServicesInterface):
@@ -104,7 +105,9 @@ def build_services(
         billing=BillingServiceImpl(
             managers.billing, managers.tenancy, managers.tasks, managers.media, portal_origins
         ),
-        webhooks=WebhooksServiceImpl(integrations.get_payments(), infra.get_queues()),
+        webhooks=WebhooksServiceImpl(
+            integrations.get_identity_provider(), integrations.get_payments(), infra.get_queues()
+        ),
         slack=SlackServiceImpl(
             managers.slack,
             integrations.get_slack(),
