@@ -1,7 +1,6 @@
 # ADR 0024: What staging hands production is recorded outside the cloud and verified
 
-**Status**: accepted (2026-09-22), amended (2026-09-22): the fast
-rollback is the previous release only, as `DEL-50` says.
+**Status**: accepted (2026-09-22)
 
 ## Context
 

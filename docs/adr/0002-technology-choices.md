@@ -1,10 +1,6 @@
 # ADR 0002: Technology choices as adopted
 
-**Status**: accepted (2026-09-16), amended (2026-09-29): the company
-site is a substitution since v0.39.0, which tags Client App
-Architecture, Stack `default`. Valkey was recorded here as a substitute
-for Redis until guideline v0.4.0 named Valkey as the cache and the topic
-bus.
+**Status**: accepted (2026-09-16)
 
 ## Context
 

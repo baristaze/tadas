@@ -8,11 +8,9 @@ Tenancy is a data boundary and lives in storage, and the fence is the
 predicate in the query. That fence has one failure mode: a predicate
 goes missing. A new list, a new `WHERE` beside an old one, or a helper
 reused where it does not fit, and one tenant reads another's rows with
-nothing to say so. This repository has met it. `read_done_tasks`
-carried a `WHERE` of its own, the suite had a case for the open list
-and none for the done list, and taking the tenant out of the done list
-alone left the suite green; `docs/runbooks/tenant-isolation.md` records
-that run.
+nothing to say so. A suite that has a case for one list and none for
+another stays green when the tenant leaves the second list's `WHERE`;
+`docs/runbooks/tenant-isolation.md` records such a run.
 
 Postgres can hold the same boundary a second time, in the database,
 where a query cannot forget it. It has two costs. Setting the tenant is
@@ -124,8 +122,7 @@ three conditions the bulk update missed, cannot: narrowed to the
 tenant, "another tenant holds it" and "nobody does" are one empty
 answer, and they are different refusals. It takes the system scope in a
 session of its own, named in `test_session_scope.py` with that reason.
-It reads two columns of one id, which is what it read before the policy
-existed.
+It reads two columns of one id.
 
 `app.user_id` narrows a `both` table to one person when a call names
 one: the idempotency markers, the session list, the key page, the

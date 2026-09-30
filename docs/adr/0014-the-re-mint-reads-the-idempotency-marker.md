@@ -17,14 +17,6 @@ as the row's birth time, admits an attempt that lost its marker: it
 re-mints, hands out a second secret, and silently invalidates the one
 the retry already returned.
 
-Before this record the re-mint fenced on `created_at` instead,
-comparing the stored row's birth time with the attempt's, which admits
-the clock-equal case and, under skew beyond the pending lease, admits
-the zombie outright. The repository's own log said so: an attempt whose
-`finish` was refused for having lost the marker re-minted anyway,
-handed out a second secret, and silently invalidated the one the retry
-had already returned to the client.
-
 ## Decision
 
 The re-mint reads the marker in its own `WHERE`. In Postgres,

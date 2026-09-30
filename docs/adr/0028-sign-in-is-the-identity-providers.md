@@ -1,15 +1,6 @@
 # ADR 0028: Sign-in is the identity provider's, and the identity stays Tadas's
 
-**Status**: accepted (2026-09-26). That the exchange is PKCE and not
-a secret, and the key the reconcile command runs with, are superseded
-(2026-09-23) by [ADR 0033](0033-the-workos-key-is-the-applications.md):
-the key is the Tadas App application's, and it is the exchange's client
-secret. When `identities.password_hash` is dropped is superseded
-(2026-09-25) by
-[ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
-the hashes are cleared and the column leaves the mapping, and the
-release after drops it. The drop is done (2026-09-25): migration
-202609290000 takes the column out of the table.
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -120,9 +111,8 @@ environment's key.
 
 ## Consequences
 
-ADR 0026's "no issuer-subject lookup without an external provider" is
-closed: `read_identity_by_issuer_subject` is the fifth lookup the
-guideline lists before an identity is known.
+`read_identity_by_issuer_subject` is the fifth lookup the guideline
+lists before an identity is known.
 
 A sign-in is as available as WorkOS is. When it cannot be reached, the
 API answers `503` and nobody new signs in. A person already signed in

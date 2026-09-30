@@ -85,5 +85,4 @@ once an interval, on the system login's pool. The worker logs `sweep:
 counted the platform's size in <s>`, which is where a count that grows
 too slow shows first. Reading only the day's tasks waits for its
 trigger: the worker's line `sweep: counted the platform's size in <s>`
-above 2 s, about 40 million tasks
-([TAZ-159](https://linear.app/taze/issue/TAZ-159)).
+above 2 s, about 40 million tasks.

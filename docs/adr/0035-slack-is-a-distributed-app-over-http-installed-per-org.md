@@ -1,14 +1,6 @@
 # ADR 0035: Slack is a distributed app over HTTP, installed per org
 
-**Status**: accepted (2026-09-23). The contract half is done
-(2026-09-25): the code-linked channel's two tables are dropped, and
-`<prefix>slack_bot_token` is gone from every environment.
-Amended (2026-09-26): the bot asks for `channels:read` and `groups:read`
-too, for `member_joined_channel` alone; see the note at the end.
-Neither of the two exceptions it shares with ADR 0031 is a deviation at
-v0.39.0: Secrets makes the process's own credentials, injected at start,
-a kind of their own, and no rule asks a rate limit of a route that
-carries neither a credential nor a path token.
+**Status**: accepted (2026-09-23)
 
 ## Context
 
@@ -45,9 +37,10 @@ same check. No process holds a socket to Slack.
 **The delivery key comes from Slack's own id.** An event's key is a UUID
 v5 over its `event_id`, which Slack keeps across its retries; a command's
 is over its `trigger_id`, which names one invocation. A task
-`/tadas add` creates takes an id derived from that key (ADR 0027). The
-reply to a mention is recorded under the key. So Slack's retries and the
-queue's redeliveries each do one thing.
+`/tadas add` creates takes an id derived from that key
+([ADR 0027](0027-a-task-slack-creates-takes-an-id-derived-from-the-delivery.md)).
+The reply to a mention is recorded under the key. So Slack's retries and
+the queue's redeliveries each do one thing.
 
 **Each org installs the app.** An owner or an admin starts the install
 from Tadas's settings. The API keeps a one-time `state` as its digest,
@@ -61,10 +54,9 @@ the org: the workspace, the bot user, the scopes, the channel, and a
 token are written through `SecretsInterface` under the org
 (`org/<org_id>/slack_bot_<installation id>`), and the row holds only
 their name, in its `MANAGER_OWNED_FIELDS`. So the serving tasks write
-secrets for the first time: the grant is `CreateSecret`, `PutSecretValue`,
-and `DeleteSecret` on `<prefix>app/org/*` alone, in the environment's
-policy and in the account's task boundary. Nothing else a task holds
-changes.
+secrets: the grant is `CreateSecret`, `PutSecretValue`, and
+`DeleteSecret` on `<prefix>app/org/*` alone, in the environment's
+policy and in the account's task boundary.
 
 **Token rotation is on.** Slack's security guidance asks a distributed app
 to renew its tokens. An access token lives twelve hours, and its refresh
@@ -83,8 +75,25 @@ again (for new scopes, or to mend a broken install) keeps its channel.
 **The channel is bound in Slack.** An owner or an admin types `/tadas
 connect` in the channel, after `/invite @tadas`. Tadas posts a first line
 there and binds the channel only when that line lands. This needs no
-`incoming-webhook`, no `channels:read`, and no `chat:write.public`, and the
-bot posts only where it was invited.
+`incoming-webhook` and no `chat:write.public`, and the bot posts only
+where it was invited.
+
+**The bot invited back mends its channel.** A channel that refuses a
+post for good (`not_in_channel`, and `channel_not_found` for a private
+channel the bot is not in) marks the installation broken, and posting
+stops. Most often someone removed `@tadas` from the channel, and fixes
+it with `/invite @tadas`. Slack tells an app about that invite with its
+`member_joined_channel` event, whose member is the bot. The event comes
+from a public channel only to an app that holds `channels:read`, and
+from a private one only with `groups:read`. So the bot asks for both
+scopes, for that event alone, and the manifests subscribe to it. The
+worker takes the event off the `slack` queue like any other. When the
+member is the installation's bot and the channel is the bound one, an
+installation that channel broke is well again, announced, and posts
+resume. Any other join changes nothing. A token Slack refused is not
+mended by a join: it still takes a new install. It is push, never
+polling: the other way to learn that the channel works again is to keep
+posting into it and see.
 
 **A command runs as the person who typed it.** The worker reads the
 Slack user's email (`users.info`, with `users:read` and
@@ -105,12 +114,13 @@ secret are process credentials.
 
 ## Consequences
 
-The routes follow the payment processor's, and so do two deviations ADR
-0031 names for it. The Slack routes carry no rate limit: they take no
-credential to key one on, and the signature check is the gate. The
-signing secret and the client secret are process credentials injected at
-start, not read through `SecretsInterface`: they are the app's, not a
-tenant's. The workspace's token is a tenant's, and follows the rule.
+The routes follow the payment processor's
+([ADR 0031](0031-plans-are-levers-and-the-processor-is-mirrored.md)).
+The Slack routes carry no rate limit: they take no credential to key
+one on, and the signature check is the gate. The signing secret and the
+client secret are process credentials injected at start, not read
+through `SecretsInterface`: they are the app's, not a tenant's. The
+workspace's token is a tenant's, and follows the rule.
 
 The account's task boundary is the bootstrap root's, which no deploy
 applies. Until a person applies it, an install fails on `CreateSecret`.
@@ -124,44 +134,15 @@ is one secret write wide.
 
 Token rotation cannot be turned off for an app once it is on.
 
-The channel linked by a one-time code is gone. Its two tables stay for one
-release, unread, so the release before this one serves its requests during
-the rollout; the release after drops them. Their rows are not carried
-over: a code-linked channel holds no token, so each org installs again.
+The two channel scopes also open `conversations.list` and
+`conversations.info` to the bot. Tadas calls neither, and reads no
+message.
+
+An installation whose scopes lack the two is sent no join by Slack. Its
+owner or admin clicks **Add to Slack again**. Until then, `/tadas
+connect` in the channel mends the installation.
 
 A laptop has no public URL, and Tadas adds no tunnel. Locally Slack is the
 twin: "Add to Slack" installs into the twin's workspace at once, and
 Slack's calls in are signed requests with the twin's secret, which the
 tests make too. The real Slack is tried on staging.
-
-## Amended: the bot invited back mends its channel
-
-A channel that refuses a post for good (`not_in_channel`, and
-`channel_not_found` for a private channel the bot is not in) marks the
-installation broken, and posting stops. Most often someone removed
-`@tadas` from the channel, and fixes it with `/invite @tadas`. Slack
-tells an app about that invite with its `member_joined_channel` event,
-whose member is the bot. The event comes from a public channel only to
-an app that holds `channels:read`, and from a private one only with
-`groups:read`.
-
-So the bot asks for both scopes and the manifests subscribe to the
-event. The worker takes the event off the `slack` queue like any other.
-When the member is the installation's bot and the channel is the bound
-one, an installation that channel broke is well again, announced, and
-posts resume. Any other join changes nothing. A token Slack refused is
-not mended by a join: it still takes a new install.
-
-The rule behind it is push over polling. The other way to learn that the
-channel works again is to keep posting into it and see; Slack pushes
-the answer instead.
-
-The two scopes also open `conversations.list` and `conversations.info`
-to the bot. Tadas calls neither, and reads no message. The binding does
-not change: the channel is still bound by `/tadas connect` typed in it,
-and the bot still posts only where it was invited.
-
-A workspace that installed Tadas before the change holds the old
-scopes, and Slack sends it no join. Its owner or admin clicks **Add to
-Slack again**. Until then, `/tadas connect` in the channel mends the
-installation, as before.

@@ -1,9 +1,6 @@
 # ADR 0056: Purges across tenants plan with their values
 
-**Status**: accepted (2026-09-26). Amends
-[ADR 0045](0045-retention-purges-run-once-a-pass-across-tenants.md): each
-purge still reads an index that leads with its retention column, and now
-the plan cache cannot take that index away.
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -72,9 +69,8 @@ plan there. The system scope's policy makes the planner count about 22
 rows where 95,000 are past the cut. With 22 rows to sort, a scan and a
 sort look cheap, so the planner sorts the whole backlog to take one
 batch. On the seed's outbox that batch takes 51 ms, with a sort spilled
-to disk, where the index walk takes 2.2 ms. The
-order is kept only where it was: the read of deleted tasks, whose
-partial index holds deleted rows alone.
+to disk, where the index walk takes 2.2 ms. Only the read of deleted
+tasks keeps an order: its partial index holds deleted rows alone.
 
 ## Consequences
 

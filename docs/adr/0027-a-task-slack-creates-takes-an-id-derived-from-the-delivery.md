@@ -1,10 +1,6 @@
 # ADR 0027: A task Slack creates takes an id derived from the delivery
 
-**Status**: accepted (2026-09-22). No longer a deviation since
-v0.40.0: OM-12 names `derived_id()` for what an outside delivery
-creates ([ADR 0082](0082-what-0-40-0-asks.md)).
-Amended (2026-09-23): the delivery arrives over HTTP and its key comes
-from Slack's own id.
+**Status**: accepted (2026-09-22)
 
 ## Context
 

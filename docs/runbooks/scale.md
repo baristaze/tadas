@@ -47,7 +47,7 @@ with traffic, and a full disk is an outage.
 `desired_count` stays out of `ignore_changes`, so every apply sets a
 scaled service back to its floor, and the policy raises it again within
 its cooldown while load lasts
-([ADR 0025](../adr/0025-rules-of-0-29-0-that-wait-for-their-feature.md)). An
+([ADR 0025](../adr/0025-an-apply-returns-a-scaled-service-to-its-floor.md)). An
 environment that cannot afford the dip raises its floor in the same pull
 request.
 

@@ -92,26 +92,26 @@ reason = "an api key hash digests a fresh random secret and the lookup reads rev
 [[tool.arch-check.exception]]
 rule = "ASY-16"
 path = "om/src/tadas/om/work/storage/tables/work_items.py"
-adr = "docs/adr/0026-what-0-31-0-leaves-as-a-choice.md"
+adr = "docs/adr/0026-a-work-items-key-is-unique-within-its-tenant.md"
 reason = "the unique index is (org_id, idempotency_key), led by the tenant as the lens asks"
 
-# A build before the rank writes a task's position and cannot write its rank;
-# a trigger gives such a row the rank its position names, until the column
-# goes.
+# The release before's integration tests insert a task by its position
+# alone. A trigger gives such a row the rank its position names, until the
+# contract step drops the column.
 [[tool.arch-check.exception]]
 rule = "STO-05"
-path = "om/migrations/sql/core/202610120000_task_rank.up.sql"
+path = "om/migrations/sql/core/202610200100_the_core_role.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
-reason = "expand scaffolding for the release before, which cannot write the rank; it goes with the position in the contract release"
+reason = "expand scaffolding for the release before, whose integration tests write a task's position and no rank; it goes with the position's column in the contract step"
 
-# This release names no position; the release before reads it as a number. A
-# trigger gives every row this release writes its rank's float, until the
-# column goes.
+# No statement of the tree names a task's position; the release before
+# reads it as a number. A trigger gives every row the tree writes its rank's
+# float, until the contract step drops the column.
 [[tool.arch-check.exception]]
 rule = "STO-05"
-path = "om/migrations/sql/core/202610200000_task_position_unmapped.up.sql"
+path = "om/migrations/sql/core/202610200100_the_core_role.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
-reason = "contract scaffolding for the release before, which reads the position this release no longer writes; it goes with the column"
+reason = "contract scaffolding for the release before, which reads the position that no statement of the tree writes; it goes with the column in the contract step"
 
 # The company site is a page, not an app: HTML and CSS on Vite, no script,
 # so no React. A substitution for one page (ADR 0002), named by path, since

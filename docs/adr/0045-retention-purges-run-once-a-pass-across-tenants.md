@@ -1,14 +1,6 @@
 # ADR 0045: Retention purges run once a pass across tenants
 
-**Status**: accepted (2026-09-26), amended by
-[ADR 0056](0056-purges-across-tenants-plan-with-their-values.md): each
-purge plans with its values; and by
-[ADR 0070](0070-the-sweep-reads-only-the-tenants-with-a-chore-due.md):
-the chores run in the tenants one read across tenants names, not in
-every tenant the ring takes. Amends
-[ADR 0040](0040-the-event-stream-has-a-floor.md): the trim runs once a
-pass for every org, not once per org. The floor, and the transaction
-that moves it, stand.
+**Status**: accepted (2026-09-26)
 
 ## Context
 
@@ -44,8 +36,9 @@ with its values
 deleted longer ago than the retention stays per tenant: it deletes rows
 that carry no retention of their own, such as open tasks, the billing
 account, and the event cursor. A living tenant's purge reads nothing.
-The day's cleanup opening stays per tenant too, and so does the mark of
-a tenant purged.
+The mark of a tenant purged stays per tenant too. The standing chores
+run in the tenants one read across tenants names, before the ring
+([ADR 0070](0070-the-sweep-reads-only-the-tenants-with-a-chore-due.md)).
 
 Namespace by namespace:
 
@@ -81,10 +74,7 @@ Namespace by namespace:
 ## Consequences
 
 A living tenant costs a pass no purge at all, and the purges across
-tenants cost a pass a few milliseconds each when idle. What a pass
-spends per tenant is its visit, which is what bounds the tenants one
-pass reaches. The visit is its chores: about 3 ms, the cleanup's probe
-and the respace's.
+tenants cost a pass a few milliseconds each when idle.
 
 The indexes follow the reads. Each purge across tenants has an index
 that leads with its retention column, and each tenant keeps an index

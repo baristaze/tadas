@@ -10,7 +10,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 export const PREFERENCES_STORAGE_KEY = "tadas.portal.preferences";
 
-/** An earlier build kept the scope under this key as a bare word. */
+/** A key of its own that may hold the scope as a bare word. */
 export const LEGACY_SCOPE_KEY = "tadas.portal.taskScope";
 
 /** A section of the task list: the open tasks, or the done ones. */
@@ -38,12 +38,12 @@ interface PreferencesState {
   setFolded: (orgId: string, section: TaskSection, folded: boolean) => void;
 }
 
-/** Pure: the scope an earlier build left as a bare word, and nothing else. */
+/** Pure: the scope a bare word names, and nothing else. */
 export function legacyScope(value: string | null): TaskScope | null {
   return value === "team" || value === "mine" ? value : null;
 }
 
-/** Reads the scope an earlier build left under its own key, once, and drops
+/** Reads the scope kept as a bare word under its own key, once, and drops
  * it; null when there is none or the storage cannot be read. */
 export function adoptLegacyScope(storage: Pick<Storage, "getItem" | "removeItem"> | undefined): TaskScope | null {
   try {
