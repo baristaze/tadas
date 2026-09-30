@@ -48,7 +48,7 @@ maintenance worker applies it.
 | Setting | What |
 |---------|------|
 | `TADAS_IDENTITY_PROVIDER` | `workos`, `twin`, or `none` (the default). The twin is refused at boot outside `local` and `test`. |
-| `TADAS_WORKOS_CLIENT_ID` | The application's client id. Not a secret. Staging's application serves the local stack and staging; production has its own. |
+| `TADAS_WORKOS_CLIENT_ID` | The application's client id. Not a secret. |
 | `TADAS_WORKOS_API_KEY` | The application's own API key: the exchange's client secret and the key of every management call. Empty or `off` leaves WorkOS unconfigured. |
 | `TADAS_WORKOS_WEBHOOK_SECRET` | The webhook endpoint's signing secret, injected at start. Unset, every delivery is refused as unavailable. |
 | `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout of every call. |
