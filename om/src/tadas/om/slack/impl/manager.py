@@ -214,7 +214,12 @@ class SlackManagerImpl(SlackManagerInterface):
                     tokens.access_token.get_secret_value(), deadline=ctx.deadline
                 )
             except SlackError as error:
-                log.warning("slack app of org %s was not removed at Slack: %s", ctx.org_id, error)
+                log.warning(
+                    "slack app of org %s was not removed at Slack: %s",
+                    ctx.org_id,
+                    error,
+                    exc_info=error,
+                )
             except InfraException as error:
                 if error.code != SecretNotFound.code:
                     raise
@@ -392,7 +397,11 @@ class SlackManagerImpl(SlackManagerInterface):
         try:
             await self._slack.revoke(tokens.access_token.get_secret_value(), deadline=ctx.deadline)
         except SlackError as error:
-            log.warning("a Slack token the platform does not keep was not revoked: %s", error)
+            log.warning(
+                "a Slack token the platform does not keep was not revoked: %s",
+                error,
+                exc_info=error,
+            )
 
     async def _write(
         self, ctx: TenantContext, installation: SlackInstallation, action: str
