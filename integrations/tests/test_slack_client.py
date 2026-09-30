@@ -171,6 +171,17 @@ def test_a_timestamp_no_clock_reads_is_refused(stamp: str, reason: str) -> None:
     assert refused.value.slack_code == reason and refused.value.http_status == 401
 
 
+def test_a_body_that_is_not_utf8_is_refused() -> None:
+    """The SDK reads the body as text before it signs it. One that is no
+    UTF-8 is a body Slack never sent, refused like any other, never an
+    exception, whatever signature came with it."""
+    body = b"\xff\xfe"
+    at, signature = sign(body, SECRET)
+    with pytest.raises(SlackRequestRefused) as refused:
+        verify(body, at, signature, SECRET)
+    assert refused.value.slack_code == "bad_body" and refused.value.http_status == 401
+
+
 def test_a_request_just_inside_the_window_passes() -> None:
     body = b"x"
     at, signature = sign(body, SECRET, int(time.time()) - 290)
