@@ -155,6 +155,20 @@ class MediaStorageContract:
         listed = await storage.read_files(org, FilePurpose.TASK_ATTACHMENT, None, None, None, 10)
         assert [f.id for f in listed] == [loose.id]
 
+    async def test_a_purpose_with_no_subject_lists_its_own(
+        self, storage: MediaStorageInterface
+    ) -> None:
+        """The purpose is part of the key the list reads by: a voice
+        dictation's list holds no task attachment."""
+        org = new_id()
+        voice = await seed(storage, org, make_file(purpose=FilePurpose.VOICE_DICTATION))
+        await seed(storage, org, make_file(subject_id=new_id()))
+        await seed(storage, org, make_file())
+        listed = await storage.read_files(
+            org, FilePurpose.VOICE_DICTATION, None, FileStatus.STORED, None, 10
+        )
+        assert [f.id for f in listed] == [voice.id]
+
     async def test_usage_sums_the_live_rows_per_purpose_and_status(
         self, storage: MediaStorageInterface
     ) -> None:
