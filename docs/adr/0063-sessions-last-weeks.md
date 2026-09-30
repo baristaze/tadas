@@ -42,7 +42,7 @@ tab signs in again, and the AuthKit session decides whether the person
 sees a prompt. The Tadas App's Sessions tab sets it to the same two
 bounds: 30 days maximum, 14 days of inactivity. That tab has no API, so
 `tadas-ops workos-bootstrap` prints both as checks, and the WorkOS
-runbook says where they are. WorkOS's settings never end an Tadas
+runbook says where they are. WorkOS's settings never end Tadas's
 session early or keep it alive: Tadas reads the access token once, for
 its session id, and never refreshes it.
 

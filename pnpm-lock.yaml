@@ -181,15 +181,15 @@ importers:
 
   apps/portal:
     dependencies:
-      '@tadas/client':
-        specifier: workspace:*
-        version: link:../../clients/typescript
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
       '@sentry/react':
         specifier: ^10.74.0
         version: 10.74.0(react@19.3.0)
+      '@tadas/client':
+        specifier: workspace:*
+        version: link:../../clients/typescript
       '@tanstack/react-query':
         specifier: ^5.103.0
         version: 5.103.0(react@19.3.0)
