@@ -164,7 +164,8 @@ async def test_a_declared_length_that_is_no_number_is_no_exception(
     """A length in digits of another script declares nothing, and the body is
     bounded as it runs; one with more digits than a number is read from is
     past the bound."""
-    started = await start(client, owner, size=4)
+    task_id = await a_task(client, owner)
+    started = await start(client, owner, task_id, size=4)
     file_id = started.json()["id"]
     await client.post(f"/v1/media/files/{file_id}/upload", headers=owner)
     sent = [(name.encode(), value.encode()) for name, value in owner.items()]
