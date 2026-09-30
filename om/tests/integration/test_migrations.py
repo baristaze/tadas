@@ -189,7 +189,8 @@ async def test_a_backfill_that_misses_rows_fails_and_keeps_the_fence(
         await engine.dispose()
 
 
-# A task's rank and its position, kept in step by the database.
+# A task's rank and its position, kept in step by the database for the
+# release before, until the contract step drops the column (ADR 0050).
 
 
 def raw(connection: Connection, sql: str) -> list[tuple[object, ...]]:

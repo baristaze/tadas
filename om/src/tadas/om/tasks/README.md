@@ -138,9 +138,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   someone wrote meanwhile is left for the next sweep. The order a
   person sees never changes.
 - **The position is the rank's float.** The table keeps each task's
-  rank as a float too, its position. Nothing here reads or writes it:
-  the database fills it from the rank. It goes when its column is
-  dropped.
+  rank as a float too, its position, for the release before, which
+  reads it. Nothing here reads or writes it: the database fills it from
+  the rank. It goes when the contract step drops its column.
 - **A page is a page.** A page holds at most two hundred tasks, and
   "another page follows" is a fact about the rows, not a guess.
 - **Assignment is checked when it changes.** Assigning a task to

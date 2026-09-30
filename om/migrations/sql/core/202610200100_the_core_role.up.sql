@@ -539,16 +539,20 @@ CREATE POLICY tenant_fence ON core.tasks FOR ALL
         )
     );
 
--- The position is the rank as a float (ADR 0050). It is in the table and out
--- of the mapping, so no statement of the tree names it, and two triggers
--- keep it and the rank in step. Both triggers, their functions, and the
--- column go together, in a revision on this one.
+-- The position is the rank as a float, kept for the release before: an
+-- expand and contract in flight (ADR 0050). That release names the position
+-- in every insert and reads it as a number, for the minutes of a roll and
+-- again after a fast rollback. The column is in the table and out of the
+-- mapping, so no statement of the tree names it, and two triggers keep it
+-- and the rank in step. The contract step, a revision on this one, drops
+-- both triggers, their functions, and the column together.
 --
 -- A row written with a position and no rank takes the rank its position
 -- names, digit for digit: a float's text is the shortest that reads back as
--- the same float. So does a row whose position changed alone. The trigger
--- runs before the check, so such a row meets NOT NULL with its rank set. A
--- write that sets the rank itself is left alone.
+-- the same float. So does a row whose position changed alone. The release
+-- before's integration tests write tasks that way. The trigger runs before
+-- the check, so such a row meets NOT NULL with its rank set. A write that
+-- sets the rank itself is left alone.
 CREATE FUNCTION core.tasks_rank_from_position() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.rank IS NULL
@@ -564,10 +568,11 @@ CREATE TRIGGER tasks_rank_from_position BEFORE INSERT OR UPDATE ON core.tasks
 FOR EACH ROW EXECUTE FUNCTION core.tasks_rank_from_position();
 
 -- A row inserted with no position, and a row whose rank changed while its
--- position stayed, takes the float of its rank. The column is NOT NULL: this
--- trigger fills it before the check. It also keeps the trigger above, which
--- fills the rank from a position that changed alone, from ever meeting a
--- stale position. A row written with both is left alone.
+-- position stayed, takes the float of its rank: the position the release
+-- before reads. The column is NOT NULL: this trigger fills it before the
+-- check. It also keeps the trigger above, which fills the rank from a
+-- position that changed alone, from ever meeting a stale position. A row
+-- written with both is left alone.
 CREATE FUNCTION core.tasks_position_from_rank() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.position IS NULL

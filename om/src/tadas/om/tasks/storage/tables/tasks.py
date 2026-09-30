@@ -22,10 +22,11 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("ix_tasks_org_id_status_rank", "org_id", "status", "rank"),
-        # The rank as a float: in the table and out of the mapping. No
-        # statement names it, and a trigger keeps it the rank's float on
-        # every row written. This line goes when the column is dropped (ADR
-        # 0038, ADR 0050).
+        # The rank as a float: in the table and out of the mapping. The
+        # release before names it in every insert and reads it as a number,
+        # so a trigger keeps it the rank's float on every row written here.
+        # No statement of the tree names it. The contract step drops the
+        # column and this line (ADR 0038, ADR 0050).
         Column("position", Double(), nullable=False),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),
         # The done list and the archive, one index per shelf, so the cleanup's
