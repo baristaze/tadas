@@ -12,8 +12,8 @@ maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
 Its base is the guideline's scaffold,
-[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.40.0/scaffold/acme_root)
-at v0.40.0, rendered as Tadas. The `scaffold` branch keeps each render,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.41.0/scaffold/acme_root)
+at v0.41.0, rendered as Tadas. The `scaffold` branch keeps each render,
 and the main branch merges it, so every difference from the scaffold is
 Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
 a later release by a merge.

@@ -12,11 +12,11 @@ namespace reads as `<root>.om.<ns>`, `<root>.infra.<capability>`, and
 ## Decision
 
 The root package is `tadas`, the product's name. It is a namespace
-package: no distribution has a `tadas/__init__.py`, so `tadas-om`,
+package: no distribution has `tadas/__init__.py`, so `tadas-om`,
 `tadas-infra`, and every service and worker add subpackages to the same
 root.
 
 ## Consequences
 
 Imports read `from tadas.om.base import Platform`. Every new distribution
-uses the `src/tadas/...` layout and never adds a `tadas/__init__.py`.
+uses the `src/tadas/...` layout and never adds `tadas/__init__.py`.

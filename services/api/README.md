@@ -4,11 +4,9 @@ The one HTTP process of Tadas. It serves the product's routes under `/v1`,
 the realtime socket, the identity provider's webhook at
 `/webhooks/identity`, the payment processor's at `/webhooks/stripe`,
 Slack's calls under `/webhooks/slack`, and the probes `/healthz`,
-`/readyz`, and `/metrics`. Every replica is the same process, and replicas
-share nothing but the database, the cache, and the topic bus.
+`/readyz`, and `/metrics`. Every replica is the same process.
 `TADAS_NAMESPACES` mounts a subset of the namespaces (`["media"]`, say), so
-one namespace can run as a service of its own with no code change. A name
-the image does not host refuses the boot.
+one namespace can run as a service of its own with no code change.
 
 A request passes four layers, each in its own folder under
 `src/tadas/services/api/`:
