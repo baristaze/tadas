@@ -113,6 +113,75 @@ async def test_a_call_that_does_not_check_out_is_refused_and_queues_nothing(
     assert await queued(container) == []
 
 
+@pytest.mark.parametrize("path", ["/webhooks/slack/commands", "/webhooks/slack/events"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {b"X-Slack-Signature": b"v0=" + b"\xe9" * 64},
+        {b"X-Slack-Request-Timestamp": b"\xb2"},
+        {b"X-Slack-Request-Timestamp": b"9" * 5000},
+        {b"X-Slack-Request-Timestamp": b"9" * 400},
+    ],
+    ids=["a byte past ASCII", "a digit int refuses", "past int's digits", "past a float"],
+)
+async def test_a_header_no_signer_writes_is_refused_and_queues_nothing(
+    client: httpx.AsyncClient, container: AppContainer, path: str, change: dict[bytes, bytes]
+) -> None:
+    """A signature outside its alphabet and a timestamp no clock reads are a
+    bad signature, the route's 401, never an exception."""
+    body = command_body()
+    signed = {
+        name.encode(): value.encode() for name, value in twin_of(container).signed(body).items()
+    }
+    answer = await client.post(path, content=body, headers={**signed, **change})
+    assert answer.status_code == 401, answer.text
+    assert answer.json()["error"]["code"] == "slack_signature_invalid"
+    assert await queued(container) == []
+
+
+@pytest.mark.parametrize("path", ["/webhooks/slack/commands", "/webhooks/slack/events"])
+async def test_a_body_that_is_not_utf8_is_refused_and_queues_nothing(
+    client: httpx.AsyncClient, container: AppContainer, path: str
+) -> None:
+    """An unsigned call with a current timestamp, a signature in its
+    alphabet, and a body that is no UTF-8: the route's 401, never an
+    exception."""
+    headers = {
+        "X-Slack-Request-Timestamp": str(int(time.time())),
+        "X-Slack-Signature": "v0=" + "ab" * 32,
+    }
+    answer = await client.post(path, content=b"\xff\xfe", headers=headers)
+    assert answer.status_code == 401, answer.text
+    assert answer.json()["error"]["code"] == "slack_signature_invalid"
+    assert await queued(container) == []
+
+
+@pytest.mark.parametrize(
+    "retry",
+    [b"\xb2", b"9" * 5000, b"-1", b"soon"],
+    ids=["a digit int refuses", "past int's digits", "signed", "a word"],
+)
+async def test_a_retry_number_that_is_no_number_is_the_first_call(
+    client: httpx.AsyncClient, container: AppContainer, retry: bytes
+) -> None:
+    """The retry header is read before the signature is checked. One that is
+    not ASCII digits `int` reads is no retry, never an exception: a signed
+    call is queued, and an unsigned one is refused as unsigned."""
+    twin = twin_of(container)
+    body = command_body()
+    signed = {name.encode(): value.encode() for name, value in twin.signed(body).items()}
+    answer = await client.post(
+        "/webhooks/slack/commands", content=body, headers={**signed, b"X-Slack-Retry-Num": retry}
+    )
+    assert answer.status_code == 200, answer.text
+    [delivery] = await queued(container)
+    assert delivery.retry_num == 0
+    unsigned = await client.post(
+        "/webhooks/slack/commands", content=body, headers={b"X-Slack-Retry-Num": retry}
+    )
+    assert unsigned.status_code == 401, unsigned.text
+
+
 async def test_a_replayed_call_queues_the_same_key(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:

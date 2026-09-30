@@ -40,6 +40,11 @@ def verified(payload: bytes, signature: str | None, secret: str) -> ProviderDeli
     The reason names what failed and never the secret or the header."""
     if not signature:
         raise DeliveryRefused(f"no {SIGNATURE_HEADER} header")
+    # The SDK's compare takes ASCII text alone and raises on anything else. A
+    # header is a timestamp and hex, so one with another character is a bad
+    # signature. A timestamp `int` refuses is the SDK's own refusal.
+    if not signature.isascii():
+        raise DeliveryRefused("the signature or its timestamp did not check out")
     try:
         stripe.WebhookSignature.verify_header(
             payload.decode("utf-8"), signature, secret, TOLERANCE_SECONDS

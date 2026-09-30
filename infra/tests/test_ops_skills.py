@@ -11,8 +11,14 @@ lines that stop a secret leaking stay written in each skill that could
 break them, and this test holds them there.
 """
 
+import itertools
 import os
 import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -148,6 +154,54 @@ def test_the_refusal_of_anything_but_the_administrator_stays_inline(name: str) -
     assert "Refuse any profile but the environment's administrator" in _prose(name)
 
 
+@pytest.mark.parametrize("name", TOKEN_HOLDERS)
+def test_a_skill_that_holds_a_token_pre_approves_the_ops_command_and_no_other(name: str) -> None:
+    """`uv run` takes any program, `python -c` among them: pre-approved, it
+    is code on the operator's machine beside the env file's tokens, with
+    nobody asked. The skill runs `tadas-ops` and names that."""
+    tools = [tool.strip() for tool in _allowed_tools(name).split(",")]
+    assert "Bash(uv run tadas-ops:*)" in tools
+    assert not [
+        tool for tool in tools if tool.startswith("Bash(uv") and tool != "Bash(uv run tadas-ops:*)"
+    ]
+    runs = set(re.findall(r"\buv run ([\w-]+)", _prose(name)))
+    assert runs == {"tadas-ops"}, f"{name} runs uv with {sorted(runs)}"
+
+
+# What a tenant writes and the operator plane answers with: an org's name and
+# slug, a member's display name and address, a task's title, notes, and due
+# date. A tenant chooses those words, and the session that reads them holds
+# an operator's token.
+TENANT_TEXT = {"name", "slug", "display_name", "email", "title", "notes", "due_on"}
+TENANT_READ = re.compile(
+    r'^ *curl [^\n]*"\$TADAS_API_URL/v1/admin/orgs/<org_id>'
+    r'(?:/members(?:\?cursor=<next_cursor>)?|/tasks[^"\n]*)?"'
+    r"(?P<piped> \\\n +\| jq '(?P<kept>[^'\n]*)'$)?",
+    re.MULTILINE,
+)
+
+
+def test_the_root_cause_reads_of_a_tenant_keep_no_text_the_tenant_wrote() -> None:
+    """The org, its members, a next page of them, and its tasks are read
+    through `jq`, which keeps the ids, the kind, the status, and the
+    timestamps: no read is printed whole."""
+    reads = list(TENANT_READ.finditer(_skill("ops-root-cause")))
+    assert len(reads) == 4, (
+        "ops-root-cause no longer reads the org, its members, and its tasks as this test sees them"
+    )
+    assert sum("/tasks" in read[0] for read in reads) == 1
+    for read in reads:
+        assert read["piped"], f"a read of the tenant is printed whole: {read[0]}"
+        assert not set(re.findall(r"[a-z_]+", read["kept"])) & TENANT_TEXT, read["kept"]
+    assert "/tasks" not in TENANT_READ.sub("", _skill("ops-root-cause")), (
+        "the tasks route is named outside the read that goes through `jq`"
+    )
+    assert "Bash(jq:*)" in _allowed_tools("ops-root-cause")
+    assert "never run either read without its `jq`" in _prose("ops-root-cause")
+    assert "Never run it without its `jq`" in _prose("ops-root-cause")
+    assert "**Tenant.** <kind> org" in _skill("ops-root-cause")
+
+
 def test_the_audits_are_the_skills_named_for_one() -> None:
     assert _own("audit-*") == AUDITS
 
@@ -230,6 +284,12 @@ COUNT_BOUNDS = {
         'the pass ends with "not found" for its id',
         "never more than 5 request ids, never a second pass over one, "
         "never more than 10 polls of a query",
+        "When `next_cursor` is not null, read the next page with it as `cursor`",
+        "Read at most 20 pages of members, 1,000 of them.",
+        "never more than 20 pages of members",
+        "An answer that is empty, or that `jq` cannot parse, is no answer.",
+        "Either way the run ends there, as on a refusal",
+        "The read is not made a second time.",
     ],
     "ops-investigate": [
         "Poll `get-query-results` at most 10 times for one query, each poll after `sleep 5`",
@@ -308,6 +368,204 @@ def test_the_compaction_says_what_it_never_touches(sentence: str) -> None:
     assert sentence in _prose("docs-compact"), f"docs-compact no longer says: {sentence}"
 
 
+# What a run of the compaction does where two runs could do two things: each
+# is a sentence of the skill, so a rewrite that leaves the choice open fails.
+COMPACTION_DECIDES = [
+    "When either exists, both take the next free suffix (`_2`), so a run never overwrites another's.",
+    "A migration's revision id or file name that it cites stays as it is: only a fold moves one",
+    "a field's `description`, which is the wire's document",
+    "A citation in a place the run never edits stays as it is",
+    "The ADR it cites is never removed, and keeps the part the citation is for",
+    "A name in code is code, a test's name included",
+]
+
+
+@pytest.mark.parametrize("sentence", COMPACTION_DECIDES)
+def test_the_compaction_leaves_no_choice_to_the_run(sentence: str) -> None:
+    assert sentence in _prose("docs-compact"), f"docs-compact no longer says: {sentence}"
+
+
+# What `make openapi` writes: the API document and the two schemas made from it.
+GENERATED = [
+    "clients/typescript/openapi.json",
+    "clients/typescript/src/schema.d.ts",
+    "clients/python/src/tadas/client/schema.py",
+]
+# What a compaction never edits: an applied migration, a generated file, a
+# lock file, and the skill's own folder, which holds the phrases it sweeps for.
+NEVER_SWEPT = [
+    "om/migrations/sql/core/202601010000_the_core_role.up.sql",
+    "om/migrations/versions/core/202601010000_the_core_role.py",
+    *GENERATED,
+    "uv.lock",
+    "pnpm-lock.yaml",
+    "deployment/terraform/environments/staging/.terraform.lock.hcl",
+    ".agents/skills/docs-compact/SKILL.md",
+]
+SWEPT = ["README.md", "docs/adr/0001-a-decision.md", "om/src/tadas/om/tasks.py", "pyproject.toml"]
+
+
+def _sweep() -> list[str]:
+    """The sweep, as the skill writes it: one `git grep` with its pathspec."""
+    lines = [line.strip() for line in _skill("docs-compact").splitlines()]
+    (command,) = [line for line in lines if line.startswith("git grep -nIiwE -f ")]
+    return shlex.split(command)
+
+
+def test_the_sweep_lists_no_file_the_compaction_never_edits(tmp_path: Path) -> None:
+    """Step 6 rewrites what the sweep lists, so the sweep's pathspec is what
+    keeps an applied migration and a generated document as they are. It runs
+    here as the skill writes it, over a tree where every file tells a past."""
+    for name in GENERATED:
+        assert (ROOT / name).is_file(), f"{name} is not a file `make openapi` writes"
+    for name in [*NEVER_SWEPT, *SWEPT]:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("The key was renamed from another, and is no longer read.\n")
+    references = SKILLS / "docs-compact" / "references"
+    shutil.copytree(references, tmp_path / ".agents" / "skills" / "docs-compact" / "references")
+    for command in (["git", "init", "--quiet"], ["git", "add", "--all"]):
+        subprocess.run(command, cwd=tmp_path, check=True)
+    swept = subprocess.run(_sweep(), cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert sorted({line.split(":", 1)[0] for line in swept.stdout.splitlines()}) == SWEPT
+
+
+def test_the_citation_search_lists_every_form_and_no_bare_number(tmp_path: Path) -> None:
+    """Who cites an ADR decides whether it goes and what is re-pointed. The
+    checker reads `ADR NNNN`, `ADR-NNNN`, and `ADRNNNN`; a citation wraps
+    after `ADR` where the margin falls; and the four digits alone match a
+    port, a build, and a stamp. The two searches run here as the skill writes
+    them, for ADR 0007, its own file left out."""
+    cited = {
+        "om/src/tadas/om/bound.py": "# The bound is a lock's (ADR 0007).\n",
+        "om/src/tadas/om/lock.py": "held = 1  # arch-check: ignore[STO-26] ADR-0007 a lock bound\n",
+        "docs/runbooks/deploy.md": "The bound is ADR0007's.\n",
+        "pyproject.toml": 'adr = "docs/adr/0007-a-lock-bound.md"\n',
+        "docs/adr/0009-another.md": "See [the bound](0007-a-lock-bound.md).\n",
+    }
+    wrapped = {
+        "om/src/tadas/om/wait.py": "# A statement waits under the bound (ADR\n# 0007). No more.\n"
+    }
+    uncited = {
+        "om/src/tadas/om/port.py": "PORT = 10007\n",
+        "om/src/tadas/om/rows.py": "# The table holds\n# 0007 rows at most.\n",
+        "README.md": "Build 0007 of 2026 holds 20260007 rows.\n",
+        "docs/adr/0007-a-lock-bound.md": "# ADR 0007: A lock bound\n",
+    }
+    for name, text in {**cited, **wrapped, **uncited}.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    for command in (["git", "init", "--quiet"], ["git", "add", "--all"]):
+        subprocess.run(command, cwd=tmp_path, check=True)
+    lines = [line.strip() for line in _skill("docs-compact").splitlines()]
+    one_line, line_start = [line for line in lines if line.startswith("git grep -nE ")]
+    assert "-B1" in shlex.split(line_start), "the second search prints the line above a hit"
+
+    def search(command: str) -> list[str]:
+        ran = shlex.split(command.replace("NNNN", "0007"))
+        return subprocess.run(
+            ran, cwd=tmp_path, capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+
+    assert sorted({line.split(":", 1)[0] for line in search(one_line)}) == sorted(cited)
+    # A number at a line's start is listed with the line above it, and is a
+    # citation only when that line ends in `ADR`.
+    listed = search(line_start)
+    hits = {
+        line.split(":", 1)[0]: above
+        for above, line in itertools.pairwise(listed)
+        if re.match(r"[^:]+:\d+:", line)
+    }
+    assert sorted(hits) == sorted([*wrapped, "om/src/tadas/om/rows.py"])
+    assert [name for name, above in hits.items() if above.endswith("ADR")] == list(wrapped)
+
+
+def test_the_compaction_tells_a_contract_in_flight_by_the_tree() -> None:
+    """A tree that releases often holds a contract still in flight under
+    many tags, so a count of tags says nothing of it. The head does: the
+    piece kept for the release before is still there, in the schema or in
+    the code. What the verdict costs is small on purpose: code the test
+    calls long gone keeps its comment, and only the report names it."""
+    text = _prose("docs-compact")
+    assert "The test reads the tree alone, and counts no release and no deploy." in text
+    assert "While the head holds it, the step that ends the contract has not landed" in text
+    assert "`git grep -nwF '<its name>' -- 'om/migrations/sql/*.up.sql'`" in text
+    assert "In doubt, it is in flight." in text
+    # A later file may drop a piece and make it again, so the last one decides.
+    assert "the last up file that names it decides" in text
+    assert "unless that file drops it and does not make it again" in text
+    # An ADR is rewritten once, in step 3, so the test reaches it there.
+    assert "takes step 6's test here, before its rewrite" in text
+    assert "That is its one rewrite, in this step's commit." in text
+    assert "Its ADR changed in step 3, by this test, and is not edited here." in text
+    assert "It is listed in the report and left as it is, its comment with it" in text
+    assert "git tag" not in _skill("docs-compact")
+
+
+def test_the_compaction_regenerates_the_api_document_before_its_gate() -> None:
+    """A docstring of an API type is in the generated document, and CI fails
+    a tree whose document is not the one its code writes. So the gates write
+    it again after the sweep and before `make check`, and commit what changed."""
+    gates = _prose("docs-compact").split("**Run the gates.**", 1)[1]
+    assert gates.index("`make setup`") < gates.index("`make openapi`") < gates.index("`make check`")
+    assert "commit what it changes, apart. Then `make check`." in gates
+    assert "Bash(make openapi)" in [
+        tool.strip() for tool in _allowed_tools("docs-compact").split(",")
+    ]
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "make openapi && git diff --exit-code" in ci
+
+
+def _database_gates() -> list[str]:
+    """The commands of the gates' database, as the skill writes them, in its order."""
+    lines = [line.strip() for line in _skill("docs-compact").splitlines()]
+    return [line for line in lines if line.startswith("uv run python ") and "audit_docs_" in line]
+
+
+def test_the_database_gates_run_on_a_database_the_run_makes_and_drops(tmp_path: Path) -> None:
+    """The integration tests empty every table of the database they run on,
+    so the gates make a database, run on it, and drop it. The command between
+    runs here as the skill writes it, with a probe in place of `make` and of
+    the audit module: the three targets get the URL of the run's database in
+    one process, and the command ends with their status."""
+    run = "audit_docs_compact_<yyyymmdd>"
+    create, gates, drop = _database_gates()
+    assert create == f"uv run python ops/audit/auditdb.py create {run}"
+    assert drop == f"uv run python ops/audit/auditdb.py drop {run}"
+    *runner, program = shlex.split(gates)
+    assert runner == ["uv", "run", "python", "-c"]
+    audit = tmp_path / "ops" / "audit"
+    audit.mkdir(parents=True)
+    (audit / "auditdb.py").write_text(
+        "def urls(name):\n    return {'TADAS_DATABASE_URL': f'postgresql://127.0.0.1/{name}'}\n"
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    seen = tmp_path / "seen"
+    fake = bin_dir / "make"
+    fake.write_text(f'#!/bin/sh\necho "$* $TADAS_DATABASE_URL" > "{seen}"\nexit 3\n')
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    shell = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    done = subprocess.run([sys.executable, "-c", program], cwd=tmp_path, env=shell, check=False)
+    assert done.returncode == 3, "the command does not end with the targets' status"
+    targets = ["migrate", "migrate-check", "test-integration"]
+    assert seen.read_text().split() == [*targets, f"postgresql://127.0.0.1/{run}"]
+    # The targets run inside that one command, so none is pre-approved alone,
+    # and no step exports the URLs where `make check` would read them.
+    tools = {tool.strip() for tool in _allowed_tools("docs-compact").split(",")}
+    assert not tools & {"Bash(make migrate-check)", "Bash(make test-integration)"}
+    text = _prose("docs-compact")
+    assert "on a database the run makes and drops, never the stack's own" in text
+    assert "never export them in the shell" in text
+    # A create that fails can leave the database, which is the run's own to drop.
+    assert "The name is chosen once, before the run's first create" in text
+    assert "From its first create on, the name is this run's own." in text
+    assert "the targets do not run then, and the drop still does" in text
+    assert "The drop runs whatever the create and the targets answered" in text
+    assert "never runs a test on the local stack's own database" in text
+
+
 def test_the_fold_states_its_precondition_its_proof_and_its_bound() -> None:
     """A fold replaces a chain every database applied, so the reference the
     fold step reads says when it may run, what shows it equal, and where a
@@ -323,6 +581,11 @@ def test_the_fold_states_its_precondition_its_proof_and_its_bound() -> None:
     assert "Those assertions stay, in a test that migrates to the head" in fold
     assert "upgrades to the head again before it returns" in fold
     assert "the schema dump of the chain equals the fold's" in fold
+    # A chain may set its grants in a later step, so the fold takes them from
+    # the step that does, and the dump says whether it has them all.
+    assert "taken from the step of the chain that sets them, the first or a later one" in fold
+    assert "`git grep -nE 'GRANT|REVOKE|DEFAULT PRIVILEGES' --" in fold
+    assert "one the fold lacks is a line of step 4's `diff`" in fold
 
 
 def test_the_fold_reads_the_commit_staging_deployed_as_the_release_does() -> None:

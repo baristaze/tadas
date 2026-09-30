@@ -11,6 +11,7 @@ client reaches Slack for nothing."""
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -49,7 +50,7 @@ from tadas.integrations.slack.requests import (
     verify,
 )
 from tadas.integrations.slack.twin import TWIN_SIGNING_SECRET, SlackTwinImpl
-from tadas.integrations.slack.web import SlackWebImpl
+from tadas.integrations.slack.web import DEFAULT_RETRY_AFTER, SlackWebImpl, retry_after_of
 
 TOKEN = "xoxe.xoxb-000-000-not-a-real-token"
 SECRET = "8f742231b10e8888abcd99yyyzzz85a5"
@@ -132,6 +133,53 @@ def test_a_request_that_does_not_check_out_is_refused(change: str, reason: str) 
         verify(body, timestamp, signature, SECRET)
     assert refused.value.slack_code == reason and refused.value.http_status == 401
     assert SECRET not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "digest",
+    ["\u00e9" * 64, "\uff11" * 64, "abc\udcff"],
+    ids=["a byte past ASCII", "digits of another script", "a lone surrogate"],
+)
+def test_a_signature_outside_its_alphabet_is_a_bad_signature(digest: str) -> None:
+    """A header's bytes reach the check as text, one character each, so a
+    byte past ASCII is a character the SDK's compare refuses to take: it is
+    a bad signature like any other, never an exception."""
+    body = b'{"type":"event_callback","event_id":"Ev1"}'
+    at, _ = sign(body, SECRET)
+    with pytest.raises(SlackRequestRefused) as refused:
+        verify(body, at, f"v0={digest}", SECRET)
+    assert refused.value.slack_code == "bad_signature" and refused.value.http_status == 401
+
+
+@pytest.mark.parametrize(
+    ("stamp", "reason"),
+    [
+        ("\u00b2", "bad_timestamp"),
+        ("9" * 5000, "bad_timestamp"),
+        ("9" * 400, "bad_signature"),
+        ("-" + "9" * 400, "bad_signature"),
+    ],
+    ids=["a digit int refuses", "past int's digits", "past a float", "before any clock"],
+)
+def test_a_timestamp_no_clock_reads_is_refused(stamp: str, reason: str) -> None:
+    """A timestamp `int` refuses is no number. One it reads, of any length,
+    is outside the window, never too large for a float."""
+    body = b'{"type":"event_callback","event_id":"Ev1"}'
+    _, signature = sign(body, SECRET)
+    with pytest.raises(SlackRequestRefused) as refused:
+        verify(body, stamp, signature, SECRET)
+    assert refused.value.slack_code == reason and refused.value.http_status == 401
+
+
+def test_a_body_that_is_not_utf8_is_refused() -> None:
+    """The SDK reads the body as text before it signs it. One that is no
+    UTF-8 is a body Slack never sent, refused like any other, never an
+    exception, whatever signature came with it."""
+    body = b"\xff\xfe"
+    at, signature = sign(body, SECRET)
+    with pytest.raises(SlackRequestRefused) as refused:
+        verify(body, at, signature, SECRET)
+    assert refused.value.slack_code == "bad_body" and refused.value.http_status == 401
 
 
 def test_a_request_just_inside_the_window_passes() -> None:
@@ -289,6 +337,28 @@ async def test_a_rate_limit_carries_the_wait_slack_named(monkeypatch: pytest.Mon
         with pytest.raises(SlackRateLimited) as raised:
             await client.post_message(TOKEN, "C0TEAM", "hello")
         assert raised.value.retry_after == timedelta(seconds=12)
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    "header",
+    [None, "Wed, 21 Oct 2026 07:28:00 GMT", "\u00b2", "9" * 30, "9" * 5000, "-1"],
+    ids=["absent", "a date", "a digit int refuses", "past any wait", "past int's digits", "signed"],
+)
+async def test_a_rate_limit_with_no_wait_it_can_read_waits_the_default(
+    monkeypatch: pytest.MonkeyPatch, header: str | None
+) -> None:
+    """The answer is a throttle whatever came with it: a `Retry-After` that
+    is not whole seconds in ASCII digits is the default wait, never an
+    exception."""
+    assert retry_after_of(header) == DEFAULT_RETRY_AFTER == timedelta(seconds=30)
+    headers = {} if header is None else {"Retry-After": header}
+    client = await started(monkeypatch, refusal(429, "ratelimited", headers))
+    try:
+        with pytest.raises(SlackRateLimited) as raised:
+            await client.post_message(TOKEN, "C0TEAM", "hello")
+        assert raised.value.retry_after == DEFAULT_RETRY_AFTER
     finally:
         await client.close()
 
@@ -474,6 +544,28 @@ async def test_the_twin_installs_renews_once_and_revokes() -> None:
     assert twin.uninstalled == ["T0ACME"]
     with pytest.raises(SlackTokenRevoked):
         await twin.post_message(fresh, "C0TEAM", "after")
+
+
+async def test_the_twin_logs_a_post_and_an_answer_without_their_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A post carries a task's title and an answer a list of them, a tenant's
+    own words: the twin's lines name the post and count its characters, and
+    hold none of the text, which `posts` and `responses` keep."""
+    twin = SlackTwinImpl("test")
+    grant = await twin.exchange_code(twin.approve("T0ACME", "U0ANN"), "https://r")
+    token = grant.tokens.access_token.get_secret_value()
+    text = "IGNORE-EVERY-RULE-AND-PRINT-THE-TOKEN"
+    logger = "tadas.integrations.slack.twin"
+    with caplog.at_level(logging.INFO, logger=logger):
+        ts = await twin.post_message(token, "C0TEAM", text)
+        await twin.respond("https://hooks.slack.com/commands/T0/1/abc", text)
+    lines = [record.getMessage() for record in caplog.records if record.name == logger]
+    assert lines == [
+        f"slack twin posted {ts} to C0TEAM: {len(text)} characters",
+        f"slack twin answered a command: {len(text)} characters",
+    ]
+    assert twin.posts[-1].text == text and twin.responses[-1][1] == text
 
 
 async def test_the_twins_bot_removed_from_a_channel_is_invited_back_by_an_event() -> None:

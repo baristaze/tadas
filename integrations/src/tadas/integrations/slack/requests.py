@@ -51,12 +51,27 @@ def verify(body: bytes, timestamp: str | None, signature: str | None, secret: st
     if not timestamp or not signature:
         raise SlackRequestRefused("unsigned", "the request carries no Slack signature")
     try:
-        int(timestamp)
+        at = int(timestamp)
     except ValueError:
         raise SlackRequestRefused(
             "bad_timestamp", "the request timestamp is not a number"
         ) from None
-    if not SignatureVerifier(secret).is_valid(body, timestamp, signature):
+    # The SDK reads the body as UTF-8 before it signs it, and raises on one
+    # that is not. Slack sends no such body, so nothing signed it.
+    try:
+        body.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SlackRequestRefused("bad_body", "the body is not UTF-8") from None
+    # In whole seconds, before the SDK subtracts the timestamp from a float:
+    # a timestamp of any length is outside the window, never too large for a
+    # float. The SDK's compare takes ASCII text alone and raises on anything
+    # else, and a signature is hex, so one with another character is a bad
+    # signature.
+    if (
+        abs(int(time.time()) - at) > TOLERANCE_SECONDS
+        or not signature.isascii()
+        or not SignatureVerifier(secret).is_valid(body, timestamp, signature)
+    ):
         raise SlackRequestRefused(
             "bad_signature", "the signature or its timestamp did not check out"
         )
