@@ -1,7 +1,7 @@
 /* The site's look. The tokens are the portal's own (theme.css), so the page
    and the product are one palette, one accent, one light and one dark; the
    font is the same Inter, bundled, so the page loads nothing from another
-   origin. What is below is layout and the few components a marketing page
+   origin. What is below is layout and the few components a landing page
    needs. Dark follows the system: the page has no script to toggle it. */
 @import "@fontsource-variable/inter";
 @import "../../portal/src/design/theme.css";
