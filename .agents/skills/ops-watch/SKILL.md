@@ -83,15 +83,19 @@ tracker is reported as "not read", never as "no errors".
 ## Procedure
 
 A batch makes at most 20 tool calls. Its main path is six: the wait,
-the credential check, one log read per process (`api` and
+the credential check, one log read per process (two, `api` and
 `maintenance`), the alarms, and one `get-metric-data` call with a
 query per signal. The bound sits well above that, so a retry of each
-read fits in it; only a batch that loops reaches it. Locally there is no credential check, and the Prometheus
-queries of step 4 run as one command, as do those of step 5. A retry
-counts as a call. A read that would be the 21st call is not made: the
-batch stops there, writes that read as "not read", and the watch goes
-on to the next batch. The first credential check and the size read of
-step 2 come before the first batch, and are not counted in it.
+read and the reads of step 6 fit in it; only a batch that loops
+reaches it. A tree with more than two processes reads all their logs
+in one command. Locally there is no credential check, and the
+Prometheus queries of step 4 run as one command, as do those of
+step 5. A retry counts as a call. A read that would be the 21st call
+is not made: the batch stops there, writes that read as not read, and
+the watch goes on to the next batch. The first credential check and
+the size read of step 2 come before the first batch, and are not
+counted in it; the first batch still makes its own check after its
+wait.
 
 1. Verify the credential as Role and credential states. A chained
    session lasts an hour at most, so every interval reads the profile

@@ -7,7 +7,11 @@ the trim is amended (2026-09-26) by
 once a pass for every org, in one statement that moves each org's
 floor with its own events. A portal session lasts up to 30 days since
 [ADR 0063](0063-sessions-last-weeks.md), not 12 hours; a tab still
-cannot live 90 days, so the argument for the rollout holds.
+cannot live 90 days, so the argument for the rollout holds. No longer
+a deviation since v0.40.0: NET-22 keeps the stream for a retention
+above a floor, a read below it is `410 stream_truncated` naming the
+floor and the head, and DEL-18 lets that exception set its own status
+([ADR 0082](0082-what-0-40-0-asks.md)).
 
 ## Context
 
@@ -30,7 +34,12 @@ The guideline gives the shape of the answer twice. "The stream is a
 stream of hints", and "Replay from storage is the durability
 mechanism", so a client that cannot replay reads the records instead.
 And a topic payload carries `truncated`, "set by a bus that trims; the
-consumer re-reads the record". It names no retention for the stream.
+consumer re-reads the record". NET-22 ("Realtime at the Edge") keeps
+the stream for a retention, the trim moves a floor, and a read below
+the floor is `410 stream_truncated`, naming the floor and the head;
+DEL-18 lets an exception no shape fits set its own status and code
+under the root. It leaves the numbers, the batch, and the client's
+resync to the system.
 
 ## Decision
 

@@ -5,7 +5,10 @@ that refuses the call fails the item at once, and an operator requeues
 it; amended (2026-09-26): the last owner's two ways out are in Settings,
 so no account waits on an operator
 ([ADR 0042](0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
-A deviation from STO-32, and from CTX-34 for the unassignment.
+A deviation from CTX-34 for the unassignment. Since v0.40.0 it is no
+longer one from STO-32, which names an account deleted at once as the
+one hard delete outside the sweep
+([ADR 0082](0082-what-0-40-0-asks.md)).
 
 ## Context
 
@@ -29,11 +32,12 @@ A person asks to delete their account. What that means is decided:
   if nothing happened. Every session, API key, and operator token ends
   in the same act.
 
-The guideline says it otherwise (STO-32, The Storage Layer, Database
-Roles): "A soft-deleted row is purged by the maintenance sweep after its
-entity's retention period, and the purge is the one hard delete.
-Personal data lives in named fields, so erasing a person is a sweep over
-a list, not a hunt."
+STO-32 (The Storage Layer, Database Roles) makes the sweep's purge the
+one hard delete, save this one: a person's account may go at once
+instead of after its retention, in one atomic write that removes their
+identity and every user, membership, and credential it holds, outside
+the sweep. What they made in a team org stays the org's, under their
+id.
 
 Tadas has both halves of that already. Removing a member soft-deletes
 their user and ends their membership; the sweep purges both thirty days
@@ -61,8 +65,8 @@ users are in. It also counts, under a row lock, the owners of each team
 org the person owns, and refuses when one would be left with none, so
 two owners who leave at once cannot both go.
 
-This is the deviation: a hard delete outside the sweep. A soft delete
-would keep the email and the name for the retention, which is the one
+It is the one hard delete outside the sweep that STO-32 names. A soft
+delete would keep the email and the name for the retention, which is the one
 thing the person asked not to happen. The personal fields are the named
 ones the guideline asks for, so the delete is still a list, not a hunt.
 

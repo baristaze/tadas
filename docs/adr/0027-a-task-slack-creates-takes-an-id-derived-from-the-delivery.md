@@ -1,13 +1,17 @@
 # ADR 0027: A task Slack creates takes an id derived from the delivery
 
-**Status**: accepted (2026-09-22)
+**Status**: accepted (2026-09-22). No longer a deviation since
+v0.40.0: OM-12 names `derived_id()` for what an outside delivery
+creates ([ADR 0082](0082-what-0-40-0-asks.md)).
 Amended (2026-09-23): the delivery arrives over HTTP and its key comes
 from Slack's own id; see the note at the end.
 
 ## Context
 
 "Identifiers" says every id is a `uuid_v7` minted above storage with
-`new_id()`. "Idempotency on the Consumer Side" says a message from
+`new_id()`, or with `derived_id()` from a key that names the record, so
+a second run makes the same id: what an outside delivery creates, or
+what a step of an orchestration makes. "Idempotency on the Consumer Side" says a message from
 outside carries a key derived from the provider's delivery, and the
 handler dedupes on it: the key lives on the row the effect produces,
 or the marker and the effect are one atomic write.
