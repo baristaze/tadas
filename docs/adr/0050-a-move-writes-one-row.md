@@ -65,43 +65,6 @@ between their read and their write gets one 412, the answer any
 concurrent edit gives. A run is only the tasks around one long rank,
 at most 201, and it happens once per seventy-odd moves into one gap.
 
-**The table keeps a float beside the rank, `position`, for the release
-before.** It is an expand and contract in flight. The release before
-names the position in every insert and reads it as a number, and a
-client of it requires the field in a task's view. That release serves
-this schema for the minutes of a roll, and again after a fast rollback
-([ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md)).
-Four pieces serve it, and each stays until the contract step:
-
-- **The column.** `core.tasks.position` is in the table and out of the
-  mapping: no statement of the tree names it. It is not null, since the
-  release before reads it as a number.
-- **`tasks_position_from_rank`.** The trigger gives a row written
-  without a position its rank's float. So every row the tree writes
-  holds the position the release before reads.
-- **`tasks_rank_from_position`.** The trigger gives a row written with
-  a position and no rank the rank its position names, digit for digit:
-  a float's text is the shortest that reads back as the same float. The
-  release before's own integration tests insert tasks by the position
-  alone, and fail without it.
-- **The field.** `TaskView` sends `position`, optional and marked
-  deprecated, as the rank's float, since a client of the release before
-  requires it. No client in the tree reads it.
-
-**The contract step ends it.** A revision on the core role's chain
-drops the column, both triggers, and their functions. The field leaves
-`TaskView` with it
-([ADR 0006](0006-pre-release-compatibility.md)), and the two STO-05
-exceptions in `pyproject.toml` go too. Until it lands, none of the four
-pieces is dead code: removing one breaks the release before.
-
-**The triggers are a deviation from STO-05, until the contract step.**
-STO-05 says no triggers and no database functions: if something
-happens, it happens in the code. The release before is code that cannot
-be changed, so what it needs of the schema happens in the database.
-Each trigger does one thing, copies one column into another, and goes
-with the position.
-
 ## Consequences
 
 A move is one read of the anchor, one read of the place after it, and

@@ -200,7 +200,6 @@ async def test_a_move_answers_the_rank_written_out_and_moves_no_other_task(
         assert answer.status_code == 200, answer.text
         rank = answer.json()["rank"]
         assert isinstance(rank, str) and "E" not in rank.upper()
-        assert answer.json()["position"] == float(rank), "the rank's float, for the release before"
     assert len(rank.split(".")[1]) > 15, "past what a float holds"
     listed = (await client.get("/v1/tasks", headers=owner)).json()["items"]
     assert [t["title"] for t in listed] == ["b", "c", "a"], "c moved last, right after b"

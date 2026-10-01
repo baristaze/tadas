@@ -39,18 +39,6 @@ class TaskView(View):
     reminded_at: datetime | None = None
     # Set when the daily cleanup archived the task; null otherwise.
     archived_at: datetime | None = None
-    # Read from the task's rank: the view sends the rank's float, and the
-    # task has no position of its own.
-    position: float | None = Field(
-        default=None,
-        validation_alias="rank",
-        description=(
-            "The rank as a float, for a client of the release before, which"
-            " requires it. Order by `rank`: no client reads this, and it"
-            " leaves the wire in the release after this one."
-        ),
-        json_schema_extra={"deprecated": True},
-    )
 
     @field_validator("rank", mode="before")
     @classmethod
