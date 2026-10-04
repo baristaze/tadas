@@ -102,6 +102,21 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     assert not (ROOT / "deployment/terraform/bootstrap/staging/backend_override.tf").exists()
 
 
+def test_create_drops_a_site_cname_left_by_a_destroyed_environment(tmp_path: Path) -> None:
+    # CloudFront refuses a name whose CNAME points at another distribution,
+    # even one the nuke deleted, so the run removes that leftover before the
+    # deploy, and only while no distribution of the account serves the name.
+    result = _run(CREATE, "staging", "--dry-run", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    step = out[out.index("== 3c.") : out.index("== 4.")]
+    stale = step.index(
+        f"type=CNAME&name={STAGING['site_domain_name']}  (a CNAME to CloudFront whose target no longer resolves goes)"
+    )
+    assert stale < step.index("CNAME staging.tadas.example -> <the distribution's domain>")
+    assert out.index("== 3c.") < out.index("+ gh workflow run deploy-staging.yml --ref main")
+
+
 def test_create_production_dry_run_sets_two_environments_and_waits_for_replication(
     tmp_path: Path,
 ) -> None:
@@ -128,6 +143,22 @@ def test_create_production_dry_run_sets_two_environments_and_waits_for_replicati
     assert f"TADAS_API_URL=https://{PRODUCTION['api_domain_name']}" in out
     assert "gh workflow run grant-operator.yml --ref release -f environment=production" in out
     assert "uv run tadas-ops signals check --env production" in out
+
+
+def test_create_production_protects_release_with_a_ruleset_and_a_deploy_key(
+    tmp_path: Path,
+) -> None:
+    # release moves only by release.yml, whose push uses a deploy key the
+    # ruleset lets through; the key's private half goes straight into the
+    # secret and is never printed. Staging's run touches none of it.
+    out = _run(CREATE, "production", "--dry-run", home=tmp_path).stdout
+    step = out[out.index("== 5c.") : out.index("== 6.")]
+    assert "+ gh repo deploy-key add <its public half> --allow-write --title release" in step
+    assert "+ gh secret set RELEASE_DEPLOY_KEY < <its private half>" in step
+    assert "+ gh api -X POST repos/{owner}/{repo}/rulesets --input <the release ruleset>" in step
+    assert out.index("== 5.") < out.index("== 5c.")
+    staging = _run(CREATE, "staging", "--dry-run", home=tmp_path).stdout
+    assert "== 5c." not in staging and "RELEASE_DEPLOY_KEY" not in staging
 
 
 def test_create_refuses_to_run_for_real_without_the_cloudflare_token(tmp_path: Path) -> None:
@@ -239,10 +270,34 @@ def test_nuke_staging_dry_run_lifts_the_protections_then_destroys(tmp_path: Path
     worktree = "<a worktree of the deployed commit> <the last commit staging deployed>"
     assert f"+ git worktree add --detach {worktree}" in out
     assert "origin/main" not in out
-    assert out.count(f"(expect account {STAGING['account_id']})") == 3
-    assert "== 5. What remains" in out
+    assert out.count(f"(expect account {STAGING['account_id']})") == 4
+    assert "== 6. What remains" in out
     assert "the bootstrap root, whole" in out
     assert "the state prefix environments/staging/" in out
+
+
+def test_nuke_removes_what_terraform_does_not_own_after_the_destroy(tmp_path: Path) -> None:
+    # The application's secrets and the leftovers AWS made are not in the
+    # state. Each is found by this environment's names alone, after the
+    # destroy, and the tenants' secrets follow the database's final snapshot.
+    result = _run(NUKE, "staging", "--dry-run", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    leftovers = out.index("== 5. Remove what Terraform does not own")
+    assert out.index(f"+ terraform -chdir={STAGING_ROOT} destroy") < leftovers
+    step = out[leftovers : out.index("== 6. What remains")]
+    assert "describe-db-snapshots --db-snapshot-identifier tadas-staging-final" in step
+    assert "Values=tadas/staging/app/org/" in step
+    assert "starts_with(Name, 'tadas/staging/app/org/')" in step
+    assert "(only when tadas-staging-final does not exist)" in step
+    assert "--log-group-name-prefix /aws/ecs/containerinsights/tadas-staging/" in step
+    assert "--family-prefix tadas-staging-" in step
+    assert "--force-delete-without-recovery" in step
+    assert "production" not in step
+    # A dry run reads nothing, so it cannot say whether production holds
+    # copies of staging's builds; it names the condition instead.
+    assert "get-bucket-replication --bucket tadas-artifacts-" in out
+    assert "when the artifacts bucket replicates" in out
 
 
 def test_nuke_refuses_production_without_its_typed_name(tmp_path: Path) -> None:
