@@ -481,10 +481,10 @@ touch Stripe, and it lists what stays there:
 - **The bootstrap key.** It belongs to the account, not the
   environment, and stays.
 
-## Production (parked)
+## Production
 
-Production is not running yet. When it is, the steps are the same, with
-these differences:
+Production runs on the live account. Its steps are the same, with these
+differences:
 
 - The account is the live one, `acct_1UIfTS4Dj4HbbS1T`. Make both keys
   there, not in the sandbox: `tadas-production-runtime` and
