@@ -178,21 +178,19 @@ again: `tadas-api migrate --all` resumes where the chain stopped.
 
 ## The protection on `release`
 
-A ruleset on `release`, set by hand once (Settings, Rules, Rulesets):
-restrict creations, updates, and deletions; block force pushes; require
-the `no pull request into release` check. Its bypass list holds a deploy
-key and the admin role, for a rollback push by hand.
+A ruleset on `release`, which the production create run sets (its step
+5c): restrict creations, updates, and deletions; block force pushes;
+require the `no pull request into release` check. Its one bypass actor
+is a deploy key with write access, and since a ruleset cannot name one
+key, every write deploy key passes: the run refuses while any but
+`release` exists.
 
-`release.yml` pushes with the deploy key when the `RELEASE_DEPLOY_KEY`
-secret is set, and that push starts `deploy-production`. Without it, the
-job pushes with its own token, which works only while no ruleset
-restricts `release`, and dispatches `deploy-production` itself.
-
-```bash
-ssh-keygen -t ed25519 -f release_key -N ''
-# Add release_key.pub as a deploy key with write access (Settings, Deploy keys),
-# add it to the ruleset's bypass list, and store release_key as RELEASE_DEPLOY_KEY.
-```
+`release.yml` pushes with that deploy key, whose private half the run
+stores as the `RELEASE_DEPLOY_KEY` secret without printing it, and that
+push starts `deploy-production`. A key without the secret, or the secret
+without the key, is made again on the run's next pass. Without the
+secret, the job pushes with its own token, which works only while no
+ruleset restricts `release`, and dispatches `deploy-production` itself.
 
 The `production` environment carries the owner as its required
 reviewer. `staging` and `production-plan` carry no rule: a reviewer on
@@ -204,8 +202,12 @@ the plan would hold the plan the reviewer is meant to read.
 commit it runs, under its administrator profile. `--dry-run` prints
 every command. Production also needs `--confirm production`, and a
 released `database_deletion_protection = false`; its final snapshot and
-automated backups stay. The run prints what remains: the bootstrap root,
-the state, the static builds, the profile, and the env file.
+automated backups stay. After the destroy it removes what the state
+does not hold: the secrets the application wrote (a tenant's stay while
+the final snapshot does) and the leftovers AWS made for the destroyed
+resources. A run that stopped after its destroy is finished by running it again.
+It prints what remains: the bootstrap root, the state, the static builds,
+the profile, and the env file.
 
 ## When it fails
 
@@ -222,9 +224,10 @@ the state, the static builds, the profile, and the env file.
   environment's variables are empty: run `scripts/cloud_create.sh
   staging` again.
 - **`guard` says `release` is not an ancestor of `main`.** Someone
-  committed to `release`. A bypass actor resets it
-  (`git push --force origin <main commit>:release`), then dispatch
-  `release` again.
+  committed to `release`. An admin turns the `release` ruleset off for
+  the reset (Settings, Rules, Rulesets), resets it
+  (`git push --force origin <main commit>:release`), turns the ruleset on
+  again, then dispatches `release` again.
 - **`guard` says `production` has no required reviewer.** Add it; the
   run refused to plan.
 - **`apply` says the saved plan is stale.** Someone applied in between.

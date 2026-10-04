@@ -95,7 +95,10 @@ part of the file a person fills by hand, once the product's project
 exists in the error tracker; it writes `TADAS_ERROR_TRACKER_ORG` and
 `TADAS_ERROR_TRACKER_PROJECT` itself. It appends the
 `tadas-<env>-investigate` profile to `~/.aws/config`, chained from the
-Identity Center profile. It writes no key anywhere. The skill prints
+Identity Center profile. It writes no key to any file it leaves
+behind; for production it makes one key pair, in a temporary folder it
+removes, whose public half becomes the deploy key `release` and whose
+private half the `RELEASE_DEPLOY_KEY` secret (step 5c). The skill prints
 the names of what was written and never a value.
 
 ## Procedure
@@ -147,8 +150,13 @@ the names of what was written and never a value.
      certificate (3b), then, once a deploy has made the site's
      distribution, the name as a CNAME to it, DNS only (3c). On a first
      run there is no distribution yet, and 3c says so: the person runs
-     the script again after the first green deploy. A name that holds
-     an address record is refused, and the person decides.
+     the script again after the first green deploy. While no
+     distribution of the account serves the name, 3c deletes a CNAME
+     there to CloudFront whose target no longer resolves, the record a
+     nuked environment left, since CloudFront refuses the name to a new
+     distribution while it stands; one whose target still answers is
+     refused. A name that holds an address record is refused, and the
+     person decides.
    - The investigate profile, `tadas-<env>-investigate`: the role's ARN
      with the Identity Center profile as its `source_profile`.
    - The GitHub environments and their variables: `staging-build` and
@@ -158,10 +166,19 @@ the names of what was written and never a value.
      Each holds `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, and `ARTIFACTS_BUCKET`
      for its own account; the plan environment and staging also hold
      `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `SITE_DOMAIN_NAME`, and
-     `ALARM_EMAIL`. No secret:
-     the OIDC trust replaces keys. For staging, the ruleset on `main`:
-     a pull request whose checks passed on a branch up to date with
-     `main`.
+     `ALARM_EMAIL`. No secret in an environment: the OIDC trust
+     replaces keys. For staging, the ruleset on `main`: a pull request
+     whose checks passed on a branch up to date with `main`. For
+     production (5c), the protection on `release`: the deploy key
+     `release` with write access, its private half stored as the
+     repository secret `RELEASE_DEPLOY_KEY` and never shown, and the
+     ruleset that restricts creations, updates, deletions, and force
+     pushes, requires `no pull request into release`, and lets the
+     deploy key alone through. Every write deploy key passes such a
+     ruleset, so the run refuses while another exists and names it;
+     the person deletes it, or deletes it and adds it again read-only,
+     since a deploy key cannot be changed. A key without the
+     secret, or the reverse, is made again.
    - The first deploy, through the pipeline: the script pushes
      nothing and applies no environment root itself. For staging it
      dispatches `deploy-staging.yml`. For production it prints the
@@ -179,7 +196,8 @@ the names of what was written and never a value.
      another. WorkOS comes first, since the grants below sign people
      up through it and every
      sign-in answers `503` without its key. `tadas-ops workos-bootstrap`
-     proves the key and reconciles the application's redirects.
+     proves the key, reconciles the application's redirects, and fails
+     until the webhook endpoint below exists and is enabled.
      `workos_webhook_secret` is the signing secret of the endpoint
      `https://<api name>/webhooks/identity` in the WorkOS dashboard;
      until it is set, the route refuses every delivery. `sentry_dsn`
@@ -260,6 +278,7 @@ dry run's smoke test is "not yet".
 - Replication into production: <on | off | n/a>
 - Profile written: tadas-<env>-investigate (~/.aws/config), source_profile <sso_profile>
 - Env file written: ~/.config/tadas/ops/<env>.env
+- Release protection (production): deploy key release <made | already there>, secret RELEASE_DEPLOY_KEY <set | already there>, ruleset "release: moved by the release workflow alone" <created | updated> | n/a
 - First deploy: workflow run <url>, <status> | production: waits for Order
 - Smoke test: not yet; it follows the smoke identity's grant and SMOKE_EMAIL
 

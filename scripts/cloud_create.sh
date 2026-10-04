@@ -352,6 +352,32 @@ cloudflare_cname() {
   fi
 }
 
+# A CNAME left by an environment the nuke destroyed points at a distribution
+# that is gone, and CloudFront refuses the name to a new one while it does
+# (CNAMEAlreadyExists). So while no distribution of this account serves the
+# name, a CNAME there to CloudFront whose target no longer resolves is that
+# leftover, and it goes before the deploy. One whose target still answers is
+# a site served from somewhere else, and that is a person's call: refused.
+cloudflare_drop_stale_cname() {
+  local name="$1" existing record_id content answers
+  say "+ cloudflare GET /zones/$zone_id/dns_records?type=CNAME&name=$name  (a CNAME to CloudFront whose target no longer resolves goes)"
+  if $dry_run; then return; fi
+  existing="$(cloudflare GET "/zones/$zone_id/dns_records?type=CNAME&name=$name&per_page=100")"
+  while read -r record_id content; do
+    [ -n "$record_id" ] || continue
+    say "+ curl https://cloudflare-dns.com/dns-query?name=${content%.}&type=A  (does $content still answer?)"
+    # A name that resolves to nothing answers NOERROR or NXDOMAIN with no
+    # address; any other status is a resolver that could not tell.
+    answers="$(curl -sS --fail -H 'accept: application/dns-json' \
+      "https://cloudflare-dns.com/dns-query?name=${content%.}&type=A" \
+      | jq -er 'if .Status == 0 or .Status == 3 then (.Answer // []) | length else error("status \(.Status)") end')" \
+      || refuse "cannot tell whether $content still answers, so $name CNAME $content stays; run this again"
+    [ "$answers" = "0" ] || refuse "$name holds a CNAME to $content, a CloudFront distribution that still answers but is not this account's; a site served from elsewhere is yours to move: remove the record by hand if this environment's site is to serve there, then run this again"
+    say "+ cloudflare DELETE /zones/$zone_id/dns_records/$record_id ($name CNAME $content, which no longer resolves)"
+    cloudflare DELETE "/zones/$zone_id/dns_records/$record_id" >/dev/null
+  done < <(printf '%s' "$existing" | jq -r '.result[] | select(.content | test("\\.cloudfront\\.net\\.?$")) | "\(.id) \(.content)"')
+}
+
 say "== 3b. The company site's certificate: its validation record at Cloudflare, then its issue"
 # The site's name is a record in this zone, not a delegation: the apex
 # cannot be delegated, and a delegation of staging.<domain> would hide the
@@ -380,11 +406,13 @@ say "== 3c. The company site's name at Cloudflare: a CNAME to its distribution, 
 # run of this script after a deploy that made it; every run checks it.
 say "+ aws cloudfront list-distributions  (the one whose alias is $site_domain_name)"
 if $dry_run; then
+  cloudflare_drop_stale_cname "$site_domain_name"
   cloudflare_cname "$site_domain_name" "<the distribution's domain>"
 else
   site_distribution="$(aws cloudfront list-distributions --output text \
     --query "DistributionList.Items[?Aliases.Items != null && contains(Aliases.Items, '$site_domain_name')].DomainName | [0]")"
   if [ -z "$site_distribution" ] || [ "$site_distribution" = "None" ]; then
+    cloudflare_drop_stale_cname "$site_domain_name"
     say "No distribution serves $site_domain_name yet: the next deploy makes it. Run this script again once that deploy is green, and this step writes $site_domain_name CNAME <its domain>."
   else
     cloudflare_cname "$site_domain_name" "$site_distribution"
@@ -539,6 +567,78 @@ if [ "$environment" = "staging" ]; then
   fi
 fi
 
+if [ "$environment" = "production" ]; then
+  say "== 5c. The protection on release: a ruleset a write deploy key alone passes, and release.yml's is the repository's one, so release moves by the release workflow alone"
+  # release.yml pushes with the deploy key the RELEASE_DEPLOY_KEY secret holds,
+  # and a push with it starts deploy-production. The key pair is made here, in
+  # a temporary folder removed however the step ends: the public half becomes
+  # a deploy key with write access, the private half the secret, and neither
+  # is printed. A key found without the secret, or the secret without the
+  # key, is made again.
+  key_title="release"
+  if $dry_run; then
+    key_id=""
+    secret_set=""
+  else
+    key_id="$(gh api 'repos/{owner}/{repo}/keys' -q ".[] | select(.title == \"$key_title\") | .id" | head -n 1)"
+    secret_set="$(gh secret list --json name -q '.[] | select(.name == "RELEASE_DEPLOY_KEY") | .name')"
+  fi
+  # A ruleset's deploy-key bypass names no key: every write deploy key of the
+  # repository passes it. So the run refuses while a write key other than
+  # release.yml's exists, and names it.
+  if ! $dry_run; then
+    others="$(gh api 'repos/{owner}/{repo}/keys' -q ".[] | select(.read_only == false and .title != \"$key_title\") | .title")"
+    [ -z "$others" ] || refuse "write deploy keys other than \"$key_title\" would pass the release ruleset too: $(printf '%s' "$others" | paste -sd, -); delete each, or delete it and add it again read-only (Settings, Deploy keys; a deploy key cannot be changed), then run again"
+  fi
+  say "+ gh api repos/{owner}/{repo}/keys  (no write deploy key but \"$key_title\", since every one passes the ruleset)"
+  if [ -n "$key_id" ] && [ -n "$secret_set" ]; then
+    say "The deploy key \"$key_title\" and the secret RELEASE_DEPLOY_KEY are there already."
+  else
+    say "+ ssh-keygen -t ed25519 -N '' -C $key_title  (in a temporary folder, removed after)"
+    [ -z "$key_id" ] || say "+ gh api -X DELETE repos/{owner}/{repo}/keys/$key_id  (a \"$key_title\" key with no secret beside it)"
+    say "+ gh repo deploy-key add <its public half> --allow-write --title $key_title"
+    say "+ gh secret set RELEASE_DEPLOY_KEY < <its private half>"
+    if ! $dry_run; then
+      (
+        keydir="$(mktemp -d)"
+        trap 'rm -rf "$keydir"' EXIT
+        ssh-keygen -q -t ed25519 -N '' -C "$key_title" -f "$keydir/key"
+        [ -z "$key_id" ] || gh api -X DELETE "repos/{owner}/{repo}/keys/$key_id" >/dev/null
+        gh repo deploy-key add "$keydir/key.pub" --allow-write --title "$key_title" >/dev/null
+        gh secret set RELEASE_DEPLOY_KEY < "$keydir/key" >/dev/null
+      )
+    fi
+  fi
+  # Creations, updates, deletions, and force pushes are restricted; the
+  # required check is the one a pull request into release fails, so nothing
+  # merges into it. The deploy key is the one bypass actor; an admin resets
+  # release by turning the ruleset off for that push.
+  ruleset="$(jq -n '{
+    name: "release: moved by the release workflow alone",
+    target: "branch",
+    enforcement: "active",
+    conditions: {ref_name: {include: ["refs/heads/release"], exclude: []}},
+    bypass_actors: [{actor_id: null, actor_type: "DeployKey", bypass_mode: "always"}],
+    rules: [
+      {type: "creation"}, {type: "update"}, {type: "deletion"}, {type: "non_fast_forward"},
+      {type: "required_status_checks", parameters: {
+        strict_required_status_checks_policy: true,
+        required_status_checks: [{context: "no pull request into release"}]}}
+    ]}')"
+  if $dry_run; then
+    existing=""
+  else
+    existing="$(gh api 'repos/{owner}/{repo}/rulesets' -q '.[] | select(.name == "release: moved by the release workflow alone") | .id')"
+  fi
+  if [ -n "$existing" ]; then
+    say "+ gh api -X PUT repos/{owner}/{repo}/rulesets/$existing --input <the release ruleset>"
+    if ! $dry_run; then printf '%s' "$ruleset" | gh api -X PUT "repos/{owner}/{repo}/rulesets/$existing" --input - >/dev/null; fi
+  else
+    say "+ gh api -X POST repos/{owner}/{repo}/rulesets --input <the release ruleset>"
+    if ! $dry_run; then printf '%s' "$ruleset" | gh api -X POST 'repos/{owner}/{repo}/rulesets' --input - >/dev/null; fi
+  fi
+fi
+
 say "== 6. The operator's env file for $environment"
 # The operator's token is empty: no operator exists until the
 # grant-operator workflow has run, and a token is minted, never typed. The
@@ -614,7 +714,7 @@ case "$environment" in
   production) grant_branch=release ;;
 esac
 say "== 8. The first operator, the provisioner, and the smoke identity, through the pipeline"
-say "Each identity signs up at https://$app_domain_name first, like any person. Then, on $grant_branch:"
+say "Each identity signs up at https://$app_domain_name first, like any person. Then, on $grant_branch, one at a time: a run waits for the one before it, and GitHub keeps one waiting run per environment, so a dispatch made while another waits cancels that one:"
 say "  gh workflow run grant-operator.yml --ref $grant_branch -f environment=$environment -f email=<operator> -f permission=read"
 say "    The operator enrols the second factor at the operator plane's first sign-in, then runs, in their own terminal:"
 say "    uv run tadas-ops token --env $environment --identity operator"
@@ -627,7 +727,7 @@ say "    then, under your own sign-in and never an agent's: uv run tadas-ops tok
 say "    (the token lasts an hour: mint it again, with mint_token alone, before each traffic run)"
 say "  gh workflow run grant-operator.yml ... -f email=<smoke identity> -f permission=read"
 say "    then: gh variable set SMOKE_EMAIL --env $environment --body <smoke identity>"
-say "Until SMOKE_EMAIL is set, every deploy's smoke step is skipped, and says so."
+say "Until SMOKE_EMAIL is set, every deploy's smoke step is skipped, and says so. Once set, it fails until this environment's database holds the smoke identity's grant: a recreated environment keeps the variable and loses the grant."
 
 say "== 9. When a deploy is green after that, the smoke test: the deploy ran it; one request by hand, then its signals by request id"
 say "id=\$(curl -s -o /dev/null -D - $api_url/v1/me | awk 'tolower(\$1) == \"x-request-id:\" { print \$2 }' | tr -d '\\r')"
