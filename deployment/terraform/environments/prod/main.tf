@@ -25,7 +25,7 @@ module "environment" {
   portal_sentry_dsn = var.portal_sentry_dsn
   # This environment's Slack app (deployment/slack/manifest.production.json),
   # made when production opens. Empty until then: Slack is unconfigured here.
-  slack_client_id = ""
+  slack_client_id = "842588338401.12207483161559"
 
   # The payment processor's account, the live account. The process refuses a key
   # whose mode is not this environment's.

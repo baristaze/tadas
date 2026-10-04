@@ -111,7 +111,7 @@ its own app.
 |-------------------|-----------|----------|--------------|---------|
 | `local` | none: the twin | none | none | none |
 | `staging` | `A0C3MMXH2AH`, "Tadas (staging)" | `deployment/slack/manifest.staging.json` | `deployment/terraform/environments/staging/main.tf`, `slack_client_id` | `tadas/staging/slack_client_secret`, `tadas/staging/slack_signing_secret` |
-| `production` (parked) | made when production opens, "Tadas" | `deployment/slack/manifest.production.json` | `deployment/terraform/environments/prod/main.tf`, `slack_client_id` | `tadas/production/slack_client_secret`, `tadas/production/slack_signing_secret` |
+| `production` | "Tadas" | `deployment/slack/manifest.production.json` | `deployment/terraform/environments/prod/main.tf`, `slack_client_id` | `tadas/production/slack_client_secret`, `tadas/production/slack_signing_secret` |
 
 Each org's bot token is a secret of its own, which the application
 writes: `tadas/<env>/app/org/<org id>/slack_bot_<installation id>`. Nobody
@@ -411,9 +411,10 @@ aws secretsmanager list-secrets --profile tadas-staging-admin --region us-west-2
 already committed), and each org installs again from its settings. The
 manifest needs no paste unless it changed.
 
-## Production (parked)
+## Production
 
-Production is not running yet. When it opens:
+Production has an app of its own, "Tadas", made from its manifest; these
+are the steps that made it, for an app made again:
 
 1. Make its app: [api.slack.com/apps](https://api.slack.com/apps) →
    **Create New App** → **From a manifest**. Pick the workspace that will
