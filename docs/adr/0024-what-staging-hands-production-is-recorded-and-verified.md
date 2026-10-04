@@ -70,9 +70,9 @@ account cannot rewrite, and a check of every copy against it.
 
 - **DEL-38** asks for the repository host's app as the one actor that
   pushes to `release`, its key held in an environment that admits `main`
-  alone, and calls a deploy key a violation. The release push stays on
-  the workflow token while no ruleset locks `release`; the host's app,
-  or a deploy key, becomes the one bypass actor the day one does.
+  alone, and calls a deploy key a violation. The tree takes the deploy
+  key, whose setup is one secret and one ruleset entry. It moves to an
+  app when the repository belongs to an organization that runs one.
 - **DEL-31** asks for a locked, versioned bundle prefix and a read of
   the version whose hash matches the record. The tree refuses direct
   writes and compares the digest instead. A changed copy is refused
