@@ -47,7 +47,8 @@ the **Production** WorkOS environment.
    with no expiry, and keep it in a password manager. Never take one from
    Developer, API Keys.
 3. **Run the bootstrap.** It proves the key, adds the missing redirect
-   URIs, and prints what the dashboard alone sets:
+   URIs, checks the webhook endpoint, and prints what the dashboard alone
+   sets:
 
    ```bash
    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
@@ -71,7 +72,8 @@ the **Production** WorkOS environment.
 6. **Turn on the sign-in methods**: email, Google, and GitHub, with
    passwords off. Production needs OAuth credentials of its own at Google
    and GitHub.
-7. **Add the webhook endpoint** (below).
+7. **Add the webhook endpoint** (below). Until it exists and is
+   enabled, the bootstrap names it as a dashboard step and fails.
 
 Run the bootstrap again: it ends `nothing to change`.
 

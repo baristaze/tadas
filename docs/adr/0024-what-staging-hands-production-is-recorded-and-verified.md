@@ -57,22 +57,22 @@ account cannot rewrite, and a check of every copy against it.
   so they ran on its merge with the current `main`. The create script
   sets that ruleset, and `.github/CODEOWNERS` names the owners of
   `deployment/`, `.github/`, and the cloud scripts.
-- **The release push stays on the workflow token.** No ruleset
-  restricts who may push to `release`, and no `RELEASE_DEPLOY_KEY` is
-  set, so the push uses the workflow's own token. That works only while
-  no ruleset restricts `release`, and such a push fires no workflow, so
-  the job dispatches `deploy-production.yml` itself. The day a ruleset
-  locks `release`, its one bypass actor pushes: the host's app, or a
-  deploy key with write access in the `RELEASE_DEPLOY_KEY` secret, which
-  `release.yml` already pushes with when it is set.
+- **The release push is a deploy key's.** `release.yml` pushes the
+  fast-forward with the `RELEASE_DEPLOY_KEY` secret when it is set: a
+  deploy key with write access, listed as the one bypass actor of the
+  ruleset that locks `release`, which the production create run
+  sets. Without it, the push uses the workflow's
+  own token. That works only while no ruleset restricts `release`, and
+  such a push fires no workflow, so the job dispatches
+  `deploy-production.yml` itself.
 
 ## Deviations
 
 - **DEL-38** asks for the repository host's app as the one actor that
   pushes to `release`, its key held in an environment that admits `main`
-  alone, and calls a deploy key a violation. The release push stays on
-  the workflow token while no ruleset locks `release`; the host's app,
-  or a deploy key, becomes the one bypass actor the day one does.
+  alone, and calls a deploy key a violation. The tree takes the deploy
+  key, whose setup is one secret and one ruleset entry. It moves to an
+  app when the repository belongs to an organization that runs one.
 - **DEL-31** asks for a locked, versioned bundle prefix and a read of
   the version whose hash matches the record. The tree refuses direct
   writes and compares the digest instead. A changed copy is refused

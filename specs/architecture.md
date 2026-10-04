@@ -1,8 +1,8 @@
 # Architecture
 
 This project follows the Software Design and Architecture Guidelines:
-<https://github.com/baristaze/swe_guidelines/blob/v0.48.0/architecture.md>
-(pinned at release `v0.48.0`; the pin moves one release at a time, in a
+<https://github.com/baristaze/swe_guidelines/blob/v0.49.0/architecture.md>
+(pinned at release `v0.49.0`; the pin moves one release at a time, in a
 pull request of its own).
 
 The guideline is the source of truth for how this system is shaped, and
@@ -27,7 +27,7 @@ adopts every other technology the guideline names.
 | [0019](../docs/adr/0019-an-api-key-hash-stays-unique-after-revocation.md) | STO-26, Defining ORM Classes | `uq_api_keys_key_hash` stays a full unique index, so the lookup can answer "revoked". |
 | [0020](../docs/adr/0020-the-cli-signs-in-as-a-person.md) | DEL-17, The CLI Is Different | The CLI signs in as a person and holds one session in one org; an API key in `TADAS_TOKEN` works as the rule describes. |
 | [0021](../docs/adr/0021-each-environment-has-an-aws-account-of-its-own.md) | OPS-18, Cost Boundaries | While the organization's Cost Explorer is off, the create script leaves the anomaly monitor out, and the budget stands alone. |
-| [0024](../docs/adr/0024-what-staging-hands-production-is-recorded-and-verified.md) | DEL-31, DEL-38, Cloud: AWS | The kept builds carry no object lock: only replication writes them, and the recorded digest refuses a changed copy. The release push stays on the workflow token while no ruleset locks `release`; the host's app, or a deploy key, becomes the one bypass actor the day one does. |
+| [0024](../docs/adr/0024-what-staging-hands-production-is-recorded-and-verified.md) | DEL-31, DEL-38, Cloud: AWS | The kept builds carry no object lock: only replication writes them, and the recorded digest refuses a changed copy. The release push is a deploy key's, not the host's app. |
 | [0025](../docs/adr/0025-an-apply-returns-a-scaled-service-to-its-floor.md) | OPS-17, Scale-Out as a Lever | `desired_count` is not in `ignore_changes`: an apply returns a scaled service to its floor. |
 | [0041](../docs/adr/0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md) | CTX-34, The Work Queue | When a person deletes their account, their open tasks in each team org go unassigned on the service role, whatever role they held. |
 | [0053](../docs/adr/0053-the-scope-rides-in-the-message-that-begins.md) | STO-28, The Second Fence | The scope goes out in the message that begins the transaction, as checked literals, not as a bound statement of its own. |
