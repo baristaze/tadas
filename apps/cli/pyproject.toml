@@ -1,6 +1,6 @@
 [project]
 name = "tadas-cli"
-version = "0.16.0"
+version = "0.17.0"
 description = "The Tadas command line: sign-in, orgs, tasks and their files, imports, and a listener that prints every change to the team's tasks as it happens."
 requires-python = ">=3.14"
 dependencies = [
