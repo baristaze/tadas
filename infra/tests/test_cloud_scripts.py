@@ -217,14 +217,15 @@ def test_create_refuses_to_run_for_real_on_placeholders(environment: str, tmp_pa
     assert f"workos_client_id in deployment/terraform/{root}/variables.tf" in refusal
 
 
-def _tree_with_tracker(tmp_path: Path, tracker: dict[str, str]) -> Path:
+def _tree_with_tracker(tmp_path: Path, tracker: dict[str, str], **values: str) -> Path:
     """The create script beside an environments.json whose error tracker is
-    `tracker`, everything else as shipped."""
+    `tracker`, with `values` over the committed ones, everything else as
+    committed."""
     tree = tmp_path / "tree"
     (tree / "scripts").mkdir(parents=True)
     shutil.copy(CREATE, tree / "scripts")
     (tree / "deployment" / "cloud").mkdir(parents=True)
-    layout = {**ENVIRONMENTS, "error_tracker": tracker}
+    layout = {**ENVIRONMENTS, **values, "error_tracker": tracker}
     (tree / "deployment" / "cloud" / "environments.json").write_text(json.dumps(layout))
     for env in (STAGING, PRODUCTION):
         root = Path("deployment/terraform") / env["environment_root"]
@@ -258,11 +259,19 @@ def test_create_writes_the_trackers_url_org_and_project_from_the_environments(
 def test_create_refuses_a_placeholder_tracker_and_runs_without_one(tmp_path: Path) -> None:
     """A placeholder or a half-named tracker is refused before any command,
     like every other placeholder; an empty url is an environment with no
-    tracker, which runs, and its env file's tracker lines stay empty."""
+    tracker, which runs, and its env file's tracker lines stay empty. The
+    committed tracker is real, so each case runs from a copy of the tree."""
     real = {"CLOUDFLARE_API_TOKEN": "token"}
-    shipped = _run(CREATE, "staging", home=tmp_path, **real).stderr
+    placeholder = {
+        "url": "https://errors.tadas.example",
+        "org": "ORG_PLACEHOLDER",
+        "project": "PROJECT_PLACEHOLDER",
+    }
+    script = _tree_with_tracker(tmp_path / "placeholder", placeholder)
+    refusal = _run(script, "staging", home=tmp_path, **real)
+    assert refusal.returncode == 2 and refusal.stdout == ""
     for name in ("error_tracker.url", "error_tracker.org", "error_tracker.project"):
-        assert name in shipped
+        assert name in refusal.stderr
     half = {"url": "https://errors.tadas.test", "org": "", "project": "tadas"}
     refusal = _run(_tree_with_tracker(tmp_path / "half", half), "staging", home=tmp_path, **real)
     assert refusal.returncode == 2 and refusal.stdout == ""
@@ -270,8 +279,9 @@ def test_create_refuses_a_placeholder_tracker_and_runs_without_one(tmp_path: Pat
     assert "error_tracker.url" not in refusal.stderr
     assert "error_tracker.project" not in refusal.stderr
     none = {"url": "", "org": "ORG_PLACEHOLDER", "project": "PROJECT_PLACEHOLDER"}
-    script = _tree_with_tracker(tmp_path / "none", none)
+    script = _tree_with_tracker(tmp_path / "none", none, domain="tadas.example")
     refusal = _run(script, "staging", home=tmp_path, **real)
+    assert refusal.returncode == 2 and refusal.stdout == ""
     assert "refused: placeholders left: " in refusal.stderr
     assert "error_tracker" not in refusal.stderr
     out = _run(script, "staging", "--dry-run", home=tmp_path).stdout
