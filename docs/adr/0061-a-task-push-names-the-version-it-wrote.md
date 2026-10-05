@@ -4,27 +4,20 @@
 
 ## Context
 
-The guideline says what a push carries (Realtime at the Edge):
-
-> A frame and a replayed record carry the identity of the change
-> (`seq`, `kind`, `target_id`, the actor) and no field of the entity.
-> A client reads the entity through the authorized read, which applies
-> the visibility rules of TenantContext.
-
-NET-30 lets one field through: the record's compare-and-set `version`,
-which the write's outbox row carries and the relay copies onto the event
-and the publish.
+A frame and a replayed record carry the identity of a change (`seq`,
+`kind`, `target_id`, the actor) and no field of the entity (Realtime at
+the Edge). NET-30 lets one field through: the record's compare-and-set
+`version`, which the write's outbox row carries and the relay copies
+onto the event and the publish.
 
 A client that follows the stream reads a record each time a push names
-it. A push about a task names the task, and every open tab reads that
-one task (`GET /v1/tasks/{id}`). That includes the tab that made the
-write. It already holds the
-write's answer, the record as the server wrote it, so its read brings
-back what it holds. The actor on the push cannot tell the writer's tab
-apart: the same person's second tab has the same actor, and it needs
-the read. The version tells them apart. Every write sets it, the
-writer's tab holds the one its answer carried, and no other tab holds it
-until it reads.
+it, the tab that made the write included. A push about a task names
+the task, and every open tab reads that one task (`GET /v1/tasks/{id}`).
+The writer's tab already holds the record as the server wrote it, so
+its read brings back nothing new. The actor cannot single it out: the
+same person's second tab has the same actor, and that tab needs the
+read. The version can. Every write sets it, the writer's tab holds it
+from the write's answer, and no other tab holds it until it reads.
 
 ## Decision
 
@@ -35,10 +28,9 @@ change.** The row's payload is `{"version": n}`
 carries `version`. A row that names none leaves the field out of the
 frame.
 
-The orchestration record is a record that carries a version:
-its hint is a `versioned_row` on every write
-(`om/src/tadas/om/orchestrations/steps.py`), so a push about an
-orchestration names the version it wrote. A product's record with a
+The orchestration record is a record that carries a version. Its hint
+is a `versioned_row` on every write
+(`om/src/tadas/om/orchestrations/steps.py`). A product's record with a
 version does the same.
 
 **A task's outbox row names the version its change wrote, and the push
@@ -60,24 +52,23 @@ runs when the hint's window closes, so the push of the tab's own write
 counts even when it arrives before the write's answer.
 
 **A query a push keeps fresh is not read again on focus, or by the
-clock, while the socket is open.** A push reaches it, so its answer is
-as fresh as the last push. In the portal its stale time is five minutes
-(`PUSHED_STALE_MS` in `apps/portal/src/app/queryClient.ts`), a backstop,
-and the focus refetch is off. A query no push names keeps ten seconds
-(`STALE_MS`) and the focus refetch. When the socket is not open
-(connecting, degraded, paused, closed), every query goes back to both at
-once.
+clock, while the socket is open.** Its answer is as fresh as the last
+push. In the portal its stale time is five minutes (`PUSHED_STALE_MS` in
+`apps/portal/src/app/queryClient.ts`), a backstop, and the focus refetch
+is off. A query no push names keeps ten seconds (`STALE_MS`) and the
+focus refetch. When the socket is not open (connecting, degraded,
+paused, closed), every query goes back to both at once.
 
 ## Consequences
 
 The version is a counter, never a field's value. The stream already
 tells every member that a record changed, when, and by whom, so the
-number of changes is no new fact. The payload holds nothing a person's
-erasure has to find.
+count of changes is no new fact, and the payload holds nothing a
+person's erasure has to find.
 
-A record's event keeps its version too, since the event's payload is
-the row's. The replay (`GET /v1/events`) does not serve the payload, so
-the version is on the wire only on the socket.
+The event's payload is the row's, so the event keeps the version too.
+The replay (`GET /v1/events`) does not serve the payload, so only the
+socket's frame changes.
 
-The frame's field is optional. A client that does not know it ignores
-it and reads.
+The frame's field is optional: a client that does not know it ignores it
+and reads.
