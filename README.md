@@ -12,8 +12,8 @@ maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
 Its base is the guideline's scaffold,
-[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.51.0/scaffold/acme_root)
-at v0.51.0, rendered as Tadas. The `scaffold` branch keeps each render,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.51.1/scaffold/acme_root)
+at v0.51.1, rendered as Tadas. The `scaffold` branch keeps each render,
 and the main branch merges it, so every difference from the scaffold is
 Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
 a later release by a merge.
@@ -51,7 +51,9 @@ installs pnpm, at the version `package.json` names, when it is missing.
 
 ```bash
 make up       # the whole stack in containers, migrated and seeded; prints the URLs
-make down     # stop it; the data stays
+make stop     # pause it: the ports free up, the containers and the data stay
+make start    # resume it, with no build, migration, or seed; `make up` on a new tree
+make down     # remove the containers; the data stays
 make reset    # wipe the data and the containers, then `make up`
 make urls     # print the URLs and the sign-ins again
 ```
