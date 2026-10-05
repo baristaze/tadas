@@ -530,7 +530,10 @@ once, in its own dashboard:
   `tadas-ops workos-bootstrap`. The application's client id is
   `workos_client_id` in the environment root's `variables.tf`.
 - The error tracker: one project for the product, whose DSN every
-  environment reports into; each event carries its environment.
+  environment reports into; each event carries its environment. Its
+  url and the slugs of its organization and its project go in
+  `error_tracker` in `deployment/cloud/environments.json` before the
+  create run; an empty url means the deployment has no tracker.
 - [Stripe](../../docs/runbooks/providers/stripe.md): the sandbox and
   the live account, the two restricted keys (the runtime key the
   processes hold, and the bootstrap key the person holds), and

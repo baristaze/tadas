@@ -24,6 +24,7 @@ placeholder.
 | `environments.<env>.admin_profile`, `sso_profile`, `sso_role_name` | The profiles the create run and an operator use, and the permission set the investigate role trusts | `tadas-staging-admin`, `tadas-staging`, ... |
 | `environments.<env>.bootstrap_root`, `environment_root` | The Terraform roots of the environment | `bootstrap/staging`, `environments/staging`, ... |
 | `environments.<env>.api_domain_name`, `app_domain_name`, `site_domain_name` | The API's, the portal's, and the company site's public names | under `tadas.example` |
+| `error_tracker.url`, `org`, `project` | The error tracker's API, and the slugs of the organization and of the product's one project in it, which the create run writes into the operator's env file; an empty url names no tracker | `https://errors.tadas.example`, `ORG_PLACEHOLDER`, `PROJECT_PLACEHOLDER` |
 
 The identity provider's client ids are not here: each is
 `workos_client_id` in its environment root's `variables.tf`.

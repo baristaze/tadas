@@ -23,7 +23,8 @@
 # the site's name as a CNAME to it); writes the
 # investigate profile, chained from the Identity Center profile; creates the
 # GitHub environments and sets their variables from the root's outputs;
-# writes the operator's env file with its two token lines empty; starts the
+# writes the operator's env file, with the error tracker that
+# environments.json names and its two token lines empty; starts the
 # first deploy through the pipeline, which is how every later commit reaches
 # the cloud; prints the provider steps a person takes after that deploy (the
 # WorkOS, error tracker, Stripe, and Slack values written into the secrets it
@@ -35,9 +36,11 @@
 #
 # environments.json and the environment root's WorkOS client id ship as
 # placeholders: twelve equal digits for an account, a name under the
-# reserved `.example` domain, 0 for a GitHub id, a `_PLACEHOLDER` client id.
-# A dry run prints with them. A real run refuses while one is left, and
-# names each, before it runs anything.
+# reserved `.example` domain, 0 for a GitHub id, a `_PLACEHOLDER` client id,
+# and the error tracker's org and project. A dry run prints with them. A
+# real run refuses while one is left, and names each, before it runs
+# anything. An error tracker whose url is empty is none: the environment
+# runs without one, and its env file's tracker lines stay empty.
 #
 # Staging runs first, then production, then staging again: staging's images
 # and portal builds replicate into production's account, and the replication
@@ -105,6 +108,13 @@ environment_root="deployment/terraform/$(config ".environments.$environment.envi
 api_domain_name="$(config ".environments.$environment.api_domain_name")"
 app_domain_name="$(config ".environments.$environment.app_domain_name")"
 site_domain_name="$(config ".environments.$environment.site_domain_name")"
+# The product's one project in the error tracker, the same in every
+# environment. Its org is the tracker's slug, which need not be the
+# product's name. An empty url means no tracker.
+tracker_url="$(jq -r '.error_tracker.url // ""' "$environments")"
+tracker_org="$(jq -r '.error_tracker.org // ""' "$environments")"
+tracker_project="$(jq -r '.error_tracker.project // ""' "$environments")"
+if [ -z "$tracker_url" ]; then tracker_org=""; tracker_project=""; fi
 state_bucket="tadas-state-$account_id"
 artifacts_bucket="tadas-artifacts-$account_id"
 
@@ -122,17 +132,22 @@ if ! $dry_run && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then missing="$missing CLOU
 [ -z "$missing" ] || refuse "missing:$missing (as flags or environment variables)"
 
 # Every account, name, and id in environments.json, since the bootstrap roots
-# read both environments' accounts; and the client id this environment's
-# root signs people in with.
+# read both environments' accounts; the error tracker, unless it is none;
+# and the client id this environment's root signs people in with.
 placeholders="$(jq -r '
   def example: test("(^|\\.)example$");
+  def unset: . == null or . == "" or endswith("_PLACEHOLDER");
   [
     (.environments | to_entries[] | .key as $env | .value
       | (select(.account_id | split("") | unique | length == 1) | "environments.\($env).account_id"),
         (to_entries[] | select((.key | endswith("_domain_name")) and (.value | example)) | "environments.\($env).\(.key)")),
     (select(.domain | example) | "domain"),
     (select(.github_repository_id == "0") | "github_repository_id"),
-    (select(.github_repository_owner_id == "0") | "github_repository_owner_id")
+    (select(.github_repository_owner_id == "0") | "github_repository_owner_id"),
+    (.error_tracker // {} | select((.url // "") != "")
+      | (select(.url | sub("^[a-z]+://"; "") | split("/")[0] | split(":")[0] | example) | "error_tracker.url"),
+        (select(.org | unset) | "error_tracker.org"),
+        (select(.project | unset) | "error_tracker.project"))
   ] | join(", ")' "$environments")"
 if grep -q '_PLACEHOLDER"' "$environment_root/variables.tf"; then
   placeholders="${placeholders:+$placeholders, }workos_client_id in $environment_root/variables.tf"
@@ -654,17 +669,21 @@ else
   say "+ write $ops_file (mode 600):"
   say "  TADAS_API_URL=$api_url"
   say "  TADAS_OPERATOR_TOKEN=         # read; uv run tadas-ops token --env $environment --identity operator"
-  say "  TADAS_ERROR_TRACKER_URL="
+  say "  TADAS_ERROR_TRACKER_URL=$tracker_url"
   say "  TADAS_ERROR_TRACKER_TOKEN="
-  say "  TADAS_ERROR_TRACKER_ORG=tadas          # the product's one project, the same"
-  say "  TADAS_ERROR_TRACKER_PROJECT=tadas      # in every environment; the read filters on environment:$environment"
+  say "  TADAS_ERROR_TRACKER_ORG=$tracker_org  # the product's one project, the same"
+  say "  TADAS_ERROR_TRACKER_PROJECT=$tracker_project  # in every environment; the read filters on environment:$environment"
   if ! $dry_run; then
     mkdir -p "$ops_dir"
-    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\nTADAS_ERROR_TRACKER_ORG=tadas\nTADAS_ERROR_TRACKER_PROJECT=tadas\n' "$api_url" > "$ops_file")
+    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_ERROR_TRACKER_URL=%s\nTADAS_ERROR_TRACKER_TOKEN=\nTADAS_ERROR_TRACKER_ORG=%s\nTADAS_ERROR_TRACKER_PROJECT=%s\n' "$api_url" "$tracker_url" "$tracker_org" "$tracker_project" > "$ops_file")
     chmod 600 "$ops_file"
   fi
 fi
-say "Filled by hand, once the product's project exists in the error tracker (one project for every environment): TADAS_ERROR_TRACKER_URL and TADAS_ERROR_TRACKER_TOKEN in $ops_file."
+if [ -n "$tracker_url" ]; then
+  say "Filled by hand, once the product's project exists in the error tracker (one project for every environment): TADAS_ERROR_TRACKER_TOKEN in $ops_file."
+else
+  say "No error tracker: $environments names none, so the tracker's lines in $ops_file stay empty, and a skill reports its errors as not read."
+fi
 say "The provisioner's write token goes in $ops_dir/$environment.provisioner.env, never in $ops_file, which every skill that reads sources: step 8's token command writes it there."
 
 say "== 7. The first deploy, through the pipeline like every other"
@@ -705,7 +724,11 @@ case "$environment" in
   production) say "    uv run tadas-ops workos-bootstrap --environment production --apply   (WORKOS_PRODUCTION_API_KEY exported, read with read -rs)" ;;
 esac
 say "  workos_webhook_secret is the signing secret of the endpoint https://$api_domain_name/webhooks/identity, from its page under Webhooks in the WorkOS dashboard."
-say "  sentry_dsn is the DSN of the product's one project in the error tracker, the same value in every environment."
+if [ -n "$tracker_url" ]; then
+  say "  sentry_dsn is the DSN of the product's one project in the error tracker, the same value in every environment."
+else
+  say "  sentry_dsn stays off: $environments names no error tracker."
+fi
 say "  Stripe: stripe_runtime_key takes the environment's runtime key. The bootstrap runs under a second restricted key, held by you and never written to the cloud. With TADAS_STRIPE_BOOTSTRAP_KEY exported, it makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
 say "    uv run tadas-ops stripe-bootstrap --env $environment --profile $writer_profile --dry-run, then without --dry-run, then again for \"no changes\""
 say "  Slack: the environment's own app, from deployment/slack/manifest.$environment.json (production's app is made when production opens). From its Basic Information page, the signing secret and the client secret are slack_signing_secret and slack_client_secret above; its client id is committed as slack_client_id in $environment_root/main.tf, and that commit deploys."
