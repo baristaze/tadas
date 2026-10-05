@@ -4,6 +4,11 @@
   "github_repository": "baristaze/tadas",
   "github_repository_id": "1372606838",
   "github_repository_owner_id": "2823076",
+  "error_tracker": {
+    "url": "https://sentry.io",
+    "org": "tadas-jz",
+    "project": "tadas"
+  },
   "environments": {
     "staging": {
       "account_id": "792394000601",

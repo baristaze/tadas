@@ -247,9 +247,9 @@ with its query: `httpx` every request at INFO, `urllib3` a redirect. A
 provider's lookup names what it looks for in its query, an invitee's address
 among them, and the line and the breadcrumb it becomes would carry it. So
 they write from WARNING up, whatever the level; the request's own breadcrumb
-keeps its method, its path, and its status (`outgoing_breadcrumb`). Tadas's
-Slack client is one: its retry line writes a reply's whole URL at INFO, and
-that URL is a credential (`PATH_IS_A_CREDENTIAL`)."""
+keeps its method, its status, and its URL's scheme and host
+(`outgoing_breadcrumb`). Tadas's Slack client is one: its retry line writes a
+reply's whole URL at INFO, and that URL is a credential."""
 
 
 def configure_logging(level: str, json_logs: bool) -> None:
@@ -331,9 +331,11 @@ OUTBOUND_KEPT = ("http.method", "http.response.status_code")
 def outgoing_breadcrumb(crumb: Any, hint: Any) -> Any:
     """The last word on a breadcrumb, which leaves with the next event. A log
     line's is its message, as `message_of` writes it. An outbound request's
-    is its method, its status, and its URL as a scheme, a host, and a path.
-    Its query and its fragment stay out: a query names what the call looked
-    up, an invitee's address among them."""
+    is its method, its status, and its URL's scheme and host, which name the
+    provider. The rest of the URL stays out, the path included, even for
+    debugging: a webhook's capability lives in its path, and anyone who holds
+    the path can post to it. A query names what the call looked up, an
+    invitee's address among them."""
     record = hint.get("log_record") if isinstance(hint, dict) else None
     if isinstance(record, logging.LogRecord):
         crumb["message"] = message_of(record)
@@ -347,21 +349,14 @@ def outgoing_breadcrumb(crumb: Any, hint: Any) -> Any:
     return crumb
 
 
-PATH_IS_A_CREDENTIAL = frozenset({"hooks.slack.com"})
-"""Hosts whose URL path is a credential, so a breadcrumb names them by their
-scheme and host alone. Tadas's: Slack's reply URL lets whoever holds it post
-into the channel as the app."""
-
-
 def _where_to(url: str) -> str | None:
-    """`url` without its credentials, its query, and its fragment, and without
-    its path on a host of `PATH_IS_A_CREDENTIAL`."""
+    """`url` as its scheme and its host: no credentials, no path, no query,
+    and no fragment."""
     try:
         parts = urlsplit(url)
     except ValueError:
         return None
-    path = "" if parts.hostname in PATH_IS_A_CREDENTIAL else parts.path
-    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], path, "", ""))
+    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], "", "", ""))
 
 
 def configure_error_reporting(
