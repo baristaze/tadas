@@ -334,9 +334,16 @@ def broken_api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterat
             "TADAS_ENVIRONMENT": "local",
             # Both logins point at the closed port: the session lookup runs on
             # the system login, and a route that reached a live database there
-            # would answer 401 instead of raising.
+            # would answer 401 instead of raising. So does every role's own
+            # URL, which the knobs set to each role's instance.
             "TADAS_DATABASE_URL": "postgresql+asyncpg://tadas_runtime:tadas_runtime@127.0.0.1:1/tadas",
             "TADAS_DATABASE_SYSTEM_URL": "postgresql+asyncpg://tadas_system:tadas_system@127.0.0.1:1/tadas",
+            **{
+                f"TADAS_DATABASE_URL_{role}": (
+                    "postgresql+asyncpg://tadas_runtime:tadas_runtime@127.0.0.1:1/tadas"
+                )
+                for role in ("CORE", "ACTIVITY", "QUEUE", "ADMIN")
+            },
             "TADAS_CACHE_BACKEND": "memory",
             "TADAS_TOPICS_BACKEND": "memory",
             "TADAS_BUCKETS_BACKEND": "local",
