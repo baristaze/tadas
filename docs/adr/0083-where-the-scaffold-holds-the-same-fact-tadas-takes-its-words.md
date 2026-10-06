@@ -28,8 +28,10 @@ takes both sides: the scaffold's words, and the product's beside them.
 **What stays different is Tadas's.** Its product: tasks, billing,
 Slack, the plans, the second queue, and what each adds to a page the
 scaffold also has. The date of each ADR. And what stays out by design:
-its migration chain, the scaffold's ADRs whose numbers Tadas uses for
-its own, and the files it regenerates.
+its migration chain, the scaffold's ADRs whose decisions Tadas records
+in its own, and the files it regenerates. A scaffold ADR whose number
+Tadas uses for another decision comes in under a number from 1001 when
+its decision holds here, as 1001 does.
 
 ## Consequences
 

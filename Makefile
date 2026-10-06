@@ -9,8 +9,9 @@ SHELL := /bin/bash
 #
 # Both files are defaults. A variable exported in the shell wins over them,
 # as it does for the settings, for compose, and for scripts/dev.sh, so the
-# four TADAS_DATABASE_* URLs exported at another database take migrate,
-# migrate-check, seed, and test-integration there. Make lets an included
+# four shared TADAS_DATABASE_* URLs and the four TADAS_DATABASE_URL_<ROLE>
+# exported at another database take migrate, migrate-check, seed, and
+# test-integration there. Make lets an included
 # file beat the environment, so each name the files set and the shell
 # exports is kept aside before the includes and put back after them.
 ENV_FILES := .env.example $(wildcard .env)
@@ -51,14 +52,14 @@ SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 # follows, on the project's Python: the checker refuses a Python older than
 # .python-version. Offline, point it at a checkout:
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
-ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.51.2\#subdirectory=checkers" arch-check
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.52.0\#subdirectory=checkers" arch-check
 
 # pnpm at the version packageManager in package.json names. Node 25 and
 # later ship no corepack, so a Node installed or switched to has no pnpm
 # until npm installs it; a pnpm already on PATH runs the version named.
 PNPM_SPEC := $(or $(shell sed -n 's/^ *"packageManager": *"\(pnpm@[^"+]*\).*/\1/p' package.json 2>/dev/null),pnpm)
 
-.PHONY: help setup pnpm up down stop start reset urls infra-up buckets devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-gif-dark demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
+.PHONY: help setup pnpm up down stop start reset urls infra-up buckets devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-gif-dark demo-cli-gif migrate-check release-before benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -120,7 +121,7 @@ urls: ## Print the local URLs and the seeded sign-ins
 	@echo "  Portal         http://localhost:$(TADAS_PORTAL_PORT)   /login through WorkOS; /login/dev as $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL)"
 	@echo "                 two orgs: $(SEED_ADMIN_EMAIL) at /login/dev   owner of $(SEED_SECOND_ORG), admin of $(SEED_ORG)"
 	@echo "  API docs       http://127.0.0.1:$(TADAS_PORT)/docs"
-	@echo "  pgweb          http://localhost:$(TADAS_PGWEB_PORT)"
+	@echo "  pgweb          http://localhost:$(TADAS_PGWEB_PORT)   core; a bookmark per role in its connect dialog"
 	@echo "  Valkey Admin   http://localhost:$(TADAS_VALKEY_ADMIN_PORT)"
 	@echo "  ElasticMQ UI   http://localhost:$(TADAS_ELASTICMQ_UI_PORT)"
 	@echo "  Grafana        http://localhost:$(TADAS_GRAFANA_PORT)   metrics dashboards, no sign-in"
@@ -133,7 +134,10 @@ urls: ## Print the local URLs and the seeded sign-ins
 .env:
 	cp .env.example .env
 
-infra-up: ## Start Postgres, the cache, the queue, and the object store
+# The targets that start the stack copy .env from .env.example first, as
+# `up` does: the processes read .env, and its role URLs are what put each
+# role on its own instance. Without it, every role reads the one URL.
+infra-up: .env ## Start Postgres (one instance per database role), the cache, the queue, and the object store
 	$(COMPOSE) up -d --wait
 	$(MAKE) --no-print-directory buckets
 
@@ -142,11 +146,11 @@ infra-up: ## Start Postgres, the cache, the queue, and the object store
 buckets: ## Create the object store's buckets in MinIO, if they are missing
 	$(COMPOSE) exec -T minio sh -c 'mc alias set local http://127.0.0.1:9000 tadas tadas-minio-local >/dev/null && mc mb --ignore-existing local/tadas-local-user-file-uploads local/tadas-local-exports'
 
-devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus and its collector, Grafana, Jaeger, GlitchTip)
+devx-up: .env ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus and its collector, Grafana, Jaeger, GlitchTip)
 	$(COMPOSE) --profile devx up -d --wait
 	$(COMPOSE) $(GLITCHTIP_SEED)
 
-stack-up: ## The local stack plus the api, maintenance, and portal containers
+stack-up: .env ## The local stack plus the api, maintenance, and portal containers
 	$(COMPOSE_FULL) up -d --build --wait
 
 # The shortcuts above are the developer's path; these are the steps they wrap,
@@ -235,6 +239,14 @@ demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) a
 # in the integration tests.
 migrate-check: ## Compare every role's ORM metadata with the migrated schema
 	uv run --package tadas-om python -m tadas.om.storage.migrate check --all --local
+
+# A rollout runs the release before on this branch's schema, so its own
+# integration suite runs there first, as CI's release-before job does on a
+# pull request (ADR 0084). A branch that changes no migration since its merge
+# base with BASE runs nothing; one that does brings the stack up and migrates
+# it. Like test-integration, it empties every table of the local stack.
+release-before: ## Run the release before's integration suite on this branch's schema (BASE=origin/main)
+	scripts/release_before.sh $(BASE)
 
 # What a process pays to boot: imports once, then microseconds per root (ADR 0007).
 benchmark-boot: ## Time the imports and the construction of every root

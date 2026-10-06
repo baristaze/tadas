@@ -3,7 +3,8 @@ each migration a pair of hand-written SQL files behind a thin wrapper.
 
 Every migration runs under the migration login, which owns the schema. The
 master opens one command only, `ensure-logins`, which makes the three logins
-and hands the migration login what it owns (`tadas.om.storage.logins`).
+and hands the migration login what it owns (`tadas.om.storage.logins`), on
+each database a role lives on.
 
 Every statement the runner sends waits for a lock
 `TADAS_DATABASE_MIGRATION_LOCK_TIMEOUT_SECONDS` at most. A run that gives up
@@ -12,6 +13,11 @@ asks for the same command again (ADR 0071).
 
 Run as a module: `python -m tadas.om.storage.migrate ensure-logins`, then
 `python -m tadas.om.storage.migrate upgrade --all`.
+
+`stamp --all --heads-of <checkout>` writes each role's version record as the
+head of the chain another checkout holds, and applies nothing. It is how the
+release before runs its own suite on this schema (ADR 0084), and it refuses
+any database that is not local.
 """
 
 import argparse
@@ -20,7 +26,7 @@ import importlib
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +35,8 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, MetaData
+from sqlalchemy import Connection, MetaData, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -55,20 +62,26 @@ command again is the whole remedy; the deploy's pre-rollout task does that a
 bounded number of times."""
 
 
-def alembic_config(role: DatabaseRole) -> Config:
-    config = Config(str(MIGRATIONS_DIR / "alembic.ini"))
-    config.set_main_option("script_location", str(MIGRATIONS_DIR))
-    config.set_main_option("version_locations", str(MIGRATIONS_DIR / "versions" / role.value))
+def alembic_config(role: DatabaseRole, migrations_dir: Path = MIGRATIONS_DIR) -> Config:
+    config = Config(str(migrations_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(migrations_dir))
+    config.set_main_option("version_locations", str(migrations_dir / "versions" / role.value))
     config.attributes["role"] = role
     return config
 
 
-def head(role: DatabaseRole) -> str | None:
-    """The single head of a role's chain; more than one is a real conflict."""
-    heads = ScriptDirectory.from_config(alembic_config(role)).get_heads()
+def head(role: DatabaseRole, migrations_dir: Path = MIGRATIONS_DIR) -> str | None:
+    """The single head of a role's chain, this checkout's or the one under
+    `migrations_dir`; more than one is a real conflict."""
+    heads = ScriptDirectory.from_config(alembic_config(role, migrations_dir)).get_heads()
     if len(heads) > 1:
         raise RuntimeError(f"role {role.value} has {len(heads)} heads: {heads}")
     return heads[0] if heads else None
+
+
+def migrations_of(checkout: Path) -> Path:
+    """Where another checkout of this repository keeps its migrations."""
+    return checkout / MIGRATIONS_DIR.relative_to(MIGRATIONS_DIR.parents[1])
 
 
 def split_statements(sql: str) -> list[str]:
@@ -263,6 +276,30 @@ async def downgrade(
     await _with_connection(url, work, lock_timeout_seconds)
 
 
+def write_version(connection: Connection, role: DatabaseRole, revision: str | None) -> None:
+    """A role's version record, written as `revision` with nothing applied:
+    what Alembic's stamp writes, for a revision this checkout's chain may not
+    hold. None leaves the record empty, as a chain with no revision does."""
+    table = f'"{role.value}".{VERSION_TABLE}'
+    connection.exec_driver_sql(f"DELETE FROM {table}")
+    if revision is not None:
+        connection.execute(
+            text(f"INSERT INTO {table} (version_num) VALUES (:revision)"), {"revision": revision}
+        )
+
+
+async def stamp(
+    role: DatabaseRole,
+    url: str,
+    revision: str | None,
+    *,
+    lock_timeout_seconds: float = MIGRATION_LOCK_TIMEOUT_SECONDS,
+) -> None:
+    await _with_connection(
+        url, lambda connection: write_version(connection, role, revision), lock_timeout_seconds
+    )
+
+
 async def check(
     role: DatabaseRole, url: str, *, lock_timeout_seconds: float = MIGRATION_LOCK_TIMEOUT_SECONDS
 ) -> list[Any]:
@@ -281,13 +318,31 @@ async def upgrade_all(
 async def ensure_logins_at(
     master_url: str,
     passwords: dict[str, str],
+    roles: Iterable[DatabaseRole] = tuple(DatabaseRole),
     *,
     lock_timeout_seconds: float = MIGRATION_LOCK_TIMEOUT_SECONDS,
 ) -> None:
-    """`ensure_logins` in one transaction on the master's connection."""
+    """`ensure_logins` for `roles` in one transaction on the master's
+    connection to one database."""
     await _with_connection(
-        master_url, lambda connection: ensure_logins(connection, passwords), lock_timeout_seconds
+        master_url,
+        lambda connection: ensure_logins(connection, passwords, roles),
+        lock_timeout_seconds,
     )
+
+
+async def ensure_logins_everywhere(
+    databases: dict[str, list[DatabaseRole]],
+    passwords: dict[str, str],
+    *,
+    lock_timeout_seconds: float = MIGRATION_LOCK_TIMEOUT_SECONDS,
+) -> None:
+    """`ensure_logins` on every database a role lives on, each for the roles
+    it holds and in a transaction of its own (`master_databases`). A run that
+    fails on one database leaves the ones before it done, which a second run
+    finds in place."""
+    for url, roles in databases.items():
+        await ensure_logins_at(url, passwords, roles, lock_timeout_seconds=lock_timeout_seconds)
 
 
 def gave_up(what: str, lock_timeout_seconds: float) -> int:
@@ -322,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="refuse a database whose host is not local; every Makefile target passes it",
     )
-    for name in ("upgrade", "downgrade", "check"):
+    for name in ("upgrade", "downgrade", "check", "stamp"):
         p = sub.add_parser(name)
         p.add_argument("--role", choices=[r.value for r in DatabaseRole])
         p.add_argument("--all", action="store_true")
@@ -333,23 +388,40 @@ def main(argv: list[str] | None = None) -> int:
         )
         if name == "downgrade":
             p.add_argument("--to", required=True, help="revision, or -1 for one step")
+        if name == "stamp":
+            p.add_argument(
+                "--heads-of",
+                required=True,
+                type=Path,
+                help="another checkout: each role's version record becomes the head of its"
+                " chain there, with nothing applied; a local database only",
+            )
     args = parser.parse_args(argv)
     settings = MigrationSettings()
-    if args.local:
+    # A stamp makes the record say what the schema is not, so it never runs
+    # on a database that is not local, with --local or without it.
+    if args.local or args.command == "stamp":
         settings.refuse_remote()
     bound = settings.database_migration_lock_timeout_seconds
     if args.command == "ensure-logins":
+        databases = settings.master_databases()
         try:
             asyncio.run(
-                ensure_logins_at(
-                    settings.master_url(), settings.login_passwords(), lock_timeout_seconds=bound
+                ensure_logins_everywhere(
+                    databases, settings.login_passwords(), lock_timeout_seconds=bound
                 )
             )
         except DBAPIError as error:
             if not lock_not_granted(error):
                 raise
             return gave_up("logins", bound)
-        print("logins: the migration login owns every role schema; the serving logins hold DML")
+        for url, roles in databases.items():
+            where = make_url(url)
+            print(
+                f"logins on {where.host}:{where.port}/{where.database}:"
+                f" the migration login owns {', '.join(role.value for role in roles)};"
+                " the serving logins hold DML"
+            )
         return 0
     urls = settings.migration_role_urls()
     roles = _roles_from_args(args)
@@ -364,6 +436,16 @@ def main(argv: list[str] | None = None) -> int:
                 elif args.command == "downgrade":
                     await downgrade(role, urls[role], args.to, lock_timeout_seconds=bound)
                     print(f"{role.value}: downgraded to {args.to}")
+                elif args.command == "stamp":
+                    there = migrations_of(args.heads_of)
+                    if not (there / "versions" / role.value).is_dir():
+                        print(f"{role.value}: {args.heads_of} has no chain for it, left as it is")
+                        continue
+                    revision = head(role, there)
+                    await stamp(role, urls[role], revision, lock_timeout_seconds=bound)
+                    print(
+                        f"{role.value}: stamped {revision or 'empty'}, the head in {args.heads_of}"
+                    )
                 else:
                     diff = await check(role, urls[role], lock_timeout_seconds=bound)
                     print(f"{role.value}: {'in sync' if not diff else diff}")

@@ -12,8 +12,8 @@ maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
 Its base is the guideline's scaffold,
-[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.51.2/scaffold/acme_root)
-at v0.51.2, rendered as Tadas. The `scaffold` branch keeps each render,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.52.0/scaffold/acme_root)
+at v0.52.0, rendered as Tadas. The `scaffold` branch keeps each render,
 and the main branch merges it, so every difference from the scaffold is
 Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
 a later release by a merge.
@@ -78,7 +78,7 @@ port is taken.
 
 ```bash
 make setup             # Python and TypeScript dependencies
-make infra-up          # Postgres, Valkey, ElasticMQ, and MinIO alone
+make infra-up          # Postgres (one per database role), Valkey, ElasticMQ, and MinIO alone
 make migrate           # the database logins, then every role's migration chain
 make seed              # the two orgs, their people, and the local operators
 make check             # lint, format, types, arch-check, unit tests
@@ -88,8 +88,9 @@ make test-integration  # the storage contracts over Postgres
 
 `scripts/dev.sh` runs the API, the worker, and the portal on the host
 with hot reload. A variable exported in the shell wins over `.env`, so
-a second checkout points the four `TADAS_DATABASE_*` URLs at a
-database of its own. [deployment/local/README.md](deployment/local/README.md)
+a second checkout points all eight database URLs at a database of
+its own: the four shared `TADAS_DATABASE_*` URLs and the four
+`TADAS_DATABASE_URL_<ROLE>`, since a role's own URL wins. [deployment/local/README.md](deployment/local/README.md)
 works on one service at a time.
 
 ## Deploy and operate
