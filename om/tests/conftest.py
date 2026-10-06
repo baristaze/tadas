@@ -4,10 +4,13 @@ any database that is not a local address.
 The suites connect the way a deployed process does: the storage impls under
 the runtime login, with the system login's pool beside it, and the migrations
 and the truncation between cases under the migration login, which owns the
-tables. The master opens one connection, `ensure-logins`, once per run."""
+tables. The master runs `ensure-logins` once per run, on each database a role
+lives on: one locally per role, as the compose stack runs them."""
 
 import asyncio
+import shutil
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text
@@ -16,7 +19,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.storage.impl.pg_base import LoginSessions
 from tadas.om.storage.impl.postgres import login_sessions
-from tadas.om.storage.migrate import VERSION_TABLE, ensure_logins_at, upgrade_all
+from tadas.om.storage.migrate import (
+    MIGRATIONS_DIR,
+    VERSION_TABLE,
+    ensure_logins_everywhere,
+    head,
+    migrations_of,
+    upgrade_all,
+)
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import LOCAL_HOSTS, MigrationSettings
 
@@ -30,6 +40,25 @@ def migration_settings() -> MigrationSettings:
     return settings
 
 
+@pytest.fixture
+def checkout_ahead(tmp_path: Path) -> tuple[Path, str]:
+    """Another checkout whose core chain holds one revision this one's does
+    not, as a later branch's would, and that revision; every other chain is
+    this one's."""
+    there = migrations_of(tmp_path)
+    shutil.copytree(MIGRATIONS_DIR, there, ignore=shutil.ignore_patterns("__pycache__"))
+    ahead = "209912310000"
+    (there / "versions" / "core" / f"{ahead}_ahead.py").write_text(
+        f'revision = "{ahead}"\n'
+        f'down_revision = "{head(DatabaseRole.CORE)}"\n'
+        "branch_labels = None\n"
+        "depends_on = None\n\n\n"
+        "def upgrade() -> None:\n    pass\n\n\n"
+        "def downgrade() -> None:\n    pass\n"
+    )
+    return tmp_path, ahead
+
+
 @pytest.fixture(scope="session")
 def migrated(migration_settings: MigrationSettings) -> dict[DatabaseRole, str]:
     """Every role migrated to its head, under the migration login, after the
@@ -37,8 +66,8 @@ def migrated(migration_settings: MigrationSettings) -> dict[DatabaseRole, str]:
     settings = migration_settings
     bound = settings.database_migration_lock_timeout_seconds
     asyncio.run(
-        ensure_logins_at(
-            settings.master_url(), settings.login_passwords(), lock_timeout_seconds=bound
+        ensure_logins_everywhere(
+            settings.master_databases(), settings.login_passwords(), lock_timeout_seconds=bound
         )
     )
     urls = settings.migration_role_urls()
