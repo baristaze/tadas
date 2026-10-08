@@ -156,12 +156,12 @@ async def test_an_upload_is_refused_where_media_uploads_is_off_and_taken_where_i
     flags = FlagsMemoryImpl({Flag.MEDIA_UPLOADS.value: FlagRule(orgs={off.org_id: False})})
     storage = MediaStorageMemoryImpl(outbox)
     media = MediaManagerImpl(storage, infra.get_buckets(), members, relay, flags, MediaOptions())
-    refused = a_file(off)
+    refused = a_file(off, subject_id=new_id())
     with pytest.raises(FeatureOff) as raised:
         await media.create_file(off, refused)
     assert raised.value.code == "feature_off"
     assert await storage.read_file(off.org_id, refused.id) is None
-    created = await media.create_file(on, a_file(on))
+    created = await media.create_file(on, a_file(on, subject_id=new_id()))
     assert created.status is FileStatus.PENDING
 
 
@@ -487,6 +487,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         media._buckets,
         members,
         relay,
+        media._flags,
         MediaOptions(),  # type: ignore[attr-defined]
     )
     tasks = build_tasks(
@@ -538,7 +539,7 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
             order.append("task")
             return await super().purge_deleted(before, task_ids)
 
-    flaky = Flaky(files, infra.get_buckets(), members, relay, MediaOptions())
+    flaky = Flaky(files, infra.get_buckets(), members, relay, infra.get_flags(), MediaOptions())
     storage = Recorded(outbox)
     tasks = build_tasks(
         storage,
@@ -573,7 +574,12 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
     assert (await flaky.get_usage(ctx)).total_count == 0
 
     erase = MediaManagerImpl(
-        files, infra.get_buckets(), members, relay, MediaOptions(retention=timedelta(0))
+        files,
+        infra.get_buckets(),
+        members,
+        relay,
+        infra.get_flags(),
+        MediaOptions(retention=timedelta(0)),
     )
     assert await erase.purge_across_tenants() == 1
     bucket = Buckets.USER_FILE_UPLOADS
