@@ -77,22 +77,25 @@ async def test_an_upload_the_flag_turns_off_is_refused_with_its_code(
     client: httpx.AsyncClient, container: AppContainer, tmp_path: Path
 ) -> None:
     """The route's answer is the typed error's: a client reads `feature_off`,
-    and the org whose flag is on still uploads."""
+    and the org whose flag is on still uploads. A file starts as a task's
+    attachment."""
     tenancy = container.managers.tenancy
     _, ajax = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], "Ann")
     _, other = await tenancy.bootstrap(seed_request(), "Other", "other", "eve@other.test", "Eve")
     (tmp_path / "flags.json").write_text(json.dumps({FLAG: {"orgs": {str(ajax.id): False}}}))
     body = {"name": "report.pdf", "content_type": "application/pdf", "size_bytes": 10}
-    refused = await client.post(
-        "/v1/media/files",
-        headers={**await sign_in_as(client, OWNER["email"], ajax.id), "Idempotency-Key": "k-1"},
-        json=body,
-    )
+
+    async def attach(headers: dict[str, str], key: str) -> httpx.Response:
+        task = await client.post("/v1/tasks", headers=headers, json={"title": "Ship"})
+        assert task.status_code == 201, task.text
+        return await client.post(
+            f"/v1/tasks/{task.json()['id']}/attachments",
+            headers={**headers, "Idempotency-Key": key},
+            json=body,
+        )
+
+    refused = await attach(await sign_in_as(client, OWNER["email"], ajax.id), "k-1")
     assert refused.status_code == 403
     assert refused.json()["error"]["code"] == "feature_off"
-    taken = await client.post(
-        "/v1/media/files",
-        headers={**await sign_in_as(client, "eve@other.test", other.id), "Idempotency-Key": "k-2"},
-        json=body,
-    )
+    taken = await attach(await sign_in_as(client, "eve@other.test", other.id), "k-2")
     assert taken.status_code == 201, taken.text
