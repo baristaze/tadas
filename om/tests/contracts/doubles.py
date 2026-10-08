@@ -107,7 +107,12 @@ def media_of(
 ) -> MediaManagerImpl:
     """The media manager over the memory storage, landing in the same outbox."""
     return MediaManagerImpl(
-        MediaStorageMemoryImpl(outbox), infra.get_buckets(), members, relay, MediaOptions()
+        MediaStorageMemoryImpl(outbox),
+        infra.get_buckets(),
+        members,
+        relay,
+        infra.get_flags(),
+        MediaOptions(),
     )
 
 

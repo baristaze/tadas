@@ -51,6 +51,7 @@ locals {
     TADAS_SQS_QUEUE_PREFIX    = module.queue.prefix
     TADAS_SECRETS_BACKEND     = "aws"
     TADAS_SECRETS_NAME_PREFIX = module.secrets.application_prefix
+    TADAS_FLAGS_BACKEND       = var.flags_backend
     TADAS_AWS_REGION          = var.region
     TADAS_LOG_JSON            = "true"
     TADAS_BILLING_BACKEND     = "stripe"
@@ -98,6 +99,9 @@ locals {
     # the worker renews an install's token with the client secret.
     TADAS_SLACK_CLIENT_SECRET  = module.secrets.slack_client_secret_arn
     TADAS_SLACK_SIGNING_SECRET = module.secrets.slack_signing_secret_arn
+    # Every process that boots the infra root reads it, whichever backend
+    # the flags use; with none it is read and ignored.
+    TADAS_LAUNCHDARKLY_SDK_KEY = module.secrets.launchdarkly_sdk_key_secret_arn
   }
 
   # A one-off task opens small pools: it runs one command, not requests.

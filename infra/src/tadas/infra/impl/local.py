@@ -7,6 +7,8 @@ from tadas.infra.buckets import BucketsInterface
 from tadas.infra.buckets.local import BucketsLocalImpl
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.memory import CacheMemoryImpl
+from tadas.infra.flags import FlagsInterface
+from tadas.infra.flags.memory import FlagsMemoryImpl
 from tadas.infra.queues import QueuesInterface
 from tadas.infra.queues.memory import QueueMemoryImpl
 from tadas.infra.root import InfraInterface
@@ -26,6 +28,7 @@ class InfraLocalImpl(InfraInterface):
         self._topics = TopicsMemoryImpl()
         self._queues = QueueMemoryImpl()
         self._secrets = SecretsLocalImpl(root / "secrets.env")
+        self._flags = FlagsMemoryImpl(file=root / "flags.json")
 
     def get_cache(self, scope: CacheScope) -> CacheInterface:
         return self._caches[scope]
@@ -42,6 +45,9 @@ class InfraLocalImpl(InfraInterface):
     def get_secrets(self) -> SecretsInterface:
         return self._secrets
 
+    def get_flags(self) -> FlagsInterface:
+        return self._flags
+
     def describe(self) -> list[str]:
         return [
             *(cache.describe() for cache in self._caches.values()),
@@ -49,14 +55,15 @@ class InfraLocalImpl(InfraInterface):
             self._buckets.describe(),
             self._queues.describe(),
             self._secrets.describe(),
+            self._flags.describe(),
         ]
 
     async def start(self) -> None:
-        for capability in (self._topics, self._buckets, self._queues, self._secrets):
+        for capability in (self._topics, self._buckets, self._queues, self._secrets, self._flags):
             await capability.start()
 
     async def close(self) -> None:
         for cache in self._caches.values():
             await cache.close()
-        for capability in (self._secrets, self._queues, self._buckets, self._topics):
+        for capability in (self._flags, self._secrets, self._queues, self._buckets, self._topics):
             await capability.close()

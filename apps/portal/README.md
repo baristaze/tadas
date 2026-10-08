@@ -15,6 +15,9 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   view-model hook, and a page. `tasks/` is the product's first screen, at
   `/`, with `attachments/`, `imports/`, and `billing/` beside it.
 - `src/queries/`: query keys and hooks, one file per API namespace.
+  `flags.ts` reads the session's flags as one snapshot from the API, and a
+  view-model reads a flag with `useFlag`. No flag vendor's SDK is in the
+  bundle.
 - `src/realtime/`: the socket; a push invalidates the queries of its
   entity, and a live push about a task reads that one task.
 - `src/store/`, `src/design/`: client state and the design kit.

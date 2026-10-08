@@ -28,6 +28,11 @@ module "environment" {
   # (docs/runbooks/providers/slack.md).
   slack_client_id = "842588338401.12123745580357"
 
+  # Every flag reads its default until LaunchDarkly's SDK key is in the
+  # secret store; then this becomes "launchdarkly"
+  # (docs/runbooks/providers/launchdarkly.md).
+  flags_backend = "none"
+
   # The payment processor's account, the Tadas sandbox: test mode, no real money. The process refuses a key
   # whose mode is not this environment's.
   stripe_account_id = "acct_1UIfVX45a2t9JoiY"

@@ -15,7 +15,7 @@ from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.precondition import IfMatch
 from tadas.services.api.gateway.resolve import TasksService
-from tadas.services.api.types.common import LIMIT_DEFAULT
+from tadas.services.api.types.common import LIMIT_DEFAULT, ErrorResponse
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
@@ -127,7 +127,14 @@ async def list_attachments(
     return await tasks.get_attachments(ctx, task_id, cursor, limit)
 
 
-@router.post("/{task_id}/attachments", response_model=FileView, status_code=201)
+@router.post(
+    "/{task_id}/attachments",
+    response_model=FileView,
+    status_code=201,
+    responses={
+        403: {"model": ErrorResponse, "description": "feature_off: `media-uploads` is off"},
+    },
+)
 async def attach_file(
     ctx: Ctx, tasks: TasksService, task_id: UUID, body: AddFileRequest, idem: Idem
 ) -> Response:

@@ -27,6 +27,11 @@ module "environment" {
   # made when production opens. Empty until then: Slack is unconfigured here.
   slack_client_id = "842588338401.12207483161559"
 
+  # Every flag reads its default until LaunchDarkly's SDK key is in the
+  # secret store; then this becomes "launchdarkly"
+  # (docs/runbooks/providers/launchdarkly.md).
+  flags_backend = "none"
+
   # The payment processor's account, the live account. The process refuses a key
   # whose mode is not this environment's.
   stripe_account_id = "acct_1UIfTS4Dj4HbbS1T"

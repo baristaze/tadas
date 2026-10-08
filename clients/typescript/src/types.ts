@@ -61,6 +61,7 @@ export type AddFileRequest = Schemas["AddFileRequest"];
 export type IssuedUploadView = Schemas["IssuedUploadView"];
 export type IssuedDownloadView = Schemas["IssuedDownloadView"];
 export type StorageUsageView = Schemas["StorageUsageView"];
+export type FlagsView = Schemas["FlagsView"];
 export type Role = Schemas["Role"];
 export type Permission = Schemas["Permission"];
 export type Plan = Schemas["Plan"];

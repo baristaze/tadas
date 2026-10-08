@@ -28,6 +28,7 @@ INFRA_INTERFACE_MODULES = frozenset(
         "tadas.infra.topics",
         "tadas.infra.queues",
         "tadas.infra.secrets",
+        "tadas.infra.flags",
     }
 )
 """A capability's interface is its package; every module beneath it, and

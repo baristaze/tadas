@@ -14,11 +14,13 @@ from contracts.plans import ON_TEAM
 
 from tadas.infra.buckets import Buckets
 from tadas.infra.exceptions import UploadRefused
+from tadas.infra.flags import Flag
+from tadas.infra.flags.memory import FlagRule, FlagsMemoryImpl
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.context import Role, TenantContext
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
-from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed
+from tadas.om.exceptions import FeatureOff, NotAuthorized, NotFound, ValidationFailed
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
@@ -140,6 +142,27 @@ async def test_an_upload_starts_pending_under_the_managers_key(media: MediaManag
     assert created.extension == "pdf"
     assert created.created_by == ctx.user_id
     assert created.name == "Quarterly Plan.PDF"
+
+
+async def test_an_upload_is_refused_where_media_uploads_is_off_and_taken_where_it_is_on(
+    outbox: OutboxStorageMemoryImpl,
+    members: Members,
+    relay: OutboxRelayImpl,
+    infra: InfraLocalImpl,
+) -> None:
+    """Two orgs in one process, the flag off for one: the refusal is the
+    server's, whatever a client shows."""
+    off, on = context(Role.MEMBER), context(Role.MEMBER)
+    flags = FlagsMemoryImpl({Flag.MEDIA_UPLOADS.value: FlagRule(orgs={off.org_id: False})})
+    storage = MediaStorageMemoryImpl(outbox)
+    media = MediaManagerImpl(storage, infra.get_buckets(), members, relay, flags, MediaOptions())
+    refused = a_file(off, subject_id=new_id())
+    with pytest.raises(FeatureOff) as raised:
+        await media.create_file(off, refused)
+    assert raised.value.code == "feature_off"
+    assert await storage.read_file(off.org_id, refused.id) is None
+    created = await media.create_file(on, a_file(on, subject_id=new_id()))
+    assert created.status is FileStatus.PENDING
 
 
 @pytest.mark.parametrize(
@@ -296,7 +319,7 @@ async def test_the_sweep_erases_the_object_and_the_row_past_the_retention(
 ) -> None:
     storage = MediaStorageMemoryImpl(outbox)
     buckets = infra.get_buckets()
-    media = MediaManagerImpl(storage, buckets, members, relay, MediaOptions())
+    media = MediaManagerImpl(storage, buckets, members, relay, infra.get_flags(), MediaOptions())
     ctx = context(Role.MEMBER)
     gone = await uploaded(media, ctx, a_file(ctx, subject_id=new_id()))
     kept = await uploaded(media, ctx, a_file(ctx, subject_id=new_id()))
@@ -311,6 +334,7 @@ async def test_the_sweep_erases_the_object_and_the_row_past_the_retention(
         buckets,
         members,
         relay,
+        infra.get_flags(),
         MediaOptions(retention=timedelta(0), pending_expiry=timedelta(0)),
     )
     assert await past.purge_across_tenants() == 2
@@ -463,6 +487,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         media._buckets,
         members,
         relay,
+        media._flags,
         MediaOptions(),  # type: ignore[attr-defined]
     )
     tasks = build_tasks(
@@ -514,7 +539,7 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
             order.append("task")
             return await super().purge_deleted(before, task_ids)
 
-    flaky = Flaky(files, infra.get_buckets(), members, relay, MediaOptions())
+    flaky = Flaky(files, infra.get_buckets(), members, relay, infra.get_flags(), MediaOptions())
     storage = Recorded(outbox)
     tasks = build_tasks(
         storage,
@@ -549,7 +574,12 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
     assert (await flaky.get_usage(ctx)).total_count == 0
 
     erase = MediaManagerImpl(
-        files, infra.get_buckets(), members, relay, MediaOptions(retention=timedelta(0))
+        files,
+        infra.get_buckets(),
+        members,
+        relay,
+        infra.get_flags(),
+        MediaOptions(retention=timedelta(0)),
     )
     assert await erase.purge_across_tenants() == 1
     bucket = Buckets.USER_FILE_UPLOADS
