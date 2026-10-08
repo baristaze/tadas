@@ -29,6 +29,9 @@ x-app-env: &app-env
   TADAS_SQS_ENDPOINT_URL: http://elasticmq:9324
   TADAS_SECRETS_BACKEND: local
   TADAS_SECRETS_FILE: /run/tadas/secrets.env
+  # No rules file in the container: every flag reads its default.
+  TADAS_FLAGS_BACKEND: memory
+  TADAS_FLAGS_FILE: /run/tadas/flags.json
   TADAS_AWS_REGION: us-east-1
   TADAS_LOG_JSON: "true"
   # Traces to Jaeger and errors to GlitchTip, both in the devx profile; without

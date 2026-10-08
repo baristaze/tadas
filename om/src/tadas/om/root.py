@@ -258,6 +258,7 @@ def build_managers(
         infra.get_buckets(),
         tenancy,
         outbox,
+        infra.get_flags(),
         media_options or MediaOptions(),
     )
     slack = SlackManagerImpl(

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Response
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.resolve import TasksService
+from tadas.services.api.types.common import ErrorResponse
 from tadas.services.api.types.media import AddFileRequest, FileView
 from tadas.services.api.types.tasks import ImportPageView, ImportView, StartImportRequest
 
@@ -19,7 +20,14 @@ router = APIRouter(prefix="/tasks/imports", tags=["tasks"])
 IMPORTS_LIMIT_DEFAULT = 10
 
 
-@router.post("/files", response_model=FileView, status_code=201)
+@router.post(
+    "/files",
+    response_model=FileView,
+    status_code=201,
+    responses={
+        403: {"model": ErrorResponse, "description": "feature_off: `media-uploads` is off"},
+    },
+)
 async def create_import_file(
     ctx: Ctx, tasks: TasksService, body: AddFileRequest, idem: Idem
 ) -> Response:

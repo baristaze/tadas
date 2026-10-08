@@ -21,7 +21,7 @@ served to it. Exposure is by listing, never by folder.
 - [Work items](om/src/tadas/om/work/README.md): background jobs, the claim, the lease, and the dead letter
 - [Orchestrations](om/src/tadas/om/orchestrations/README.md): long-running records, a step at a time, that park or fail: the import and the daily cleanup
 - [Files](om/src/tadas/om/media/README.md): files as references, the bounded upload straight to the store, and the sweep
-- [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, observability; what each promises and which twin runs where
+- [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, flags, observability; what each promises and which twin runs where
 - [Integrations](integrations/README.md): the identity provider, its twin, the absent provider, and the webhook check; Slack and Stripe, each an interface, a client, and a twin
 - [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
 - [The maintenance worker](workers/maintenance/README.md): the work queue's loop, the provider deliveries, the Slack posts, and the sweep
@@ -55,6 +55,7 @@ served to it. Exposure is by listing, never by folder.
 - [WorkOS runbook](docs/runbooks/providers/workos.md): the identity provider for a newcomer: its environments, the application and its key, the redirects, the webhook, the bootstrap, and rotation
 - [Stripe runbook](docs/runbooks/providers/stripe.md): the payment processor: its accounts, keys, bootstrap, webhook secret, local deliveries, rotation, and what breaks
 - [Slack runbook](docs/runbooks/providers/slack.md): the Slack app: one per environment, its secrets, the install, the twin, rotation, and what breaks
+- [LaunchDarkly runbook](docs/runbooks/providers/launchdarkly.md): the flag provider: how a rule reaches an org or a person, the SDK key, the switch from none, and what breaks
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention
 
 ## Tenant users and admins

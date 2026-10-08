@@ -9,7 +9,8 @@ import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { IssuedSessionView, MeView, MembershipChoiceView, OrgView, TaskView, UserView } from "@tadas/client";
+import type { FlagsView, IssuedSessionView, MeView, MembershipChoiceView, OrgView, TaskView, UserView } from "@tadas/client";
+import { keys } from "../queries/keys";
 import { useSessionStore } from "../store/session";
 import { queryClient } from "./queryClient";
 import { routes } from "./routes";
@@ -82,6 +83,8 @@ function answer(path: string): unknown {
   if (path.startsWith("/v1/tasks/imports")) return { items: [] };
   if (path.startsWith("/v1/users")) return { items: [user], next_cursor: null };
   if (path === "/v1/billing") return { plan: "team" };
+  // Uploads are off for Ajax alone, so a snapshot names the org it was read in.
+  if (path === "/v1/flags") return { flags: { "media-uploads": slug !== "ajax" } } satisfies FlagsView;
   if (path === "/v1/me/identity") return { id: "i1", email: user.email, operator_role: null, created_at: at, time_zone: null };
   throw new Error(`no read for ${path}`);
 }
@@ -150,6 +153,7 @@ afterEach(async () => {
 it("shows the new org's tasks after a switch from the chip, read once under the new session", async () => {
   await open("/");
   expect(shownTasks()).toEqual(["Ajax's task"]);
+  expect(queryClient.getQueryData(keys.flags)).toEqual({ flags: { "media-uploads": false } });
 
   await act(async () => switcher().click());
   await act(async () => button("Beta").click());
@@ -163,6 +167,8 @@ it("shows the new org's tasks after a switch from the chip, read once under the 
   expect(after.filter((read) => read.path.startsWith("/v1/users"))).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=open"))).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=done"))).toHaveLength(1);
+  expect(after.filter((read) => read.path === "/v1/flags")).toHaveLength(1);
+  expect(queryClient.getQueryData(keys.flags)).toEqual({ flags: { "media-uploads": true } });
 });
 
 it("lands on the new org's tasks after creating one at /orgs/new", async () => {

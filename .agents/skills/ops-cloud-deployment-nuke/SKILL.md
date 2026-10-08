@@ -218,5 +218,6 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
 - WorkOS (<Staging | Production>): the organizations and users its orgs made; the application's API keys, its redirects, and its webhook endpoint https://<api name>/webhooks/identity, <kept for a recreate | for the person to remove>
 - Slack: the environment's app, whose request URLs fail until a new environment answers; the workspaces keep it installed until someone removes it in Slack; each org installs again
 - The error tracker: the events the environment reported, tagged environment:<env>
-- Provider keys to write again on a recreate: workos_api_key, workos_webhook_secret, sentry_dsn, stripe_runtime_key, slack_client_secret, slack_signing_secret
+- LaunchDarkly: the project, its flags, and their rules, which the next <env> uses
+- Provider keys to write again on a recreate: workos_api_key, workos_webhook_secret, sentry_dsn, stripe_runtime_key, slack_client_secret, slack_signing_secret, launchdarkly_sdk_key
 ```

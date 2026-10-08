@@ -2,9 +2,16 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.infra.buckets import Buckets, BucketsInterface
+from tadas.infra.flags import Flag, FlagsInterface
 from tadas.om.base import Platform, utcnow
 from tadas.om.context import Permission, TenantContext
-from tadas.om.exceptions import NotAuthorized, NotFound, TenantMismatch, ValidationFailed
+from tadas.om.exceptions import (
+    FeatureOff,
+    NotAuthorized,
+    NotFound,
+    TenantMismatch,
+    ValidationFailed,
+)
 from tadas.om.media.manager import MediaManagerInterface
 from tadas.om.media.rules import content_disposition, extension_of, object_key, upload_refusal
 from tadas.om.media.storage import MediaStorageInterface
@@ -44,16 +51,21 @@ class MediaManagerImpl(MediaManagerInterface):
         buckets: BucketsInterface,
         tenancy: TenancyManagerInterface,
         relay: OutboxRelayInterface,
+        flags: FlagsInterface,
         options: MediaOptions,
     ) -> None:
         self._storage = storage
         self._buckets = buckets
         self._tenancy = tenancy
         self._relay = relay
+        self._flags = flags
         self._options = options
 
     async def create_file(self, ctx: TenantContext, file: File) -> File:
         ctx.require(Permission.WRITE)
+        flags = await self._flags.evaluate(ctx.org_id, ctx.user_id)
+        if not flags.on(Flag.MEDIA_UPLOADS):
+            raise FeatureOff(f"{Flag.MEDIA_UPLOADS} is off: a new upload is refused")
         refusal = upload_refusal(
             file.purpose, file.name, file.content_type, file.size_bytes, file.subject_id
         )

@@ -32,3 +32,6 @@ and the ADR that says why it has that shape.
   per environment from its committed manifest, the signing secret and
   the client secret, the install each org makes, the channel it
   binds, and the twin a laptop uses.
+- [providers/launchdarkly.md](providers/launchdarkly.md): the flag
+  provider: how a rule reaches an org or a person, the SDK key, the
+  switch from none, and what breaks.

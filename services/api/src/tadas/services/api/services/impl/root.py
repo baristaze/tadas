@@ -10,6 +10,7 @@ from tadas.services.api.services import (
     AdminServiceInterface,
     BillingServiceInterface,
     EventsServiceInterface,
+    FlagsServiceInterface,
     MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
@@ -21,6 +22,7 @@ from tadas.services.api.services import (
 from tadas.services.api.services.impl.admin import AdminServiceImpl
 from tadas.services.api.services.impl.billing import BillingServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
+from tadas.services.api.services.impl.flags import FlagsServiceImpl
 from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
 from tadas.services.api.services.impl.slack import SlackServiceImpl
@@ -37,6 +39,7 @@ class ServicesImpl(ServicesInterface):
         admin: AdminServiceInterface,
         events: EventsServiceInterface,
         media: MediaServiceInterface,
+        flags: FlagsServiceInterface,
         realtime: RealtimeServiceInterface,
         billing: BillingServiceInterface,
         webhooks: WebhooksServiceInterface,
@@ -47,6 +50,7 @@ class ServicesImpl(ServicesInterface):
         self._admin = admin
         self._events = events
         self._media = media
+        self._flags = flags
         self._realtime = realtime
         self._billing = billing
         self._webhooks = webhooks
@@ -66,6 +70,9 @@ class ServicesImpl(ServicesInterface):
 
     def get_media_service(self) -> MediaServiceInterface:
         return self._media
+
+    def get_flags_service(self) -> FlagsServiceInterface:
+        return self._flags
 
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
@@ -99,6 +106,7 @@ def build_services(
         ),
         events=EventsServiceImpl(managers.events),
         media=MediaServiceImpl(managers.media),
+        flags=FlagsServiceImpl(infra.get_flags()),
         realtime=RealtimeServiceImpl(
             managers.tenancy, managers.events, infra.get_topics(), head_max_age
         ),

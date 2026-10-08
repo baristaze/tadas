@@ -14,6 +14,7 @@ from tadas.services.api.routers import (
     admin,
     billing,
     events,
+    flags,
     imports,
     media,
     slack,
@@ -22,8 +23,9 @@ from tadas.services.api.routers import (
 )
 
 HOSTED: dict[str, tuple[APIRouter, ...]] = {
-    # The operator plane is tenancy's: it lists and deletes orgs.
-    "tenancy": (tenancy.router, admin.router),
+    # The operator plane is tenancy's: it lists and deletes orgs. The
+    # session's flags are too: they answer for the session's org and user.
+    "tenancy": (tenancy.router, admin.router, flags.router),
     # The imports first: `/tasks/imports` is not a task's id.
     "tasks": (imports.router, tasks.router),
     # The realtime channel is the events stream pushed; its replay is `/events`.

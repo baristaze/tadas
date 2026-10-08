@@ -516,12 +516,13 @@ After the deploy roles work, remove `baris.taze` from `TadasBootstrapAdmins`, so
 
 A bootstrap root is applied by a person before the change that needs it merges. When a pull request changes `deployment/terraform/bootstrap/`, for example to let the deployer read a new secret, apply that root from the pull request's branch under `tadas-<env>-admin` (for production, `tadas-prod-admin`), then merge. A merge whose deploy needs a permission the bootstrap has not granted stops half applied.
 
-## The providers: WorkOS, the error tracker, Stripe, and Slack
+## The providers: WorkOS, the error tracker, Stripe, Slack, and LaunchDarkly
 
-Four providers sit outside AWS: WorkOS signs people in, a
+Five providers sit outside AWS: WorkOS signs people in, a
 Sentry-compatible error tracker receives the errors, Stripe takes
-payment, and Slack carries the org's channel. Each is set up by hand
-once, in its own dashboard:
+payment, Slack carries the org's channel, and LaunchDarkly holds the
+feature flags' rules. Each is set up by hand once, in its own
+dashboard:
 
 - [WorkOS](../../docs/runbooks/providers/workos.md): the Staging and
   Production environments, the Tadas App application, its own API key
@@ -542,15 +543,22 @@ once, in its own dashboard:
   own app, made from its manifest in `deployment/slack/`, its client
   id, its client secret and signing secret, and public distribution,
   so each org installs it into its own workspace.
+- [LaunchDarkly](../../docs/runbooks/providers/launchdarkly.md): a
+  project with its Test and Production environments, and one flag per
+  member of `Flag`, with targeting on in each environment and its
+  default rule serving the code's default: a flag with targeting off
+  reads `false`. Until its key is written and `flags_backend` says
+  `launchdarkly`, every flag reads its default.
 
 What they share is the order, because the secret that holds each value
 is made by the deploy:
 
-1. The environment's first deploy makes the seven secrets, each holding
+1. The environment's first deploy makes the eight secrets, each holding
    `off`: `tadas/<env>/workos_api_key`, `tadas/<env>/workos_webhook_secret`,
    `tadas/<env>/sentry_dsn`, `tadas/<env>/stripe_runtime_key`,
    `tadas/<env>/stripe_webhook_secret`, `tadas/<env>/slack_client_secret`,
-   and `tadas/<env>/slack_signing_secret`. With `off` the environment runs,
+   `tadas/<env>/slack_signing_secret`, and
+   `tadas/<env>/launchdarkly_sdk_key`. With `off` the environment runs,
    and says in its logs what is off.
 2. A person writes each value under their own sign-in, `tadas-staging`
    for staging (in production `tadas-prod-power`, when authorized),
