@@ -10,11 +10,12 @@ from collections.abc import Sequence
 from fastapi import APIRouter
 
 from tadas.services.api.realtime import socket
-from tadas.services.api.routers import admin, events, media, tenancy
+from tadas.services.api.routers import admin, events, flags, media, tenancy
 
 HOSTED: dict[str, tuple[APIRouter, ...]] = {
-    # The operator plane is tenancy's: it lists and deletes orgs.
-    "tenancy": (tenancy.router, admin.router),
+    # The operator plane is tenancy's: it lists and deletes orgs. The
+    # session's flags are too: they answer for the session's org and user.
+    "tenancy": (tenancy.router, admin.router, flags.router),
     # The realtime channel is the events stream pushed; its replay is `/events`.
     "events": (events.router, socket.router),
     "media": (media.router,),
