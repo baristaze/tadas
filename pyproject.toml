@@ -177,8 +177,8 @@ sites = [
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.admit_operator",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.resume",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.service_context",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.member_context",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.service_contexts",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.sweep_context",
-    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.member_context",
 ]
 builders = ["build_context"]

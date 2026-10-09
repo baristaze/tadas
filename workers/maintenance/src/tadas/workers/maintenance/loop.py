@@ -64,11 +64,13 @@ batch or more says there may be more."""
 
 AcrossStep = Callable[[RequestContext], Awaitable[int]]
 """A namespace's purge of its rows past their retention, across tenants in
-the system scope, a batch per statement, under the pass's request stage (the
-tasks' purge mints a tenant's context from it for the attachments it
-detaches); it returns how many rows went, and a whole batch or more says
-there may be more. A namespace's sweep of what is due across tenants takes
-the same shape, and counts the rows it moved."""
+the system scope, a batch per statement, under the pass's request stage; it
+returns how many rows went, and a whole batch or more says there may be
+more. A purge that must act in the tenant of a row it found takes that
+tenant's context from the tenancy manager's `sweep_context`, under this
+stage, which reads nothing for a tenant the pass listed. A namespace's
+sweep of what is due across tenants takes the same shape, and counts the
+rows it moved."""
 
 ChoreStep = Callable[[TenantContext], Awaitable[object]]
 """A standing chore: a step per tenant, for housekeeping that needs the

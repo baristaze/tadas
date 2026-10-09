@@ -2,9 +2,8 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from tadas.infra.cache import CacheInterface
+from tadas.infra.cache.read import ReadCache
 from tadas.om.base import new_id, utcnow
-from tadas.om.billing.impl.cache import account_changed
 from tadas.om.billing.impl.manager import (
     ACCOUNT_CREATED,
     ACCOUNT_UPDATED,
@@ -33,21 +32,22 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
     tenancy storage, as the tenancy operator plane does: no `TenantContext`
     exists on this plane, so no tenant manager is asked.
 
-    `cache` is the billing account's scope, the one the tenant plane reads
-    through. This plane reads storage, and a grant bumps the org's
-    generation after its commit, so the tenant plane's next read is fresh."""
+    `accounts` is the org's account through the read cache, the reader the
+    tenant plane reads the plan through. This plane reads storage, and a
+    grant bumps the org's generation after its commit, so the tenant plane's
+    next read is fresh."""
 
     def __init__(
         self,
         storage: BillingStorageInterface,
         tenancy: TenancyStorageInterface,
         relay: OutboxRelayInterface,
-        cache: CacheInterface,
+        accounts: ReadCache[BillingAccount | None],
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
         self._relay = relay
-        self._cache = cache
+        self._accounts = accounts
 
     async def get_billing(self, admin: OperatorContext, org_id: UUID) -> Billing:
         admin.require(OperatorPermission.READ)
@@ -87,7 +87,7 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
                 *self._wake(admin, org_id, before, account, now),
             )
             await self._storage.write_account(org_id, account, rows)
-        await account_changed(self._cache, org_id)
+        await self._accounts.bump(org_id)
         await self._relay.relay_all(org_id, rows)
         log.info(
             "operator %s granted org %s %s",

@@ -1718,14 +1718,17 @@ async def test_the_sweep_context_is_the_passs_and_none_for_a_purged_tenant(
     """A purge across tenants that found a tenant's row asks for the context
     the pass minted for that tenant, deleted tenants included: under the
     pass's request stage it reads nothing. Outside a pass it reads the org
-    row, and a tenant marked purged, or one with no row, has none."""
+    row. A tenant marked purged, before the pass or during it, and one with
+    no org row, have none."""
     _, live = await manager.bootstrap(request(), "Live", "live", "ann@example.test", "Ann")
     _, gone = await manager.bootstrap(request(), "Gone", "gone", "bob@example.test", "Bob")
-    stored = await storage.read_org(gone.id)
-    assert stored is not None
-    await storage.write_org(gone.id, stored.model_copy(update={"deleted_at": utcnow()}))
+    _, past = await manager.bootstrap(request(), "Past", "past", "cid@example.test", "Cid")
+    for org, deleted_at in ((gone, utcnow()), (past, utcnow() - timedelta(days=40))):
+        stored = await storage.read_org(org.id)
+        assert stored is not None
+        await storage.write_org(org.id, stored.model_copy(update={"deleted_at": deleted_at}))
     rctx = request()
-    await manager.service_contexts(rctx)
+    contexts = {c.org_id: c for c in await manager.service_contexts(rctx)}
     reads: list[UUID] = []
     read_org = storage.read_org
 
@@ -1734,16 +1737,21 @@ async def test_the_sweep_context_is_the_passs_and_none_for_a_purged_tenant(
         return await read_org(org_id)
 
     monkeypatch.setattr(storage, "read_org", counted)
-    for org_id in (live.id, gone.id):
+    for org_id in (EMPTY_UUID, live.id, gone.id, past.id):
         ctx = await manager.sweep_context(rctx, org_id)
         assert ctx is not None and ctx.org_id == org_id
-        assert ctx.role is Role.SERVICE and ctx.user_id == EMPTY_UUID
+        assert ctx.security.role is Role.SERVICE and ctx.user_id == EMPTY_UUID
+        assert ctx.security.credential_kind is CredentialKind.INTERNAL
         assert ctx.request_id == rctx.request_id
     assert reads == [], "the pass's tenants are known"
+    # The pass marks a tenant past its retention purged: from then on it has
+    # no context, in this pass as in the next.
+    assert await manager.mark_purged(contexts[past.id]) is True
+    assert await manager.sweep_context(rctx, past.id) is None, "marked purged in this pass"
+    assert await manager.sweep_context(request(), past.id) is None, "marked purged before"
     assert await manager.sweep_context(request(), gone.id) is not None, "a deleted tenant"
     assert await manager.sweep_context(request(), new_id()) is None, "no org row"
-    assert await storage.mark_org_purged(gone.id, utcnow())
-    assert await manager.sweep_context(request(), gone.id) is None, "marked purged"
+    assert await manager.sweep_context(request(), EMPTY_UUID) is not None, "the system scope"
 
 
 async def test_resume_and_service_contexts(manager: TenancyManagerInterface) -> None:

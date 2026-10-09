@@ -1,15 +1,20 @@
-import type { TaskView } from "@tadas/client";
-import { describe, expect, it, vi } from "vitest";
+import type { EventView, TaskView } from "@tadas/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@tadas/client";
+import { useConnectionStore } from "../store/connection";
+import { openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
 import {
-  announceMissedReminders,
+  announceReminders,
   announceReminder,
   MISSED_REMINDERS_NAMED,
   missedRemindersMessage,
   reminderMessage,
+  reminderNotices,
   UNNAMED_REMINDER,
   type ReminderEffects,
 } from "./reminder";
+import { REMINDED_KIND } from "./router";
+import { eventEnvelope } from "./stream";
 
 const task = (title: string): TaskView => ({
   id: "t1",
@@ -52,7 +57,7 @@ describe("announceReminder", () => {
   });
 });
 
-describe("announceMissedReminders", () => {
+describe("announceReminders", () => {
   const titles: Record<string, string> = { t1: "Call the bank", t2: "Water the plants", t3: "Pay rent", t4: "Book flights" };
   const effects = () => ({
     readTask: vi.fn<ReminderEffects["readTask"]>(async (id) => ({ ...task(titles[id]!), id })),
@@ -61,7 +66,7 @@ describe("announceMissedReminders", () => {
 
   it("names each missed reminder, in stream order, up to three", async () => {
     const e = effects();
-    await expect(announceMissedReminders(["t2", "t1", "t3"], e)).resolves.toEqual([
+    await expect(announceReminders(["t2", "t1", "t3"], e)).resolves.toEqual([
       "Reminder: Water the plants",
       "Reminder: Call the bank",
       "Reminder: Pay rent",
@@ -75,7 +80,7 @@ describe("announceMissedReminders", () => {
 
   it("counts them in one notice past three, and reads no task", async () => {
     const e = effects();
-    await announceMissedReminders(["t1", "t2", "t3", "t4"], e);
+    await announceReminders(["t1", "t2", "t3", "t4"], e);
     expect(MISSED_REMINDERS_NAMED).toBe(3);
     expect(e.notify).toHaveBeenCalledTimes(1);
     expect(e.notify).toHaveBeenCalledWith("You missed 4 reminders while you were away.");
@@ -84,7 +89,7 @@ describe("announceMissedReminders", () => {
 
   it("counts a task reminded twice once", async () => {
     const e = effects();
-    await announceMissedReminders(["t1", "t2", "t1", "t2"], e);
+    await announceReminders(["t1", "t2", "t1", "t2"], e);
     expect(e.notify.mock.calls.map(([message]) => message)).toEqual([
       "Reminder: Call the bank",
       "Reminder: Water the plants",
@@ -93,8 +98,106 @@ describe("announceMissedReminders", () => {
 
   it("shows nothing for none", async () => {
     const e = effects();
-    await expect(announceMissedReminders([], e)).resolves.toEqual([]);
+    await expect(announceReminders([], e)).resolves.toEqual([]);
     expect(e.notify).not.toHaveBeenCalled();
     expect(missedRemindersMessage(12)).toBe("You missed 12 reminders while you were away.");
+  });
+});
+
+describe("a reminder on the channel", () => {
+  class FakeSocket implements SocketLike {
+    readyState = 0;
+    onopen: SocketLike["onopen"] = null;
+    onmessage: SocketLike["onmessage"] = null;
+    onclose: SocketLike["onclose"] = null;
+    onerror: SocketLike["onerror"] = null;
+    accept() {
+      this.readyState = SOCKET_OPEN;
+      this.onopen?.({} as Event);
+    }
+    receive(frame: object) {
+      this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+    }
+    drop() {
+      this.readyState = 3;
+      this.onclose?.({ code: 1006 } as CloseEvent);
+    }
+    send() {}
+    close() {
+      if (this.readyState !== 3) this.drop();
+    }
+  }
+
+  const titles: Record<string, string> = { t1: "Call the bank", t2: "Water the plants" };
+  const reminded = (seq: number, taskId: string): EventView => ({
+    seq,
+    kind: REMINDED_KIND,
+    target_id: taskId,
+    produced_at: "2026-09-22T12:00:01Z",
+    actor_id: "system",
+  });
+  const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", user_id: "u1", seq, ping_interval_seconds: 25 });
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+  let channel: Channel | null = null;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useConnectionStore.setState({ status: "closed", failedCycles: 0 });
+  });
+
+  afterEach(() => {
+    channel?.stop();
+    channel = null;
+    vi.useRealTimers();
+  });
+
+  it("announces a live one once, and one missed while away once after the reconnect", async () => {
+    const stream: EventView[] = [];
+    const sockets: FakeSocket[] = [];
+    const readTask = vi.fn<ReminderEffects["readTask"]>(async (id) => ({ ...task(titles[id]!), id }));
+    const notify = vi.fn<ReminderEffects["notify"]>();
+    const shown = () => notify.mock.calls.map(([message]) => message);
+    channel = openChannel({
+      requestTicket: async () => "tkt",
+      openSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      fetchEventsAfter: async (after) => stream.filter((e) => e.seq > after),
+      route: () => {},
+      refreshAll: async () => undefined,
+      connection: useConnectionStore,
+      pageSize: 200,
+      ...reminderNotices({ readTask, notify }),
+    });
+    await flush();
+    sockets[0]!.accept();
+    await flush();
+    sockets[0]!.receive(hello(5));
+    await flush();
+
+    stream.push(reminded(6, "t1"));
+    sockets[0]!.receive(eventEnvelope(reminded(6, "t1")));
+    await flush();
+    expect(shown()).toEqual(["Reminder: Call the bank"]);
+
+    // Away: the socket drops, and the next reminder fires before it is back.
+    sockets[0]!.drop();
+    stream.push(reminded(7, "t2"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[1]!.accept();
+    await flush();
+    expect(shown()).toEqual(["Reminder: Call the bank", "Reminder: Water the plants"]);
+
+    // A later reconnect reads neither again: the cursor has passed both.
+    sockets[1]!.drop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    sockets[2]!.accept();
+    await flush();
+    sockets[2]!.receive(hello(7));
+    await flush();
+    expect(shown()).toEqual(["Reminder: Call the bank", "Reminder: Water the plants"]);
+    expect(readTask.mock.calls.map(([id]) => id)).toEqual(["t1", "t2"]);
   });
 });

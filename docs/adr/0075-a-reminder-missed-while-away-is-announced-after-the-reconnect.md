@@ -16,42 +16,31 @@ that the durability mechanism (Realtime at the Edge): "Replay from
 storage is the durability mechanism. The socket is a hint that
 something changed."
 
-The replay routes a page one record per entity, the last one. Routing
-invalidates every query the entity is read from, so a page of two
-hundred task records would otherwise restart the list refetch two
-hundred times. The collapse is right for the cache and wrong for a
-reminder. Under the collapse alone, a reminder is announced only when
-it is the last task record of its page. Any later record of any task
-(the same task edited, another completed) hides it. The badge shows,
-but nobody is told.
+The scaffold's channel has notices: records a person is told about, not
+only refreshed by. It hands each one over once, as its cursor passes it,
+keeps them apart from a replay's collapse to one record per entity, and
+hands over nothing once it stops
+([ADR 0096](0096-a-notice-is-handed-over-once-as-the-cursor-passes-it.md)).
 
 ## Decision
 
 **A reminder the portal missed is announced after the reconnect.**
 
-**The collapse keeps a reminder.** The replay still routes one record
-per entity. Beside that, it keeps every record a person is told about,
-whatever record of its entity follows it. The channel asks the provider
-which those are (`isAnnounced`). That is `tasks.task.reminded`.
-The channel stays generic, and the guideline's rule holds: a client that
-cares about some kinds filters after it has ordered, never before.
+**A reminder is a notice.** The provider's `isAnnounced` names
+`tasks.task.reminded`, and its `announce` is the one place a reminder is
+told, live or missed (`reminderNotices` in `reminder.ts`). The channel
+hands a live push over at once, and what a replay or the first catch-up
+read when it ends, in stream order, however it ends. `route` refreshes
+the task and tells nothing, so no reminder is told twice. A switch of
+org and a sign-out stop the channel, so a replay from the old session
+announces nothing in the new one.
 
-**A replay announces once, at its end.** The replay gathers the kept
-records across all its pages and hands them over in stream order, in one
-call, however the replay ends. That includes a page that failed: the
-cursor has moved past what the replay applied, so no later replay reads
-it again. A channel that stopped meanwhile hands over nothing. A switch
-of org and a sign-out stop the channel, so a replay from the old session
-announces nothing in the new one (One Tenant at a Time). The first
-catch-up keeps and announces reminders the same way, since it reads the
-same stream for the same reason.
-
-**Three by name, then a count.** Up to three reminders are each
-announced as the live push is, "Reminder: <title>", with one read of the
-task for its title, one after another. Past three, one notice counts
+**Three by name, then a count.** What the channel hands over at once is
+announced each as "Reminder: <title>", with one read of the task for its
+title, one after another, up to three. Past three, one notice counts
 them: "You missed 5 reminders while you were away." It reads nothing,
 and the badges show which tasks. A task reminded twice in one replay
-counts once.
+counts once. A live push hands over one.
 
 **The window is the replay's own.** Nothing is read to find missed
 reminders. What the replay reads after the cursor is what is announced.

@@ -20,8 +20,8 @@ import { useSessionStore } from "../store/session";
 import { openChannel } from "./channel";
 import { createHints } from "./hints";
 import { watchPage } from "./pageVisibility";
-import { announceMissedReminders, announceReminder } from "./reminder";
-import { reminderOf, replayKey, routeEnvelope, type HintReaders } from "./router";
+import { reminderNotices } from "./reminder";
+import { replayKey, routeEnvelope, type HintReaders } from "./router";
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -42,21 +42,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       openSocket: (ticket) =>
         new WebSocket(api.websocketUrl(`/v1/realtime?ticket=${encodeURIComponent(ticket)}`)),
       fetchEventsAfter,
-      route: (envelope) => {
-        routeEnvelope(queryClient, envelope, readers);
-        const reminded = reminderOf(envelope);
-        if (reminded) void announceReminder(reminded, { readTask: fetchTask, notify });
-      },
-      routeReplayed: (envelope) => void routeEnvelope(queryClient, envelope, readers),
+      route: (envelope) => void routeEnvelope(queryClient, envelope, readers),
       replayKey: (envelope) => replayKey(envelope, readers),
-      // A reminder read back from the stream (the replay after a reconnect,
-      // the first catch-up) is kept through the replay's collapse, and
-      // announced once the read-back ends.
-      isAnnounced: (envelope) => reminderOf(envelope) !== null,
-      announce: (envelopes) => {
-        const reminded = envelopes.map(reminderOf).filter((id): id is string => id !== null);
-        void announceMissedReminders(reminded, { readTask: fetchTask, notify });
-      },
+      // A reminder is a notice: the channel hands each over once, as its
+      // cursor passes it, a push at once and one missed while away once the
+      // replay after the reconnect reads it back.
+      ...reminderNotices({ readTask: fetchTask, notify }),
       refreshAll: () => queryClient.invalidateQueries(),
       connection: useConnectionStore,
       pageSize: EVENTS_PAGE,

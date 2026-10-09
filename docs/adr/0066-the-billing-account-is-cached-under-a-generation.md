@@ -27,43 +27,30 @@ read sits below authorization.
 
 ## Decision
 
-**The billing manager caches the account per org.** It takes a new
-cache scope, `billing_account`, through its constructor, like the
-tenancy manager takes `realtime_ticket`. It does not wrap its storage.
-The logic is in `om/src/tadas/om/billing/impl/cache.py`.
+**The billing manager caches the account per org.** It reads through
+the scaffold's read cache
+([ADR 0095](0095-a-read-cache-is-keyed-by-the-tenants-generation.md)),
+on a cache scope of its own, `billing_account`, under the read name
+`account`: the entry is `account:<window>:<generation>`, and a miss
+reads storage and puts the account, or its absence, under that key. The
+root builds one reader (`cached_accounts`) and hands it to both billing
+planes through their constructors. Neither wraps its storage.
 
-- **The key carries the org's generation.** A read gets the generation,
-  then the entry `account:<generation>`. A miss reads storage and puts
-  the account, or its absence, under that key. The generation is read
-  before storage, so an account read before a write and put after its
-  bump lands under a generation nobody reads any more. It is a
-  generation, never one key per org that a write invalidates: a
-  generation is what the guideline names, and it orphans whatever else
-  this scope holds for the org.
 - **The entry is the account, never the plan.** The plan depends on the
   clock: a subscription set to end carries its plan until the period's
   end. The account is what does not change until a write.
-- **Every write bumps the generation after its commit.** One
-  `increment`, in `_write`, in the two creates, in `apply_delivery` when
-  its commit lands, in `purge_tenant`, and in the operator plane's
-  `comp_plan`. The operator plane takes the same scope for that bump
-  alone; its own reads stay on storage.
+- **Every write bumps the generation after its commit.** One `bump`,
+  in `_write`, in the two creates, in `apply_delivery` when its commit
+  lands, in `purge_tenant`, and in the operator plane's `comp_plan`. The
+  operator plane takes the same reader for that bump alone; its own
+  reads stay on storage.
 - **The TTL is a setting.** `TADAS_BILLING_ACCOUNT_CACHE_SECONDS`, 60 by
   default and an hour at most, read by the API and the worker alike. A
-  bump that is lost leaves the old entry readable for that long. The
-  generation counter lives a day, far longer than any entry. A counter
-  that ends and starts over finds no entry it could revive past the TTL.
+  bump that is lost leaves the old entry readable for that long.
 - **Only the reads that answer the plan use it**: `get_entitlements` and
   `get_billing`. Each checks the caller's permission first, on every
   call. A write reads the account from storage before it changes it, and
   so do the checkout and the portal.
-- **It fails open.** A miss, an entry another build wrote in a shape this
-  one cannot read, and a Valkey that cannot be reached are each a read of
-  storage.
-- **A counter reads back through `get`.** Valkey keeps an `INCR` counter
-  as a string, so `get` answers it. The memory impl keeps counters in
-  the same map as values, so it answers the same way, and a contract
-  test holds both to it.
 
 **The usage counts stay fresh.** Members, files, and active tasks are
 other managers' rows, and a bound is enforced on an exact count.

@@ -14,7 +14,7 @@ from tadas.integrations.root import IntegrationsInterface
 from tadas.integrations.slack.off import SlackOffImpl
 from tadas.om.base import utcnow
 from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
-from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions
+from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions, cached_accounts
 from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.events import EventsManagerInterface
@@ -229,14 +229,20 @@ def build_managers(
     )
     # Billing and tenancy ask each other one question each: tenancy asks an
     # org's entitlements, and billing's sweep asks whether a tenant is past
-    # its retention. That edge is bound at call time, as the relay's is.
+    # its retention. That edge is bound at call time, as the relay's is. Both
+    # billing planes take the one reader of the org's account: the tenant
+    # plane reads through it, and the operator plane's grant bumps it.
+    billing_options = billing_options or BillingOptions()
+    accounts = cached_accounts(
+        infra.get_cache(CacheScope.BILLING_ACCOUNT), billing_options.account_ttl
+    )
     billing = BillingManagerImpl(
         storage.get_billing_storage(),
         absent_payments() if integrations is None else integrations.get_payments(),
         outbox,
         lambda: managers.tenancy,
-        infra.get_cache(CacheScope.BILLING_ACCOUNT),
-        billing_options or BillingOptions(),
+        accounts,
+        billing_options,
     )
     tenancy = build_tenancy(
         storage.get_tenancy_storage(),
@@ -335,7 +341,7 @@ def build_managers(
             storage.get_billing_storage(),
             storage.get_tenancy_storage(),
             outbox,
-            infra.get_cache(CacheScope.BILLING_ACCOUNT),
+            accounts,
         ),
         orchestrations=orchestrations,
         leases=leases,
