@@ -342,8 +342,8 @@ class LeaseStorageContract:
             updated_at=now,
             created_by=actor,
             updated_by=actor,
-            kind=OrchestrationKind.NOOP,
-            input={"steps": 1},
+            kind=OrchestrationKind.TASK_IMPORT,
+            input={"file_id": str(new_id())},
         )
         assert await records.create_orchestration(org, record, ())
         return record

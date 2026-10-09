@@ -251,8 +251,8 @@ async def test_a_parked_record_is_woken_with_its_lease_when_the_resource_frees(
             updated_at=now,
             created_by=owner.user_id,
             updated_by=owner.user_id,
-            kind=OrchestrationKind.NOOP,
-            input={"steps": 2},
+            kind=OrchestrationKind.TASK_IMPORT,
+            input={"file_id": str(new_id())},
         ),
     )
     parked_at = advanced(
@@ -303,8 +303,8 @@ async def test_a_parked_record_whose_request_expires_is_woken_and_reads_its_end(
             updated_at=now,
             created_by=owner.user_id,
             updated_by=owner.user_id,
-            kind=OrchestrationKind.NOOP,
-            input={"steps": 2},
+            kind=OrchestrationKind.TASK_IMPORT,
+            input={"file_id": str(new_id())},
         ),
     )
     parked_at = advanced(

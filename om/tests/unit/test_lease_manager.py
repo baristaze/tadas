@@ -468,8 +468,8 @@ async def a_running_record(world: World, ctx: TenantContext) -> Orchestration:
             updated_at=now,
             created_by=ctx.user_id,
             updated_by=ctx.user_id,
-            kind=OrchestrationKind.NOOP,
-            input={"steps": 2},
+            kind=OrchestrationKind.TASK_IMPORT,
+            input={"file_id": str(new_id())},
         ),
     )
 
