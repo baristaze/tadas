@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from tadas.services.api.services.admin import AdminServiceInterface
 from tadas.services.api.services.events import EventsServiceInterface
 from tadas.services.api.services.flags import FlagsServiceInterface
+from tadas.services.api.services.leases import LeasesServiceInterface
 from tadas.services.api.services.media import MediaServiceInterface
 from tadas.services.api.services.realtime import RealtimeServiceInterface
 from tadas.services.api.services.tenancy import TenancyServiceInterface
@@ -16,6 +17,7 @@ __all__ = [
     "AdminServiceInterface",
     "EventsServiceInterface",
     "FlagsServiceInterface",
+    "LeasesServiceInterface",
     "MediaServiceInterface",
     "RealtimeServiceInterface",
     "ServicesInterface",
@@ -39,6 +41,9 @@ class ServicesInterface(ABC):
 
     @abstractmethod
     def get_flags_service(self) -> FlagsServiceInterface: ...
+
+    @abstractmethod
+    def get_lease_service(self) -> LeasesServiceInterface: ...
 
     @abstractmethod
     def get_realtime_service(self) -> RealtimeServiceInterface: ...

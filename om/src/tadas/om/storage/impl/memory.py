@@ -4,6 +4,8 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
+from tadas.om.leases.storage import LeasesStorageInterface
+from tadas.om.leases.storage.impl.memory import LeasesStorageMemoryImpl
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
@@ -27,6 +29,9 @@ class StorageMemoryImpl(StorageInterface):
         self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency)
         self._work = WorkStorageMemoryImpl()
         self._orchestrations = OrchestrationsStorageMemoryImpl(self._outbox)
+        # The leases land an orchestration's park beside a request, as the
+        # Postgres impl runs its statement in the request's transaction.
+        self._leases = LeasesStorageMemoryImpl(self._outbox, self._orchestrations)
         self._media = MediaStorageMemoryImpl(self._outbox)
         self._events = EventStorageMemoryImpl()
 
@@ -50,6 +55,9 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
         return self._orchestrations
+
+    def get_lease_storage(self) -> LeasesStorageInterface:
+        return self._leases
 
     async def healthcheck(self) -> bool:
         return True

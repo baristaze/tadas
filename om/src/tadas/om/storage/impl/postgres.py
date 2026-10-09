@@ -13,6 +13,8 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
+from tadas.om.leases.storage import LeasesStorageInterface
+from tadas.om.leases.storage.impl.postgres import LeasesStoragePostgresImpl
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.media.storage.impl.postgres import MediaStoragePostgresImpl
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
@@ -138,6 +140,7 @@ class StoragePostgresImpl(StorageInterface):
         self._events = EventStoragePostgresImpl(sessions)
         self._outbox = OutboxStoragePostgresImpl(sessions)
         self._orchestrations = OrchestrationsStoragePostgresImpl(sessions)
+        self._leases = LeasesStoragePostgresImpl(sessions)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
         return self._tenancy
@@ -159,6 +162,9 @@ class StoragePostgresImpl(StorageInterface):
 
     def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
         return self._orchestrations
+
+    def get_lease_storage(self) -> LeasesStorageInterface:
+        return self._leases
 
     async def healthcheck(self) -> bool:
         """A connect and a `SELECT 1` on every engine, each under the bounds its
