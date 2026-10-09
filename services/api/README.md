@@ -125,12 +125,14 @@ app, and `main.py` is the `tadas-api` command: `serve`, `migrate`,
   `/v1/billing/portal`, `/v1/billing/cancel`, `/v1/billing/resume`)
 - **Leases.** Ask for a resource, by its id or by a selector, under an
   idempotency key; read where the request stands, its place and its
-  estimate, or its lease; cancel it; read a resource's line; renew and
-  release a lease as its holder. A manager reorders a request and
+  estimate, or its lease; cancel it; read a resource's line; renew a
+  lease, for a length it names or its term again, and release it, as
+  its holder. The worker that runs a lease's job acts through the
+  manager, not a route. A manager reorders a request and
   revokes a lease. (`/v1/leases/requests`,
   `/v1/leases/requests/{request_id}`, `.../cancel`, `.../reorder`,
   `/v1/leases/resources/{resource_id}/line`, `/v1/leases/{lease_id}`,
-  `.../renew`, `.../release`, `.../revoke`, ADR 0086)
+  `.../renew`, `.../release`, `.../revoke`, ADRs 0086 and 0094)
 - **The identity provider's deliveries.** Outside `/v1`, since their
   shape is the provider's. No credential: the route checks the provider's
   signature over the body and its timestamp, and queues the delivery for
@@ -162,7 +164,9 @@ app, and `main.py` is the `tadas-api` command: `serve`, `migrate`,
   everyone in it at once; the worker ends its providers and then
   deletes it; a personal org is refused), read
   an org's plan and grant it one with no payment, send one of an org's
-  failed work items back to the queue, and read the
+  failed work items back to the queue, set, read, or clear an org's own
+  cap on a lane (the most items it holds claimed there at once, in place
+  of the lane's cap; `404` where it has none), and read the
   platform's size: the tenant count, the
   user count, and the tasks and events of twenty-four hours, as the
   maintenance worker last counted them, with the moment it did (`404`
@@ -171,7 +175,8 @@ app, and `main.py` is the `tadas-api` command: `serve`, `migrate`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
   `/v1/admin/orgs/{org_id}/events`, `/v1/admin/orgs/{org_id}/billing`,
   `/v1/admin/orgs/{org_id}/plan`,
-  `/v1/admin/orgs/{org_id}/work/{item_id}/requeue`, `/v1/admin/size`). A read route
+  `/v1/admin/orgs/{org_id}/work/{item_id}/requeue`,
+  `/v1/admin/orgs/{org_id}/work/lanes/{lane}/cap`, `/v1/admin/size`). A read route
   needs an operator who may read; a write route one who may write.
   Every read and write takes an operator token. An operator enrols the
   second factor once, at the first sign-in to the plane, and until then

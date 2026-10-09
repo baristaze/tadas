@@ -34,6 +34,7 @@ from tadas.om.work.types.work_item import (
     WorkItem,
     WorkKind,
     WorkStatus,
+    relayed_lane,
 )
 
 log = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ class WorkOptions(Platform):
     max_retry_delay: timedelta = timedelta(minutes=15)
     stale_stagger: timedelta = timedelta(seconds=5)
     retention: timedelta = timedelta(days=30)  # a done or failed item is purged after this
-    purge_batch: int = 1000  # items one purge statement deletes at most
+    purge_batch: int = 1000  # items, or one tenant's caps, one purge statement deletes at most
 
 
 def caused_by(rctx: RequestContext, item: WorkItem) -> RequestContext:
@@ -112,10 +113,10 @@ class WorkManagerImpl(WorkManagerInterface):
     async def enqueue(self, ctx: TenantContext, item: WorkItem) -> WorkItem:
         """The direct create, under a context: work a CLI, a sweep, or an app asks
         for on its own, which no core write announced. The actor is the
-        context's and the key is the caller's. The caller authorizes the whole
-        run, which has the service role, so it holds the permission the kind
-        is asked for with; a kind the table does not name is asked for by
-        nobody."""
+        context's, and the key and the lane are the caller's. The caller
+        authorizes the whole run, which has the service role, so it holds the
+        permission the kind is asked for with; a kind the table does not name
+        is asked for by nobody."""
         asking = WORK_ENQUEUE_PERMISSIONS.get(item.kind)
         if asking is None:
             raise NotAuthorized(f"no permission asks for work of kind {item.kind.value}")
@@ -145,10 +146,11 @@ class WorkManagerImpl(WorkManagerInterface):
         same on every run of the relay (`relayed_key`). The request that
         caused the work and its trace context come from the row too, which
         names the request that made the write: the row is the whole handoff,
-        so nothing here is minted afresh. The lane is the
-        default one; a row carries no routing of its own. A kind whose payload
-        is a `ScheduledPayload`, and a wake that names a time, waits in the
-        queue until its `not_before`."""
+        so nothing here is minted afresh. A row carries no routing of its
+        own, so the lane is the kind's (`relayed_lane`): its own in
+        `WORK_LANES`, else the default one. A kind whose payload is a
+        `ScheduledPayload`, and a wake that names a time, waits in the queue
+        until its `not_before`."""
         kind = row.kind.removeprefix(WORK_ROW_PREFIX)
         if kind not in {k.value for k in WorkKind}:
             raise ValidationFailed(f"outbox row {row.id} asks for unknown work {row.kind}")
@@ -168,6 +170,7 @@ class WorkManagerImpl(WorkManagerInterface):
                 request_id=row.request_id,  # the request that made the write
                 traceparent=row.traceparent,  # its trace context, for the run's link
                 payload=row.payload,
+                lane=relayed_lane(WorkKind(kind)),
                 status=WorkStatus.QUEUED,
                 available_at=available_at,
             ),
@@ -285,6 +288,15 @@ class WorkManagerImpl(WorkManagerInterface):
             ctx, item, {"lease_expires_at": now + lease, "updated_at": now}
         )
 
+    async def holds(self, ctx: TenantContext, idempotency_key: UUID, claim_token: UUID) -> bool:
+        ctx.require(Permission.READ)
+        item = await self._storage.read_item_by_key(ctx.org_id, idempotency_key)
+        return (
+            item is not None
+            and item.status is WorkStatus.CLAIMED
+            and item.claim_token == claim_token
+        )
+
     async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
         requeued = await self._storage.requeue_stale(
             utcnow(), self._options.stale_stagger, max(1, limit)
@@ -315,6 +327,12 @@ class WorkManagerImpl(WorkManagerInterface):
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[TenantContext]:
         return await self._tenancy.service_contexts(rctx)
+
+    async def purge_tenant(self, ctx: TenantContext) -> int:
+        ctx.require(Permission.WRITE)
+        if not await self._tenancy.tenant_expired(ctx):
+            return 0
+        return await self._storage.purge_tenant_caps(ctx.org_id, self._options.purge_batch)
 
     async def mark_purged(self, ctx: TenantContext) -> bool:
         return await self._tenancy.mark_purged(ctx)

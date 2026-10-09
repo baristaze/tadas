@@ -102,6 +102,7 @@ TABLE_SCOPES: dict[str, TableScope] = {
     # The claim reads every tenant's ready items in the system scope, and the
     # planner must see how many there are to walk its index in order.
     "work_items": TableScope(ScopeKind.ORG, by_login=True),
+    "tenant_caps": TableScope(ScopeKind.ORG),
     "events": TableScope(ScopeKind.ORG),
     "event_cursors": TableScope(ScopeKind.ORG),
     "billing_accounts": TableScope(ScopeKind.ORG),

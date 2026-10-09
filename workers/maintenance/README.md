@@ -8,7 +8,8 @@ side, started in `main.py`.
   lease, and completes, fails, parks, or refuses the item. The handlers are
   in `handler.py`, `orchestrations.py`, `accounts.py`, `reminders.py`, and
   `slack_posts.py`. The lane's cap, `TADAS_WORKER_TENANT_CAP`, keeps one org
-  from holding every worker.
+  from holding every worker, and an org's own cap, which an operator sets,
+  holds for that org in its place.
 - **The delivery consumer** (`deliveries.py`) long-polls `Queues.WEBHOOKS`,
   where the API queues each provider's verified delivery, and applies it
   once in the org it names. A message that can never apply is dropped; any
@@ -120,7 +121,10 @@ Add the kind, its payload, and the permission that asks for it in
 `tadas.om.work`. Write a handler that names the permissions it calls with
 (`REQUIRES`), and add it to `handlers` in `build_loop`; a test holds the
 two to each other. A long-running kind is an `OrchestrationKind` whose step
-is mapped in `build_loop`.
+is mapped in `build_loop`. A kind that runs on a lane of its own adds the
+lane to `WORK_LANES`, and a replica of this worker serves that lane,
+started with `serve --lane` or `TADAS_WORKER_LANE` set to the lane as
+`WORK_LANES` spells it.
 
 ## Adding a chore
 
