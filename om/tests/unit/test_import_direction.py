@@ -24,6 +24,7 @@ INFRA_INTERFACE_MODULES = frozenset(
         "tadas.infra.observability",
         "tadas.infra.trust",
         "tadas.infra.cache",
+        "tadas.infra.cache.read",
         "tadas.infra.buckets",
         "tadas.infra.topics",
         "tadas.infra.queues",
@@ -32,7 +33,10 @@ INFRA_INTERFACE_MODULES = frozenset(
     }
 )
 """A capability's interface is its package; every module beneath it, and
-everything under `tadas.infra.impl`, is an impl."""
+everything under `tadas.infra.impl`, is an impl. The read cache is the one
+module beneath a package that is not: a typed reader over the cache's
+interface, with no impl behind it to choose, which a manager takes through
+its constructor (ADR 0095)."""
 
 
 def package_root(name: str) -> Path:
