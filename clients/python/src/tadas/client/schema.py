@@ -56,11 +56,15 @@ class AddTaskRequest(BaseModel):
 
 
 class Label(RootModel[str]):
-    root: Annotated[str, Field(max_length=64, min_length=1, pattern='^[a-z0-9:_.-]+$')]
+    root: Annotated[str, Field(max_length=200, min_length=1, pattern='^[^\\x00-\\x1f\\x7f]+$')]
 
 
 class Labels(RootModel[list[Label]]):
-    root: Annotated[list[Label], Field(max_length=32, title='Labels')]
+    root: Annotated[list[Label], Field(max_length=160, title='Labels')]
+
+
+class StartSeconds(RootModel[int]):
+    root: Annotated[int, Field(ge=1, le=604800, title='Start Seconds')]
 
 
 class BulkAction(StrEnum):
@@ -341,6 +345,8 @@ class LeaseView(BaseModel):
     One grant: the holder acts on the resource under `fencing_token` until
     it has used `expires_in_seconds`, counted from when it asked. The token is
     no secret: it is the number the resource's own side refuses to go below.
+    A grant that started a job shows when the job started, and until then
+    expires at the end of the window the job has to start in.
     """
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     ended_at: Annotated[AwareDatetime | None, Field(title='Ended At')]
@@ -351,6 +357,7 @@ class LeaseView(BaseModel):
     id: Annotated[UUID, Field(title='Id')]
     request_id: Annotated[UUID, Field(title='Request Id')]
     resource_id: Annotated[UUID, Field(title='Resource Id')]
+    started_at: Annotated[AwareDatetime | None, Field(title='Started At')]
     status: LeaseStatus
     term_seconds: Annotated[int, Field(title='Term Seconds')]
 
@@ -585,6 +592,21 @@ class RedirectView(BaseModel):
     url: Annotated[str, Field(title='Url')]
 
 
+class Seconds(RootModel[int]):
+    root: Annotated[int, Field(ge=1, le=604800, title='Seconds')]
+
+
+class RenewRequest(BaseModel):
+    """
+    A renewal: the lease runs `seconds` from now, within the resource's
+    bound, or its term again when it names none.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    seconds: Annotated[Seconds | None, Field(title='Seconds')] = None
+
+
 class ReorderRequest(BaseModel):
     """
     Moves a waiting request in front of `before_id`, or to the end.
@@ -679,6 +701,17 @@ class SessionView(BaseModel):
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
     id: Annotated[UUID, Field(title='Id')]
     revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
+
+
+class SetTenantCapRequest(BaseModel):
+    """
+    An org's own cap on a lane: the most items it holds claimed there at
+    once, in place of the lane's cap.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cap: Annotated[int, Field(ge=1, le=10000, title='Cap')]
 
 
 class InvitationToken(RootModel[str]):
@@ -937,6 +970,16 @@ class TaskView(BaseModel):
     version: Annotated[int, Field(title='Version')]
 
 
+class TenantCapView(BaseModel):
+    """
+    An org's own cap on a lane, with who last set it and when.
+    """
+    cap: Annotated[int, Field(title='Cap')]
+    lane: Annotated[str, Field(title='Lane')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+    updated_by: Annotated[UUID, Field(title='Updated By')]
+
+
 class TotpConfirmedView(BaseModel):
     """
     The second factor is enrolled: from now on the operator plane admits
@@ -1085,7 +1128,9 @@ class AskRequest(BaseModel):
     An ask for a lease: one resource by its id, or a selector, the labels
     a resource of `kind` must offer. `payload` is in the shape the kind
     fixes; the term is bounded by the resource's, and the ask expires in line
-    after `wait_seconds`.
+    after `wait_seconds`. When the grant starts a job, `start_seconds` is the
+    window the job has to start in, bounded the same way; none gives it the
+    term.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -1094,7 +1139,8 @@ class AskRequest(BaseModel):
     labels: Annotated[Labels | None, Field(title='Labels')] = None
     payload: Annotated[dict[str, Any] | None, Field(title='Payload')] = None
     resource_id: Annotated[UUID | None, Field(title='Resource Id')] = None
-    term_seconds: Annotated[int | None, Field(ge=1, le=86400, title='Term Seconds')] = 60
+    start_seconds: Annotated[StartSeconds | None, Field(title='Start Seconds')] = None
+    term_seconds: Annotated[int | None, Field(ge=1, le=604800, title='Term Seconds')] = 60
     wait_seconds: Annotated[int | None, Field(ge=1, le=604800, title='Wait Seconds')] = 3600
 
 
@@ -1332,6 +1378,7 @@ class LeaseRequestView(BaseModel):
     lease_id: Annotated[UUID | None, Field(title='Lease Id')]
     rank: Annotated[float, Field(title='Rank')]
     resource_id: Annotated[UUID | None, Field(title='Resource Id')]
+    start_seconds: Annotated[int | None, Field(title='Start Seconds')]
     status: RequestStatus
     term_seconds: Annotated[int, Field(title='Term Seconds')]
     wait_until: Annotated[AwareDatetime | None, Field(title='Wait Until')]
