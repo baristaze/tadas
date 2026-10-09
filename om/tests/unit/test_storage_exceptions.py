@@ -163,9 +163,6 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("BillingManagerInterface", "purge_across_tenants"),
         ("SlackManagerInterface", "purge_across_tenants"),
         ("OrchestrationsManagerInterface", "purge_across_tenants"),
-        # And the sweep's read of the tenants whose tasks have a chore due,
-        # across tenants like the purges: it reads for no tenant.
-        ("TasksManagerInterface", "tenants_with_chores"),
         ("LeasesManagerInterface", "purge_across_tenants"),
         # The sweep's gauges of the queue, read across tenants like the purge.
         ("WorkManagerInterface", "oldest_ready_age"),
@@ -196,9 +193,6 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # An integration acting for the member its provider vouches for.
         ("TenancyManagerInterface", "member_context"),
         ("TenancyManagerInterface", "service_contexts"),
-        # The member a Slack command was typed by, found by the address their
-        # Slack profile holds.
-        ("TenancyManagerInterface", "member_context"),
         ("TenancyManagerInterface", "grant_operator"),
         ("TenancyManagerInterface", "disable_operator"),
         ("TenancyManagerInterface", "grant_operator_token"),
@@ -213,6 +207,9 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # mints from this stage, as the requeue's dead letter does.
         ("TasksManagerInterface", "purge_across_tenants"),
         ("TenancyManagerInterface", "sweep_context"),
+        # The sweep's read of the tenants whose tasks have a chore due, across
+        # tenants under the pass's request stage, as the chores' loop asks.
+        ("TasksManagerInterface", "tenants_with_chores"),
         # The org a verified delivery from the payment processor names, before
         # any stage exists for it: the webhook consumer's lookup.
         ("BillingManagerInterface", "org_of_delivery"),

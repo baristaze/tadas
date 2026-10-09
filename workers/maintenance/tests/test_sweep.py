@@ -52,6 +52,7 @@ from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
     OrchestrationKind,
     OrchestrationStatus,
+    TaskCleanupInput,
 )
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.tasks.rules import RANK_SCALE_BOUND
@@ -261,8 +262,8 @@ PERIOD = "2026-10-08"
 
 
 def opening_the_period(container: WorkerContainer) -> ChoreStep:
-    """The chore of a copy that keeps a record per period: the period's `noop`
-    record, started under the tenant's service context. The org, the kind,
+    """The chore of a copy that keeps a record per period: the period's
+    `task_cleanup` record, started under the tenant's service context. The org, the kind,
     and the period are the record's key, so a start in an open period
     answers the record as stored."""
 
@@ -276,8 +277,8 @@ def opening_the_period(container: WorkerContainer) -> ChoreStep:
                 updated_at=now,
                 created_by=ctx.user_id,
                 updated_by=ctx.user_id,
-                kind=OrchestrationKind.NOOP,
-                input={"steps": 1},
+                kind=OrchestrationKind.TASK_CLEANUP,
+                input=TaskCleanupInput(older_than_days=30, before=now).model_dump(mode="json"),
                 period=PERIOD,
             ),
         )
@@ -327,7 +328,7 @@ async def test_a_period_opens_only_in_the_tenants_the_read_names(tmp_path: Path)
     opened: dict[str, list[str | None]] = {}
     for slug, org_id in orgs.items():
         page = await container.managers.orchestrations.get_recent(
-            by_org[org_id], OrchestrationKind.NOOP, 10
+            by_org[org_id], OrchestrationKind.TASK_CLEANUP, 10
         )
         opened[slug] = [record.period for record in page.items]
     assert opened == {"ajax": [], "beta": [PERIOD], "gamma": [PERIOD]}
@@ -766,7 +767,7 @@ class Due:
         self.org_ids = sorted(org_ids)
         self.asked: list[UUID | None] = []
 
-    async def __call__(self, after: UUID | None, limit: int) -> list[UUID]:
+    async def __call__(self, rctx: RequestContext, after: UUID | None, limit: int) -> list[UUID]:
         self.asked.append(after)
         return [org_id for org_id in self.org_ids if after is None or org_id > after][:limit]
 
@@ -889,7 +890,7 @@ async def test_a_failing_read_of_the_tenants_with_a_chore_due_stops_no_other_ste
     contexts = service_contexts(2)
     calls: list[tuple[str, UUID]] = []
 
-    async def failing(after: UUID | None, limit: int) -> list[UUID]:
+    async def failing(rctx: RequestContext, after: UUID | None, limit: int) -> list[UUID]:
         raise RuntimeError("the database is down")
 
     outbox = quiet_outbox()

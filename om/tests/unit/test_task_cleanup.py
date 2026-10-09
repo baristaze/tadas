@@ -153,14 +153,14 @@ async def test_once_the_days_cleanup_ran_the_org_has_no_chore_due_until_the_next
     await world.done_at(ctx, "old", noon - timedelta(days=200))
     await world.done_at(ctx, "crossed this morning", noon - timedelta(days=90, hours=5))
     await world.done_at(young, "young", noon - timedelta(days=10))
-    assert await tasks.tenants_with_chores(None, 10) == [ctx.org_id]
+    assert await tasks.tenants_with_chores(request(), None, 10) == [ctx.org_id]
     record = await tasks.cleanup.open_cleanup(ctx)
     assert record is not None
     await world.run(ctx, record)
     assert await world.archived_titles(ctx) == ["old"]
-    assert await tasks.tenants_with_chores(None, 10) == []
+    assert await tasks.tenants_with_chores(request(), None, 10) == []
     clock["now"] = noon + timedelta(days=1)
-    assert await tasks.tenants_with_chores(None, 10) == [ctx.org_id]
+    assert await tasks.tenants_with_chores(request(), None, 10) == [ctx.org_id]
 
 
 async def test_the_cleanup_steps_a_batch_at_a_time(tmp_path: Path) -> None:

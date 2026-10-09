@@ -178,13 +178,16 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def tenants_with_chores(self, after: UUID | None, limit: int) -> list[UUID]:
-        """Platform-internal: the sweep's one read a pass, across tenants, of
-        the tenants whose tasks have a chore due: a done task today's cleanup
-        archives (`cleanup.open_cleanup`), or an open task whose rank grew long
+    async def tenants_with_chores(
+        self, rctx: RequestContext, after: UUID | None, limit: int
+    ) -> list[UUID]:
+        """Platform-internal: the sweep's one read a pass, across tenants in
+        the system scope, under the pass's request stage, of the tenants whose
+        tasks have a chore due: a done task today's cleanup archives
+        (`cleanup.open_cleanup`), or an open task whose rank grew long
         (`respace_ranks`). At most `limit` of them, in id order, after `after`
-        when one is given; the sweep runs the chores in those tenants alone.
-        Takes no context, because it reads for no tenant and no principal."""
+        when one is given; the sweep runs the chores in those tenants alone
+        (ADR 0089)."""
         ...
 
     @abstractmethod
