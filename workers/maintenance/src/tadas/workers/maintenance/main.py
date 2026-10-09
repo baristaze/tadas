@@ -121,6 +121,7 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "slack": managers.slack.purge_tenant,
             "orchestrations": managers.orchestrations.purge_tenant,
             "leases": managers.leases.purge_tenant,
+            "work": managers.work.purge_tenant,
         },
         # Once a pass, across every tenant: each namespace's rows past their
         # retention.

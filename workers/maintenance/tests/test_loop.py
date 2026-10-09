@@ -161,6 +161,9 @@ class LeaseLosingWork(WorkManagerInterface):
         self._record_renewal()
         raise LeaseLost("held elsewhere")
 
+    async def holds(self, ctx: TenantContext, idempotency_key: UUID, claim_token: UUID) -> bool:
+        return await self._inner.holds(ctx, idempotency_key, claim_token)
+
     async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
         return await self._inner.requeue_stale(rctx, limit)
 
@@ -175,6 +178,9 @@ class LeaseLosingWork(WorkManagerInterface):
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[TenantContext]:
         return await self._inner.maintenance_contexts(rctx)
+
+    async def purge_tenant(self, ctx: TenantContext) -> int:
+        return await self._inner.purge_tenant(ctx)
 
     async def mark_purged(self, ctx: TenantContext) -> bool:
         return await self._inner.mark_purged(ctx)
