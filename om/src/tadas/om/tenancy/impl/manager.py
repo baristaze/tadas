@@ -177,9 +177,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         self.org = org
         self.members = members
         self.credentials = credentials
-        # The last sweep pass's answer to `tenant_expired`, read with the org
-        # rows `service_contexts` pages through: its request id, the tenants
-        # it minted a context for, and those of them past the retention.
+        # The last sweep pass's answer to `tenant_expired` and `sweep_context`,
+        # read with the org rows `service_contexts` pages through: its request
+        # id, the tenants it minted a context for and has not marked purged
+        # since, and those of them past the retention.
         self._pass: tuple[UUID, frozenset[UUID], frozenset[UUID]] | None = None
 
     # The transitions: each takes a stage and produces a stronger one.
@@ -674,7 +675,14 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.MANAGE_MEMBERS)
         if not await self.tenant_expired(ctx):
             return False
-        return await self._storage.mark_org_purged(ctx.org_id, utcnow())
+        marked = await self._storage.mark_org_purged(ctx.org_id, utcnow())
+        swept = self._pass
+        if swept is not None and ctx.request_id == swept[0]:
+            # Purged, now or by another pass: the rest of this one has no
+            # context for the tenant either (`sweep_context`).
+            gone = frozenset({ctx.org_id})
+            self._pass = (swept[0], swept[1] - gone, swept[2] - gone)
+        return marked
 
     async def issue_ticket(self, ctx: TenantContext) -> IssuedTicket:
         ctx.require(Permission.READ)
