@@ -118,6 +118,10 @@ time, such as an import or a day's cleanup. It succeeds, fails, or
 parks until what it waits for is back: an import that reached the
 plan's bound of active tasks waits for a plan that lifts it.
 
+A **lease** lends one holder a thing only one may use at a time, such
+as a loading dock, for a term it renews. Each grant carries a token
+higher than the last, and the others wait in line.
+
 An **idempotency record** remembers the outcome of a request that may
 arrive twice, so the second copy gets the first one's answer.
 
@@ -154,4 +158,5 @@ arrive twice, so the second copy gets the first one's answer.
 - [Outbox rows](src/tadas/om/outbox/README.md)
 - [Work items](src/tadas/om/work/README.md)
 - [Orchestrations](src/tadas/om/orchestrations/README.md)
+- [Resources, leases, and the line](src/tadas/om/leases/README.md)
 - [Idempotency records](src/tadas/om/idempotency/README.md)

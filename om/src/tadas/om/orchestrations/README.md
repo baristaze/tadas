@@ -15,7 +15,8 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
   archives old done tasks.
 - **Status**: running, parked, succeeded, or failed.
 - **Park reason**: why a parked record waits, and so what wakes it.
-  There is one: `plan_limit`, the plan's bound on active tasks.
+  There are two: `plan_limit`, the plan's bound on active tasks, and
+  `resource`, for a record in line for a [lease](../leases/README.md).
 - **Fail reason**: why a record ended unfinished: a bound of its input
   (a file too large, too many rows, not a CSV file, no `title` column, a
   file removed), or `defect`, a step that still failed on its last
@@ -35,7 +36,8 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
 - **Wake.** A parked record runs again from its cursor when the reason
   clears (a `WAKE_PARKED` work item wakes every record of the org
   parked for it, a couple of seconds apart: a plan that rose clears
-  `plan_limit`), or when a person resumes it.
+  `plan_limit`; or the one record it names, when the reason was that
+  record's alone), or when a person resumes it.
 - **Succeed** after the last step, or **fail** on a bound.
 - **Sweep.** A settled record goes thirty days later. A parked or a
   running one is kept.

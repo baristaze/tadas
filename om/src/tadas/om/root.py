@@ -21,6 +21,11 @@ from tadas.om.events import EventsManagerInterface
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl, IdempotencyOptions
+from tadas.om.leases import LeasesManagerInterface
+from tadas.om.leases.impl.kinds import NoopResourceKindImpl, OrchestrationWaiterImpl
+from tadas.om.leases.impl.manager import LeasesManagerImpl, LeasesOptions
+from tadas.om.leases.types.request import WaiterKind
+from tadas.om.leases.types.resource import ResourceKind
 from tadas.om.media import MediaManagerInterface
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.orchestrations import OrchestrationsManagerInterface
@@ -65,6 +70,7 @@ class Managers:
     billing: BillingManagerInterface
     billing_operator: BillingOperatorManagerInterface
     orchestrations: OrchestrationsManagerInterface
+    leases: LeasesManagerInterface
 
 
 def build_tenancy(
@@ -197,6 +203,7 @@ def build_managers(
     slack_options: SlackOptions | None = None,
     work_options: WorkOptions | None = None,
     orchestrations_options: OrchestrationsOptions | None = None,
+    leases_options: LeasesOptions | None = None,
 ) -> Managers:
     """`integrations` is the root of the hosted services the managers front:
     the identity provider, which the tenancy manager signs people in and
@@ -285,6 +292,16 @@ def build_managers(
         entitlements=billing,
         orchestrations=orchestrations,
     )
+    # A product registers its resource kinds and its waiter kinds here, each
+    # with its hooks, as a work kind's handler is registered in the worker.
+    leases = LeasesManagerImpl(
+        storage.get_lease_storage(),
+        tenancy,
+        outbox,
+        leases_options or LeasesOptions(),
+        kinds={ResourceKind.NOOP: NoopResourceKindImpl()},
+        waiters={WaiterKind.ORCHESTRATION: OrchestrationWaiterImpl(orchestrations)},
+    )
     idempotency = IdempotencyManagerImpl(
         storage.get_idempotency_storage(), idempotency_options or IdempotencyOptions()
     )
@@ -320,5 +337,6 @@ def build_managers(
             infra.get_cache(CacheScope.BILLING_ACCOUNT),
         ),
         orchestrations=orchestrations,
+        leases=leases,
     )
     return managers

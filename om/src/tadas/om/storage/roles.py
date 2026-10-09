@@ -34,6 +34,9 @@ TABLE_ROLES: dict[str, DatabaseRole] = {
     "slack_install_states": DatabaseRole.CORE,
     "slack_posts": DatabaseRole.CORE,
     "orchestrations": DatabaseRole.CORE,
+    "resources": DatabaseRole.CORE,
+    "leases": DatabaseRole.CORE,
+    "lease_requests": DatabaseRole.CORE,
     "platform_sizes": DatabaseRole.ADMIN,
 }
 

@@ -309,7 +309,7 @@ async def test_the_step_down_puts_the_position_back_at_each_ranks_float(
     ):
         assert await storage.create_task(org, task, ())
 
-    await downgrade(DatabaseRole.CORE, core, "-1")
+    await downgrade(DatabaseRole.CORE, core, "202610200100")
     try:
         assert await version_of_core(core) == ["202610200100"]
         assert await on_core(

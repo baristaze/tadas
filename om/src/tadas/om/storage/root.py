@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.leases.storage import LeasesStorageInterface
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.outbox.storage import OutboxStorageInterface
@@ -44,6 +45,9 @@ class StorageInterface(ABC):
 
     @abstractmethod
     def get_orchestrations_storage(self) -> OrchestrationsStorageInterface: ...
+
+    @abstractmethod
+    def get_lease_storage(self) -> LeasesStorageInterface: ...
 
     @abstractmethod
     async def healthcheck(self) -> bool: ...

@@ -48,20 +48,24 @@ more.
 
 **A guard parks, a bound fails.** A limit that can clear parks the
 record at its cursor, in the step's own commit, and keeps what it made.
-The one park reason is `plan_limit`, the plan's active tasks: when the
-next row of an import would take the org past its plan's bound, the
-step creates the rows before it, and parks the record at that row. The
-bound is a lever an owner lifts, so it is the guideline's "a quota an
-operator can raise", never a failure. The work item `WAKE_PARKED`
-clears a reason: it resumes the org's records parked for it, two
-seconds apart. Every billing account write that lifts the org's plan (a
-payment's delivery, the seed's grant, an operator's grant) lands one in
-the account's own commit. A person may resume a parked record too
-(`resume`), with Resume (`POST /v1/tasks/imports/{id}/resume`) after
-finishing some tasks. A woken record is not trusted: its next step asks
-its guard again. A bound of the input fails the record with its reason,
-which a product adds beside `defect`. The park is the record's status,
-never a deferred work item, so only the record says why it waits.
+There are two park reasons. One is `plan_limit`, the plan's active
+tasks: when the next row of an import would take the org past its
+plan's bound, the step creates the rows before it, and parks the record
+at that row. The bound is a lever an owner lifts, so it is the
+guideline's "a quota an operator can raise", never a failure. The other
+is `resource`: the record waits in line for a lease ([ADR
+0086](0086-a-scarce-resource-is-leased-under-a-fencing-token.md)). The
+work item `WAKE_PARKED` clears a reason: it resumes the org's records
+parked for it, two seconds apart, or the one record it names, when the
+reason was that record's alone. Every billing account write that lifts
+the org's plan (a payment's delivery, the seed's grant, an operator's
+grant) lands one in the account's own commit. A person may resume a
+parked record too (`resume`), with Resume
+(`POST /v1/tasks/imports/{id}/resume`) after finishing some tasks. A
+woken record is not trusted: its next step asks its guard again. A
+bound of the input fails the record with its reason, which a product
+adds beside `defect`. The park is the record's status, never a deferred
+work item, so only the record says why it waits.
 
 The import's input has real limits: a file over one megabyte, over five
 thousand rows, not text a CSV reader reads, or with no `title` column,
