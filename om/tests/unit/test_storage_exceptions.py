@@ -203,10 +203,8 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("WorkManagerInterface", "requeue_stale"),
         ("WorkManagerInterface", "maintenance_contexts"),
         # The tasks' purge across tenants: a deleted task's attachments are
-        # detached under its tenant's service context, which `sweep_context`
-        # mints from this stage, as the requeue's dead letter does.
+        # detached under its tenant's sweep context, below.
         ("TasksManagerInterface", "purge_across_tenants"),
-        ("TenancyManagerInterface", "sweep_context"),
         # The sweep's read of the tenants whose tasks have a chore due, across
         # tenants under the pass's request stage, as the chores' loop asks.
         ("TasksManagerInterface", "tenants_with_chores"),
@@ -218,8 +216,10 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # lookup does.
         ("SlackManagerInterface", "finish_install"),
         ("SlackManagerInterface", "installation_for_team"),
-        # The leases' sweep works each due org's leases and lines under its
-        # tenant's service context, minted from this stage.
+        # The service context a purge across tenants works a tenant's rows
+        # under, minted from this stage, as the requeue's dead letter is.
+        ("TenancyManagerInterface", "sweep_context"),
+        # The leases' sweep works each due org's leases and lines so.
         ("LeasesManagerInterface", "sweep"),
     }
 )

@@ -255,6 +255,20 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> TenantContext | None:
+        """Platform-internal: the service context a purge across tenants acts
+        in one tenant under, once it found a row of that tenant and must do
+        that tenant's work before the row goes, such as asking another
+        manager to erase the files attached to it: the one `service_contexts`
+        minted for it, deleted tenants included, since their rows are the
+        sweep's to settle. Under the request stage of the pass that listed
+        the tenants, it reads nothing; outside one, it reads the org row. None
+        for a tenant marked purged, in this pass or before it, and for one
+        with no org row: nothing of it is left to act in, and the caller lets
+        the row go as it is. The system scope always has one."""
+        ...
+
+    @abstractmethod
     async def purge_across_tenants(self) -> int:
         """Platform-internal: the sweep, across tenants, once a pass, in one
         transaction: hard-deletes removed members (and their memberships),
@@ -276,17 +290,6 @@ class TenancyManagerInterface(ABC):
         stays as the record; returns how many rows went. Any other tenant
         returns 0 and reads nothing: its rows past the retention go across
         tenants."""
-        ...
-
-    @abstractmethod
-    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> TenantContext | None:
-        """Platform-internal: the service context the sweep does a tenant's
-        tenant-shaped work under, when a purge across tenants found a row of
-        that tenant: the one `service_contexts` mints for it, deleted tenants
-        included, since their rows are the sweep's to settle. Under the
-        request stage of the pass that listed the tenants, it reads nothing.
-        None for a tenant marked purged, or one with no org row: the sweep no
-        longer visits it."""
         ...
 
     @abstractmethod

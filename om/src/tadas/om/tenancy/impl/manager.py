@@ -628,6 +628,27 @@ class TenancyManagerImpl(TenancyManagerInterface):
             for org_id in scopes
         ]
 
+    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> TenantContext | None:
+        # The pass that listed the tenants knows each one it minted a context
+        # for. Any other request stage, or a tenant made since, reads its org
+        # row: deleted, it still has one, since its rows are the sweep's to
+        # settle; marked purged, or never made, it has none. The system scope
+        # has no org row and is never purged.
+        swept = self._pass
+        known = swept is not None and rctx.request_id == swept[0] and org_id in swept[1]
+        if not known and org_id != EMPTY_UUID:
+            org = await self._storage.read_org(org_id)
+            if org is None or org.purged_at is not None:
+                return None
+        return build_context(
+            rctx,
+            user_id=EMPTY_UUID,
+            org_id=org_id,
+            role=Role.SERVICE,
+            permissions=permissions_of(Role.SERVICE),
+            credential_kind=CredentialKind.INTERNAL,
+        )
+
     async def purge_across_tenants(self) -> int:
         batch = self._options.purge_batch
         now = utcnow()
@@ -647,21 +668,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             return 0
         # The tenant itself is past the retention: every row of it goes.
         return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
-
-    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> TenantContext | None:
-        swept = self._pass
-        if swept is None or rctx.request_id != swept[0] or org_id not in swept[1]:
-            org = await self._storage.read_org(org_id)
-            if org is None or org.purged_at is not None:
-                return None
-        return build_context(
-            rctx,
-            user_id=EMPTY_UUID,
-            org_id=org_id,
-            role=Role.SERVICE,
-            permissions=permissions_of(Role.SERVICE),
-            credential_kind=CredentialKind.INTERNAL,
-        )
 
     async def tenant_expired(self, ctx: TenantContext) -> bool:
         ctx.require(Permission.READ)
