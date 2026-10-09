@@ -71,16 +71,15 @@ A cut taken at the moment the record opens would name an org on every
 pass for the rest of the day, for a task that crossed the line after
 its record opened.
 
-**The chores are a phase of the pass, before the ring.** The loop reads
-a page of the tenants with a chore due (`LoopOptions.chore_batch`,
-1,000), and runs each tenant's chores once, under the service context
-the pass listed for it. Past the budget it takes no new tenant, but
-always one. The next pass reads on from the last tenant this one ran,
-and a page that came back short and ran whole sends the next pass back
-to the first. So more than a page of tenants with a chore due is a page
-a pass, and each is reached within ⌈D/1,000⌉ + 1 passes. A tenant the
-read names that has no context in the pass, purged or made since the
-list was read, waits for the next pass.
+**The chores are a phase of the pass, before the ring**, run by the
+scaffold's loop as
+[ADR 0089](0089-the-sweep-runs-standing-chores-in-the-tenants-one-read-names.md)
+holds: a page of the tenants this read names (`chore_batch`, 1,000), each
+tenant's chores once under the service context the pass listed for it,
+and a cursor that carries the next pass on. Tadas wires its two chores
+and this read in `build_loop`. So more than a page of tenants with a
+chore due is a page a pass, and each is reached within ⌈D/1,000⌉ + 1
+passes.
 
 The ring keeps the purge of a tenant past its retention and the mark of
 a tenant purged. A chore that fails holds no tenant's mark back: a
