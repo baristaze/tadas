@@ -102,10 +102,12 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   skipped, and only the tasks left to read count toward the twenty.
 - A record read back from the stream (a replay, the first catch-up) is
   routed once per task, through the same reader, and once per entity for
-  an entity no reader reads. A reminder there is kept
-  whatever record of its task follows it, and announced once the
-  read-back ends: each by its title up to three, and past three one
-  notice that counts them, "You missed 5 reminders while you were away"
+  an entity no reader reads. A reminder is a notice on the channel
+  (ADR 0096), told once, as the cursor passes it: a live one as its push
+  arrives, and one read back whatever record of its task follows it,
+  once the read-back ends. What one read-back hands over is announced
+  each by its title up to three, and past three in one notice that
+  counts them, "You missed 5 reminders while you were away"
   (`reminder.ts`, ADR 0075).
 - A task's files are `src/features/attachments/`, shown in the task's
   open view: dropped or picked, started on the API, posted straight to
