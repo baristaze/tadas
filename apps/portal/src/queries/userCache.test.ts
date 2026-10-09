@@ -1,8 +1,10 @@
 // Members written into a real query cache from the reads a push leads to.
 import { QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { ApiError, type MeView, type UserPageView, type UserView } from "@tadas/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createHints } from "../realtime/hints";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHints, HINT_BURST, HINT_WINDOW_MS } from "../realtime/hints";
+import { routeEnvelope } from "../realtime/router";
+import { parseEnvelope } from "../realtime/envelopes";
 import { keys } from "./keys";
 import { placeInPages, removeFromPages, userHintEffects } from "./userCache";
 
@@ -146,6 +148,51 @@ describe("userHintEffects", () => {
     expect(effects.isGone(new ApiError(404, "not_found", "no", null))).toBe(true);
     expect(effects.isGone(new ApiError(503, "unavailable", "no", null))).toBe(false);
     expect(effects.isGone(new Error("offline"))).toBe(false);
+  });
+});
+
+describe("a push about a user", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const pushOf = (target: string, kind = "tenancy.user.updated") =>
+    parseEnvelope(
+      JSON.stringify({ type: "event", sent_at: null, topic: "entity_changed", payload: { kind, target_id: target, seq: 1, actor_id: "u1" } }),
+    )!;
+
+  it("reads that one member and places it, or takes it out when the read finds nothing", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<Pages>(LIST, pages([["a", "c"], null]));
+    const reads: string[] = [];
+    const read = (id: string) => {
+      reads.push(id);
+      return id === "c" ? Promise.reject(new ApiError(404, "not_found", "no", null)) : Promise.resolve(user(id, "Read"));
+    };
+    const readers = { user: createHints(userHintEffects(queryClient, read)) };
+    expect(routeEnvelope(queryClient, pushOf("b", "tenancy.user.created"), readers)).toEqual({
+      invalidated: [],
+      hinted: "user",
+    });
+    routeEnvelope(queryClient, pushOf("b"), readers);
+    routeEnvelope(queryClient, pushOf("c", "tenancy.user.deleted"), readers);
+    await vi.advanceTimersByTimeAsync(HINT_WINDOW_MS);
+    // Two pushes about one member in one window are one read.
+    expect(reads).toEqual(["b", "c"]);
+    expect(idsOf(queryClient.getQueryData<Pages>(LIST))).toEqual([["a", "b"]]);
+    expect(queryClient.getQueryState(LIST)!.isInvalidated).toBe(false);
+    readers.user.stop();
+  });
+
+  it("in a burst reads the list once instead of member by member", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<Pages>(LIST, pages([["a"], null]));
+    const read = vi.fn((id: string) => Promise.resolve(user(id)));
+    const readers = { user: createHints(userHintEffects(queryClient, read)) };
+    for (let n = 0; n <= HINT_BURST; n += 1) routeEnvelope(queryClient, pushOf(`m${n}`), readers);
+    await vi.advanceTimersByTimeAsync(HINT_WINDOW_MS);
+    expect(read).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(LIST)!.isInvalidated).toBe(true);
+    readers.user.stop();
   });
 });
 

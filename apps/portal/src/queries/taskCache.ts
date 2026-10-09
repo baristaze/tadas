@@ -1,15 +1,19 @@
 // The task lists in the query cache, written from what the server said about
 // one task: the answer to this tab's own write, or the single read a push
-// leads to. Where the task goes is `placeTask` in `taskPlacement.ts`; this
-// module reads every cached list, in every scope, and writes them back.
+// leads to through the hint reader (`taskHintEffects`). Where the task goes is
+// `placeTask` in `taskPlacement.ts`; this module reads every cached list, in
+// every scope, and writes them back.
 //
-// Answers can arrive out of order, so a ledger per query client keeps, for
-// each task heard of, the newest version seen and when a 404 last removed it.
-// An older version never overwrites a newer one, even after the task left
-// the lists; a read issued before a removal never brings the task back.
+// Answers can arrive out of order, so one ledger per query client
+// (`ledger.ts`), shared by this tab's writes and the reader, keeps the newest
+// answer heard of each task. An older version never overwrites a newer one,
+// even after the task left the lists; a read issued before a removal never
+// brings the task back. A write's answer takes its stamp when it lands.
 import type { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskScope, TaskStatus, TaskView } from "@tadas/client";
+import { ApiError, type MeView, type TaskPageView, type TaskScope, type TaskStatus, type TaskView } from "@tadas/client";
+import type { HintEffects } from "../realtime/hints";
 import { keys } from "./keys";
+import { createLedger, type Ledger } from "./ledger";
 import {
   DONE_PAGE_SIZE,
   OPEN_PAGE_SIZE,
@@ -21,44 +25,37 @@ import {
 
 type Pages = InfiniteData<TaskPageView>;
 
-interface Seen {
-  /** The newest version the server answered with; null when only a 404 is known. */
-  version: number | null;
-  /** The ledger's clock when this was recorded. */
-  at: number;
-  /** The task as last answered, or null when it is gone. */
-  task: TaskView | null;
-}
-
-interface Ledger {
-  clock: number;
-  seen: Map<string, Seen>;
+interface Heard {
+  ledger: Ledger;
+  /** The newest answer placed of each task: the task, or null once a 404
+   * took it out. */
+  tasks: Map<string, TaskView | null>;
   /** Lists being read while a change was placed: their answer may predate
    * it, so the change is placed again once the read lands. */
   pending: Map<string, Set<string>>;
+  unsubscribe(): void;
 }
 
-const ledgers = new WeakMap<QueryClient, Ledger>();
+const heards = new WeakMap<QueryClient, Heard>();
 
-function ledgerOf(queryClient: QueryClient): Ledger {
-  let ledger = ledgers.get(queryClient);
-  if (ledger) return ledger;
-  const created: Ledger = { clock: 0, seen: new Map(), pending: new Map() };
-  ledger = created;
-  ledgers.set(queryClient, created);
-  queryClient.getQueryCache().subscribe((event) => {
+function heardOf(queryClient: QueryClient): Heard {
+  const held = heards.get(queryClient);
+  if (held) return held;
+  const created: Heard = { ledger: createLedger(), tasks: new Map(), pending: new Map(), unsubscribe: () => undefined };
+  created.unsubscribe = queryClient.getQueryCache().subscribe((event) => {
     if (event.type !== "updated" || event.action.type !== "success" || event.action.manual) return;
     const ids = created.pending.get(event.query.queryHash);
     if (!ids) return;
     created.pending.delete(event.query.queryHash);
     const scope = event.query.queryKey[2] as TaskScope;
     for (const id of ids) {
-      const seen = created.seen.get(id);
-      if (!seen) continue;
-      applyToScope(queryClient, created, scope, seen.task ? { task: seen.task } : { gone: id }, {});
+      const task = created.tasks.get(id);
+      if (task === undefined) continue;
+      applyToScope(queryClient, created, scope, task ? { task } : { gone: id }, {});
     }
   });
-  return ledger;
+  heards.set(queryClient, created);
+  return created;
 }
 
 const LIMITS: Record<TaskStatus, number> = { open: OPEN_PAGE_SIZE, done: DONE_PAGE_SIZE };
@@ -79,7 +76,7 @@ function cachedScopes(queryClient: QueryClient): Set<TaskScope> {
 
 function applyToScope(
   queryClient: QueryClient,
-  ledger: Ledger,
+  heard: Heard,
   scope: TaskScope,
   change: TaskChange,
   options: PlacementOptions,
@@ -101,9 +98,9 @@ function applyToScope(
     if (outcome !== "unchanged") queryClient.setQueryData<Pages>(key, data);
     const query = queryClient.getQueryCache().find({ queryKey: key, exact: true });
     if (query?.state.fetchStatus === "fetching" && !options.optimistic) {
-      const ids = ledger.pending.get(query.queryHash) ?? new Set<string>();
+      const ids = heard.pending.get(query.queryHash) ?? new Set<string>();
       ids.add(id);
-      ledger.pending.set(query.queryHash, ids);
+      heard.pending.set(query.queryHash, ids);
     }
   }
 }
@@ -124,10 +121,10 @@ function applyToArchive(queryClient: QueryClient, id: string, task: TaskView | n
   }
 }
 
-/** The ledger's clock now: a single read notes it when it is issued, and
- * hands it back with a 404 (`removeTask`'s `since`). */
+/** The next stamp of the ledger: a single read takes one when it is issued,
+ * and hands it back with its answer (`since`). */
 export function taskStamp(queryClient: QueryClient): number {
-  return ledgerOf(queryClient).clock;
+  return heardOf(queryClient).ledger.stamp();
 }
 
 /** The task as this tab placed it, when that is at or past `version`: a
@@ -136,9 +133,8 @@ export function taskStamp(queryClient: QueryClient): number {
  * places it again into a list read while it was placed, so every list this
  * tab holds already shows it; a push naming that version has nothing to read. */
 export function heldTask(queryClient: QueryClient, id: string, version: number): TaskView | null {
-  const seen = ledgerOf(queryClient).seen.get(id);
-  if (!seen?.task || seen.version === null || seen.version < version) return null;
-  return seen.task;
+  const heard = heardOf(queryClient);
+  return heard.ledger.holds(id, version) ? (heard.tasks.get(id) ?? null) : null;
 }
 
 export interface PlaceOptions extends PlacementOptions {
@@ -151,15 +147,12 @@ export interface PlaceOptions extends PlacementOptions {
  * placed, or a read issued before a 404 that landed, is dropped. An
  * optimistic edit is placed as asked and leaves the ledger alone. */
 export function placeTask(queryClient: QueryClient, task: TaskView, options: PlaceOptions = {}): void {
-  const ledger = ledgerOf(queryClient);
+  const heard = heardOf(queryClient);
   if (!options.optimistic) {
-    const seen = ledger.seen.get(task.id);
-    if (seen && seen.version !== null && seen.version > task.version) return;
-    if (seen && seen.task === null && options.since !== undefined && seen.at > options.since) return;
-    ledger.clock += 1;
-    ledger.seen.set(task.id, { version: Math.max(task.version, seen?.version ?? 0), at: ledger.clock, task });
+    if (!heard.ledger.admit(task.id, task.version, options.since ?? heard.ledger.stamp())) return;
+    heard.tasks.set(task.id, task);
   }
-  for (const scope of cachedScopes(queryClient)) applyToScope(queryClient, ledger, scope, { task }, options);
+  for (const scope of cachedScopes(queryClient)) applyToScope(queryClient, heard, scope, { task }, options);
   if (!options.optimistic) applyToArchive(queryClient, task.id, task);
 }
 
@@ -174,14 +167,12 @@ export interface RemoveOptions {
 /** Takes one task out of every cached list: a 404 on its read (deleted, or
  * no longer this org's to see), or a delete before its answer. */
 export function removeTask(queryClient: QueryClient, id: string, options: RemoveOptions = {}): void {
-  const ledger = ledgerOf(queryClient);
+  const heard = heardOf(queryClient);
   if (!options.optimistic) {
-    const seen = ledger.seen.get(id);
-    if (seen && options.since !== undefined && seen.at > options.since) return;
-    ledger.clock += 1;
-    ledger.seen.set(id, { version: seen?.version ?? null, at: ledger.clock, task: null });
+    if (!heard.ledger.admitGone(id, options.since ?? heard.ledger.stamp())) return;
+    heard.tasks.set(id, null);
   }
-  for (const scope of cachedScopes(queryClient)) applyToScope(queryClient, ledger, scope, { gone: id }, options);
+  for (const scope of cachedScopes(queryClient)) applyToScope(queryClient, heard, scope, { gone: id }, options);
   if (!options.optimistic) applyToArchive(queryClient, id, null);
 }
 
@@ -189,4 +180,27 @@ export function removeTask(queryClient: QueryClient, id: string, options: Remove
  * task by task, or a write the server refused. */
 export function refreshTaskLists(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: keys.tasks.all });
+}
+
+/** What the hint reader (`hints.ts`) reaches for to read a task and place it
+ * in every list, over the ledger this tab's writes share. Stopping lets go of
+ * every answer heard and every list watched, so none is written into a cache
+ * read under the next session. */
+export function taskHintEffects(
+  queryClient: QueryClient,
+  read: (id: string) => Promise<TaskView>,
+): HintEffects<TaskView> {
+  return {
+    read,
+    isGone: (cause) => cause instanceof ApiError && cause.status === 404,
+    holds: (id, version) => heldTask(queryClient, id, version) !== null,
+    stamp: () => taskStamp(queryClient),
+    place: (task, since) => placeTask(queryClient, task, { since }),
+    remove: (id, since) => removeTask(queryClient, id, { since }),
+    readCollections: () => refreshTaskLists(queryClient),
+    stop() {
+      heards.get(queryClient)?.unsubscribe();
+      heards.delete(queryClient);
+    },
+  };
 }

@@ -1,25 +1,27 @@
 // One provider owns the socket for the whole app; the loop itself lives in
 // channel.ts, without React, and this component gives it the query cache, the
-// transport client, the connection store, and the page's visibility, and
-// shows the degraded banner. A paused socket shows none: it is not a failure.
+// transport client, the connection store, the page's visibility, and the hint
+// readers, announces reminders, and shows the degraded banner. A paused socket
+// shows none: it is not a failure.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { ApiError, type IssuedTicketView } from "@tadas/client";
+import type { IssuedTicketView } from "@tadas/client";
 import { api } from "../app/api";
 import { forgetSessionIfHeld } from "../app/forgetSession";
 import { Banner } from "../design/kit";
 import { EVENTS_PAGE, fetchEventsAfter } from "../queries/events";
-import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "../queries/taskCache";
+import { taskHintEffects } from "../queries/taskCache";
 import { fetchTask } from "../queries/tasks";
+import { fetchUser } from "../queries/tenancy";
+import { userHintEffects } from "../queries/userCache";
 import { useConnectionStore } from "../store/connection";
 import { notify } from "../store/notices";
 import { useSessionStore } from "../store/session";
 import { openChannel } from "./channel";
-import type { Envelope } from "./envelopes";
-import { announceMissedReminders, announceReminder } from "./reminder";
+import { createHints } from "./hints";
 import { watchPage } from "./pageVisibility";
-import { reminderOf, routeEnvelope } from "./router";
-import { createTaskHints, ReadAsList } from "./taskHints";
+import { announceMissedReminders, announceReminder } from "./reminder";
+import { reminderOf, replayKey, routeEnvelope, type HintReaders } from "./router";
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -28,31 +30,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!token) return;
-    const hints = createTaskHints({
-      readTask: fetchTask,
-      held: (id, version) => heldTask(queryClient, id, version),
-      isGone: (cause) => cause instanceof ApiError && cause.status === 404,
-      stamp: () => taskStamp(queryClient),
-      place: (task, since) => placeTask(queryClient, task, { since }),
-      remove: (id, since) => removeTask(queryClient, id, { since }),
-      refreshLists: () => refreshTaskLists(queryClient),
-    });
-    // The reminder's title comes from the read the push already made; a
-    // burst read as lists reads the task on its own.
-    const readReminded = async (id: string) => {
-      let task: Awaited<ReturnType<typeof hints.hint>>;
-      try {
-        task = await hints.hint(id);
-      } catch (cause) {
-        if (cause instanceof ReadAsList) return fetchTask(id);
-        throw cause;
-      }
-      if (!task) throw new Error("the task is gone");
-      return task;
-    };
-    const announce = (envelope: Envelope) => {
-      const reminded = reminderOf(envelope);
-      if (reminded) void announceReminder(reminded, { readTask: readReminded, notify });
+    // A push about a user reads that one member, and one about a task that
+    // one task; one reader each per session, so a switch starts with none of
+    // the old tenant's answers.
+    const readers: HintReaders = {
+      user: createHints(userHintEffects(queryClient, fetchUser)),
+      task: createHints(taskHintEffects(queryClient, fetchTask)),
     };
     const channel = openChannel({
       requestTicket: async () => (await api.post<IssuedTicketView>("/v1/realtime/tickets")).ticket,
@@ -60,13 +43,15 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         new WebSocket(api.websocketUrl(`/v1/realtime?ticket=${encodeURIComponent(ticket)}`)),
       fetchEventsAfter,
       route: (envelope) => {
-        routeEnvelope(queryClient, envelope, hints);
-        announce(envelope);
+        routeEnvelope(queryClient, envelope, readers);
+        const reminded = reminderOf(envelope);
+        if (reminded) void announceReminder(reminded, { readTask: fetchTask, notify });
       },
-      routeReplayed: (envelope) => routeEnvelope(queryClient, envelope),
+      routeReplayed: (envelope) => void routeEnvelope(queryClient, envelope, readers),
+      replayKey: (envelope) => replayKey(envelope, readers),
       // A reminder read back from the stream (the replay after a reconnect,
-      // the first catch-up) is kept through the replay's collapse to one
-      // record per entity, and announced once the read-back ends.
+      // the first catch-up) is kept through the replay's collapse, and
+      // announced once the read-back ends.
       isAnnounced: (envelope) => reminderOf(envelope) !== null,
       announce: (envelopes) => {
         const reminded = envelopes.map(reminderOf).filter((id): id is string => id !== null);
@@ -86,7 +71,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     return () => {
       unwatch();
       channel.stop();
-      hints.stop();
+      for (const reader of Object.values(readers)) reader.stop();
     };
   }, [token, queryClient]);
 

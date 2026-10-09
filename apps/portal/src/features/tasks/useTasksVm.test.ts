@@ -7,11 +7,11 @@ import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, type MeView, type TaskPageView, type TaskView, type UserPageView } from "@tadas/client";
-import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "../../queries/taskCache";
+import { taskHintEffects } from "../../queries/taskCache";
 import { fetchTask } from "../../queries/tasks";
 import { parseEnvelope } from "../../realtime/envelopes";
+import { createHints, HINT_WINDOW_MS } from "../../realtime/hints";
 import { routeEnvelope } from "../../realtime/router";
-import { createTaskHints, HINT_WINDOW_MS } from "../../realtime/taskHints";
 import { STALE_MESSAGE } from "./reorder";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
 
@@ -218,15 +218,7 @@ it("quick-creates a task from its title alone, with no due date", async () => {
 
 // The realtime side as the provider wires it, over the same query cache.
 function hintsOver(client: QueryClient) {
-  return createTaskHints({
-    readTask: fetchTask,
-    held: (id, version) => heldTask(client, id, version),
-    isGone: (cause) => cause instanceof ApiError && cause.status === 404,
-    stamp: () => taskStamp(client),
-    place: (task, since) => placeTask(client, task, { since }),
-    remove: (id, since) => removeTask(client, id, { since }),
-    refreshLists: () => refreshTaskLists(client),
-  });
+  return createHints(taskHintEffects(client, fetchTask));
 }
 
 function pushAbout(kind: string, id: string, version?: number) {
@@ -256,7 +248,7 @@ it("ticks with one PATCH and reads nothing on its own push, which names the vers
   const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
   await act(async () => void net.writes[0]!.resolve(completed));
   await tick();
-  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), hints);
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), { task: hints });
   await windowPasses();
   expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual(["PATCH /v1/tasks/t1"]);
   expect(net.log).toEqual([]);
@@ -270,7 +262,7 @@ it("reads nothing when its own push arrives before the write's answer, within th
   const hints = hintsOver(queryClient);
   await act(async () => void vm().complete(alpha));
   await tick();
-  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), hints);
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), { task: hints });
   const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
   await act(async () => void net.writes[0]!.resolve(completed));
   await windowPasses();
@@ -293,7 +285,7 @@ it("ticks with one PATCH, reads that one task on a push that names no version, a
   expect(vm().done[0]!.task.version).toBe(2);
   // The write's own push comes back, and reads the task once.
   net.reads.set("/v1/tasks/t1", completed);
-  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1"), hints);
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1"), { task: hints });
   await windowPasses();
   expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual(["PATCH /v1/tasks/t1"]);
   expect(net.log).toEqual(["/v1/tasks/t1"]);
@@ -354,13 +346,13 @@ it("updates from someone else's push with one read of that task, and drops a tas
   const hints = hintsOver(queryClient);
   net.reads.set("/v1/tasks/t2", { ...beta, title: "Beta, from the other tab", version: 2 });
   // This tab holds version 1; the push names 2, so it reads.
-  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t2", 2), hints);
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t2", 2), { task: hints });
   await windowPasses();
   expect(vm().open.map((r) => r.row.title)).toEqual(["Alpha", "Beta, from the other tab"]);
   expect(net.log).toEqual(["/v1/tasks/t2"]);
 
   net.reads.set("/v1/tasks/t1", new ApiError(404, "not_found", "task t1 not found", "req-2"));
-  routeEnvelope(queryClient, pushAbout("tasks.task.deleted", "t1"), hints);
+  routeEnvelope(queryClient, pushAbout("tasks.task.deleted", "t1"), { task: hints });
   await windowPasses();
   expect(vm().open.map((r) => r.task.id)).toEqual(["t2"]);
   expect(listReads()).toEqual([]);
@@ -371,7 +363,7 @@ it("reads the lists once for a burst of pushes, not task by task", async () => {
   await mount();
   net.log.length = 0;
   const hints = hintsOver(queryClient);
-  for (let i = 0; i < 50; i += 1) routeEnvelope(queryClient, pushAbout("tasks.task.created", `n${i}`), hints);
+  for (let i = 0; i < 50; i += 1) routeEnvelope(queryClient, pushAbout("tasks.task.created", `n${i}`), { task: hints });
   await windowPasses();
   expect(net.log.filter((path) => path.startsWith("/v1/tasks/"))).toEqual([]);
   // One read of each list the page shows.

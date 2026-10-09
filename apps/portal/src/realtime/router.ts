@@ -1,35 +1,32 @@
 // Envelopes route into the query cache, never into components. An
-// `entity_changed` push invalidates the queries that carry the entity named
-// inside its kind (`<namespace>.<entity>.<action>`): by convention the queries
-// whose key starts with the entity name, and by the table below where the
-// entity is read through another query, or through none. A task is the
-// exception: a live push about one reads that one task and places it into the
-// lists (`taskHints.ts`), since a tick would otherwise read both whole lists
-// in every open tab.
+// `entity_changed` push names an entity inside its kind
+// (`<namespace>.<entity>.<action>`) and one record of it. For an entity with
+// a hint reader, the push is a hint: the reader reads that one record and
+// places it (`hints.ts`). Any other push invalidates the queries that carry
+// its entity: by convention the queries whose key starts with the entity
+// name, and by the table below where the entity is read through another
+// query, or through none.
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { keys } from "../queries/keys";
-import { entityOf, isEntityChanged, type Envelope } from "./envelopes";
+import { entityOf, isEntityChanged, type Envelope, type EventEnvelope } from "./envelopes";
+import type { Hints } from "./hints";
 
 export interface RouteOutcome {
   invalidated: QueryKey[];
-  /** The tasks handed to the hints, to be read one by one. */
-  hinted?: string[];
+  /** The entity whose reader took the push as a hint, when one did. */
+  hinted?: string;
 }
 
-/** Where a live push about a task goes, with the version its change wrote
- * when the push names one; see `taskHints.ts`. */
-export interface TaskHintSink {
-  hint(id: string, version?: number): unknown;
-}
-
-/** The entity whose pushes are read one record at a time. */
-export const TASK_ENTITY = keys.tasks.all[0];
+/** The hint reader of each entity read one record at a time. */
+export type HintReaders = Readonly<Record<string, Hints>>;
 
 // Entities the convention does not reach on its own. A membership is read as
 // the role and the permissions inside `me`, as the role in the person's list
 // of places the org chip reads, and as the role beside each member in
 // Settings; a user is read twice, as a row of the member list and as the name
-// and the email in `me`, so a user push refreshes both. A revoked session is
+// and the email in `me`, so a user push reaches both: its reader places the
+// member in both (`userCache.ts`). A task push is read the same way: its
+// reader places the task in every list (`taskCache.ts`). A revoked session is
 // nobody's query: this session's own revocation arrives as a 4401 close, not
 // as a push. A billing account is read as the org's plan, with the seats and
 // the active tasks beside it. An orchestration's record is an import's, read
@@ -71,25 +68,38 @@ export function isKeptFresh(queryKey: QueryKey): boolean {
   return KEPT_FRESH.has(queryKey[0] as string);
 }
 
-/** Routes one envelope, live or read back from the stream: every query its
- * entity is read from is read again. With `tasks`, a live push about a task
- * is read as that one task instead; without it (a replay, whose records are
- * coalesced one per entity) the task lists are read again. */
-export function routeEnvelope(queryClient: QueryClient, envelope: Envelope, tasks?: TaskHintSink): RouteOutcome {
+/** Routes one envelope, live or read back from the stream: the entity's
+ * reader reads the one record it names, or, for an entity with none, every
+ * query the entity is read from is read again. */
+export function routeEnvelope(
+  queryClient: QueryClient,
+  envelope: Envelope,
+  readers: HintReaders = {},
+): RouteOutcome {
   if (!isEntityChanged(envelope)) return { invalidated: [] };
   const entity = entityOf(envelope.payload.kind);
-  if (tasks && entity === TASK_ENTITY) {
+  const reader = readers[entity];
+  if (reader) {
     const { target_id: id, version } = envelope.payload;
-    tasks.hint(id, typeof version === "number" ? version : undefined);
-    return { invalidated: [], hinted: [id] };
+    reader.hint(id, typeof version === "number" ? version : undefined);
+    return { invalidated: [], hinted: entity };
   }
   const targets = [...targetsOf(entity)];
   for (const queryKey of targets) void queryClient.invalidateQueries({ queryKey });
   return { invalidated: targets };
 }
 
+/** What a page read back from the stream keeps one push of, the last: the
+ * record, for an entity whose reader reads each record, and the entity for
+ * any other, since one invalidation reads all of it again. */
+export function replayKey(envelope: EventEnvelope, readers: HintReaders = {}): string {
+  const entity = entityOf(envelope.payload.kind);
+  return readers[entity] ? `${entity}/${envelope.payload.target_id}` : entity;
+}
+
 // A reminder is the one push a person is told about as well as refreshed by:
-// the task is read and placed as above, and this names the task to announce. Null for every other frame.
+// the task is read and placed as above, and this names the task to announce.
+// Null for every other frame.
 export const REMINDED_KIND = "tasks.task.reminded";
 
 export function reminderOf(envelope: Envelope): string | null {

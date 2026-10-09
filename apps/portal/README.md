@@ -19,9 +19,9 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   view-model reads a flag with `useFlag`. No flag vendor's SDK is in the
   bundle.
 - `src/realtime/`: the socket and its router. A push about a user reads
-  that one member and places it (`hints.ts`); a live push about a task
-  reads that one task; any other push invalidates the queries of its
-  entity.
+  that one member and places it (`hints.ts`), and so does a push about a
+  task (`queries/taskCache.ts`); any other push invalidates the queries of
+  its entity.
 - `src/store/`, `src/design/`: client state and the design kit.
 
 ## The product's screens
@@ -94,15 +94,15 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   window stays held past what the page shows, and shows on Show more. An
   answer older than one already placed is dropped, by the task's
   version. Pushes are gathered until 100 ms pass without one, and for
-  500 ms at most (`src/realtime/taskHints.ts`): a task pushed twice is
+  500 ms at most (`src/realtime/hints.ts`): a task pushed twice is
   read once, and past twenty tasks in one window (an import step, a bulk
   change, the sweep's respace of a run of ranks) the lists are read once
   instead. Whether a task is held is asked when the window closes, so
   the push of a tab's own write that beats the write's answer is still
   skipped, and only the tasks left to read count toward the twenty.
 - A record read back from the stream (a replay, the first catch-up) is
-  routed once per entity, so a task record there reads the task lists
-  whole, as every other entity's queries are. A reminder there is kept
+  routed once per task, through the same reader, and once per entity for
+  an entity no reader reads. A reminder there is kept
   whatever record of its task follows it, and announced once the
   read-back ends: each by its title up to three, and past three one
   notice that counts them, "You missed 5 reminders while you were away"
