@@ -15,7 +15,7 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.root import IntegrationsInterface
 from tadas.om.base import new_id, utcnow
-from tadas.om.billing.impl.cache import account_changed
+from tadas.om.billing.impl.manager import BillingOptions, cached_accounts
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role
@@ -115,7 +115,8 @@ async def account_written(container: AppContainer, org_id: UUID) -> None:
     """What the billing managers do after a write of the account commits: a
     test that writes the account in storage bumps the org's generation too,
     or a plan read cached before the write answers until its TTL."""
-    await account_changed(container.infra.get_cache(CacheScope.BILLING_ACCOUNT), org_id)
+    cache = container.infra.get_cache(CacheScope.BILLING_ACCOUNT)
+    await cached_accounts(cache, BillingOptions().account_ttl).bump(org_id)
 
 
 async def sign_in(

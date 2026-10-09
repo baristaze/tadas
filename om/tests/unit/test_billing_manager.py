@@ -22,7 +22,7 @@ from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.payments.deliveries import sign
 from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinImpl
 from tadas.om.base import new_id, utcnow
-from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions
+from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions, cached_accounts
 from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
 from tadas.om.billing.types.account import BillingAccount, SubscriptionStatus
 from tadas.om.billing.types.billing import Billing
@@ -79,7 +79,9 @@ class World:
             self.twin,
             self.managers.outbox,
             lambda: self.managers.tenancy,
-            self.infra.get_cache(CacheScope.BILLING_ACCOUNT),
+            cached_accounts(
+                self.infra.get_cache(CacheScope.BILLING_ACCOUNT), BillingOptions().account_ttl
+            ),
             BillingOptions(),
             clock=lambda: self.now,
         )
@@ -509,7 +511,9 @@ class Plane:
             storage.get_billing_storage(),
             storage.get_tenancy_storage(),
             world.managers.outbox,
-            world.infra.get_cache(CacheScope.BILLING_ACCOUNT),
+            cached_accounts(
+                world.infra.get_cache(CacheScope.BILLING_ACCOUNT), BillingOptions().account_ttl
+            ),
         )
 
     async def admit(self, role: OperatorRole, email: str) -> OperatorContext:
@@ -613,7 +617,7 @@ async def test_the_seed_grants_its_own_team_a_plan_and_a_tenants_credential_cann
     assert (await world.billing.get_billing(owner)).plan is Plan.TEAM
 
 
-# The cached account (ADR 0066).
+# The cached account (ADR 0066, ADR 0095).
 
 
 class Reads:
@@ -666,7 +670,7 @@ def billing_over(world: World, cache: CacheInterface, ttl: timedelta) -> Billing
         world.twin,
         world.managers.outbox,
         lambda: world.managers.tenancy,
-        cache,
+        cached_accounts(cache, ttl),
         BillingOptions(account_ttl=ttl),
         clock=lambda: world.now,
     )
@@ -685,6 +689,29 @@ async def test_a_second_read_of_the_plan_is_answered_by_the_cache(
     other = await world.org("other")
     assert (await world.billing.get_billing(other)).plan is Plan.FREE, "keyed by org"
     assert reads.count == 2
+
+
+async def test_a_write_bumps_its_own_orgs_account_and_no_other_orgs(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two orgs cache the same read in one scope, each under its own
+    generation: a write in one makes that org's next read miss, and the other
+    org's cached account still answers, its own."""
+    acme = await world.org("acme")
+    other = await world.org("other")
+    await world.billing.grant_seeded_plan(acme, Plan.TEAM)
+    await world.billing.grant_seeded_plan(other, Plan.MAX)
+    reads = Reads(world, monkeypatch)
+    for _ in range(2):
+        assert (await world.billing.get_billing(acme)).plan is Plan.TEAM
+        assert (await world.billing.get_billing(other)).plan is Plan.MAX
+    assert reads.count == 2, "each org's account read once, then from the cache"
+    await world.billing.grant_seeded_plan(acme, Plan.PRO)
+    written = reads.count
+    assert (await world.billing.get_billing(acme)).plan is Plan.PRO
+    assert reads.count == written + 1, "the bump: the written org's next read misses"
+    assert (await world.billing.get_billing(other)).plan is Plan.MAX
+    assert reads.count == written + 1, "the other org's entry still answers"
 
 
 async def test_every_writer_of_the_account_makes_the_next_read_fresh(
