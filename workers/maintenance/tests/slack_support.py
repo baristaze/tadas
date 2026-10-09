@@ -4,14 +4,16 @@ bound, the calls Slack makes, and the work a write queued."""
 
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
-from worker_support import request
+from worker_support import request, signing
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.slack.requests import SlackInbound, inbound_command, inbound_event
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
@@ -38,10 +40,20 @@ def build(tmp_path: Path) -> tuple[WorkerContainer, SlackTwinImpl]:
     return container, twin
 
 
+async def prove(container: WorkerContainer, email: str) -> None:
+    """The person signs in once through the identity provider's twin, which
+    proves the address: an address the seeding or the local sign-in typed
+    names nobody to an integration until then (ADR 0090)."""
+    twin = cast(IdentityProviderTwinImpl, container.identity_provider)
+    through = signing(container, twin)
+    await through.sign_in.sign_in_with_code(request(), twin.issue_code(email))
+
+
 async def owner_of(container: WorkerContainer, slug: str) -> TenantContext:
     ctx, _ = await container.managers.tenancy.bootstrap(
         request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
     )
+    await prove(container, f"owner@{slug}.test")
     return ctx
 
 
@@ -68,6 +80,7 @@ async def member_of(container: WorkerContainer, slug: str, email: str) -> Tenant
     identity = await tenancy.authenticate_login(request(), login.token)
     memberships = await tenancy.sign_in.get_identity_memberships(identity, None, 10)
     issued = await tenancy.sign_in.exchange_login(identity, memberships.items[0].org.id)
+    await prove(container, email)
     return await tenancy.authenticate(request(), issued.token)
 
 

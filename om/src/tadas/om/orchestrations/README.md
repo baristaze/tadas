@@ -22,7 +22,9 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
   file removed), or `defect`, a step that still failed on its last
   attempt.
 - **Period**: for a record kept per period, such as a day, the org, the
-  kind, and the period are its unique key.
+  kind, and the period are its unique key. The sweep opens the next
+  period's record as a chore, in the tenants where it is due
+  ([ADR 0089](../../../../../docs/adr/0089-the-sweep-runs-standing-chores-in-the-tenants-one-read-names.md)).
 
 ## What can happen
 
@@ -37,7 +39,8 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
   clears (a `WAKE_PARKED` work item wakes every record of the org
   parked for it, a couple of seconds apart: a plan that rose clears
   `plan_limit`; or the one record it names, when the reason was that
-  record's alone), or when a person resumes it.
+  record's alone), at the time its park named, or when a person resumes
+  it.
 - **Succeed** after the last step, or **fail** on a bound.
 - **Sweep.** A settled record goes thirty days later. A parked or a
   running one is kept.

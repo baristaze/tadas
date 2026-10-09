@@ -165,6 +165,24 @@ class OrchestrationStorageContract:
             waiting.id
         ]
 
+    async def test_read_parked_reads_a_batch_after_the_last_one_read(
+        self, storage: OrchestrationsStorageInterface
+    ) -> None:
+        org = new_id()
+        waiting = sorted(
+            (
+                make_record(status=OrchestrationStatus.PARKED, park_reason=ParkReason.PLAN_LIMIT)
+                for _ in range(3)
+            ),
+            key=lambda r: r.id,
+        )
+        for record in waiting:
+            await seed(storage, org, record)
+        first = await storage.read_parked(org, ParkReason.PLAN_LIMIT, 2)
+        assert [r.id for r in first] == [r.id for r in waiting[:2]]
+        rest = await storage.read_parked(org, ParkReason.PLAN_LIMIT, 2, first[-1].id)
+        assert [r.id for r in rest] == [waiting[2].id]
+
     async def test_write_is_a_compare_and_set_on_the_version(
         self, storage: OrchestrationsStorageInterface
     ) -> None:

@@ -27,7 +27,8 @@ from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, Wo
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import SyncSeatsHandlerImpl
-from tadas.workers.maintenance.main import build_consumer
+from tadas.workers.maintenance.main import PAYMENTS, PAYMENTS_CREDENTIAL, build_consumer
+from tadas.workers.maintenance.providers import ProviderCalls
 
 PORTAL = "http://portal.test/settings/billing"
 
@@ -161,9 +162,16 @@ async def seats_to_sync(
     return container, ctx, service, item
 
 
+def seats_handler(container: WorkerContainer) -> SyncSeatsHandlerImpl:
+    """The handler as the worker builds it: its processor calls read, mark,
+    and clear the outage on the container's signal."""
+    calls = ProviderCalls(container.infra.get_outages(), PAYMENTS, PAYMENTS_CREDENTIAL)
+    return SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing, calls)
+
+
 async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: Path) -> None:
     container, ctx, service, item = await seats_to_sync(tmp_path)
-    handler = SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing)
+    handler = seats_handler(container)
     await handler.handle(service, item)
     await handler.handle(service, item)  # at least once: the second run changes nothing
     twin = twin_of(container)
@@ -199,7 +207,7 @@ async def test_a_seat_count_the_processor_refuses_fails_and_one_that_may_pass_pa
         raise error
 
     monkeypatch.setattr(twin_of(container), "set_quantity", answer)
-    handler = SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing)
+    handler = seats_handler(container)
     with pytest.raises(outcome) as raised:
         await handler.handle(service, item)
     assert str(error) in str(raised.value)

@@ -14,7 +14,7 @@ from tadas.om.context import Permission, TenantContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem
-from tadas.workers.maintenance.providers import provider_calls
+from tadas.workers.maintenance.providers import ProviderCalls
 
 log = logging.getLogger(__name__)
 
@@ -40,17 +40,24 @@ class SyncSeatsHandlerImpl(WorkHandlerInterface):
     for, and holds the subscription to that count. Items that run late, twice,
     or out of order converge on the members the org has then; the processor
     call carries a key made of the item and the count, so a retried run is
-    one change. A processor out of reach, or refusing the process's own
-    key, parks the item; one that refuses the request fails it at once."""
+    one change. A processor out of reach, marked out, or refusing the
+    process's own key, parks the item; one that refuses the request fails it
+    at once."""
 
     REQUIRES: ClassVar[tuple[Permission, ...]] = (Permission.READ, Permission.MANAGE_MEMBERS)
     """`count_members` reads; `sync_seats` manages members."""
 
-    def __init__(self, tenancy: TenancyManagerInterface, billing: BillingManagerInterface) -> None:
+    def __init__(
+        self,
+        tenancy: TenancyManagerInterface,
+        billing: BillingManagerInterface,
+        payments_calls: ProviderCalls,
+    ) -> None:
         self._tenancy = tenancy
         self._billing = billing
+        self._payments_calls = payments_calls
 
     async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         seats = await self._tenancy.members.count_members(ctx)
-        async with provider_calls():
+        async with self._payments_calls.calls():
             await self._billing.sync_seats(ctx, seats, f"tadas-seats-{item.id}-{seats}")

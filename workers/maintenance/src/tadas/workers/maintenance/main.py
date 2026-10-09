@@ -45,6 +45,7 @@ from tadas.workers.maintenance.orchestrations import (
     OrchestrationHandlerImpl,
     WakeParkedHandlerImpl,
 )
+from tadas.workers.maintenance.providers import ProviderCalls
 from tadas.workers.maintenance.reminders import TaskReminderHandlerImpl
 from tadas.workers.maintenance.settings import MaintenanceSettings
 from tadas.workers.maintenance.slack_inbound import (
@@ -56,11 +57,26 @@ from tadas.workers.maintenance.slack_posts import SlackPostHandlerImpl
 
 log = logging.getLogger(__name__)
 
+IDENTITY = "identity"
+"""The identity provider, by the name its deliveries are queued under."""
+
+IDENTITY_CREDENTIAL = "TADAS_WORKOS_API_KEY"
+"""The secret the worker's calls to it are made with: the platform's own, by
+its name."""
+
+PAYMENTS = "payments"
+"""The payment processor."""
+
+PAYMENTS_CREDENTIAL = "TADAS_STRIPE_RUNTIME_KEY"
+"""The secret the worker's calls to the processor are made with: the
+platform's runtime key, by its name."""
+
 
 def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> LoopOptions:
     return LoopOptions(
         worker_id=settings.worker_id,
         lane=lane or settings.worker_lane,
+        tenant_cap=settings.worker_tenant_cap or None,
         capacity=settings.worker_capacity,
         lease=timedelta(seconds=settings.worker_lease_seconds),
         heartbeat_interval=timedelta(seconds=settings.worker_heartbeat_seconds),
@@ -85,6 +101,11 @@ def unstaged(purge: Callable[[], Awaitable[int]]) -> AcrossStep:
 
 def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoop:
     managers = container.managers
+    # Every call to the identity provider, and to the payment processor,
+    # reads, marks, and clears its outage on the signal every worker shares.
+    outages = container.infra.get_outages()
+    identity_calls = ProviderCalls(outages, IDENTITY, IDENTITY_CREDENTIAL)
+    payments_calls = ProviderCalls(outages, PAYMENTS, PAYMENTS_CREDENTIAL)
     return WorkerLoop(
         work=managers.work,
         outbox=managers.outbox,
@@ -125,10 +146,11 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         # more. So is the lease sweep's: the leases and requests one org's
         # pass ends.
         across_batches={"media": MEDIA_PURGE_BATCH, "lease_sweep": LEASE_SWEEP_BATCH},
-        # A record kept per day opens here: the org's cleanup of old done
-        # tasks. Its unique key makes every sweep after the day's first a no-op.
-        # The respace gives short ranks back to a run of open tasks whose
-        # ranks grew long.
+        # Per tenant, and only in the tenants one read across tenants names as
+        # due: the standing chores (ADR 0089). A record kept per day opens
+        # here: the org's cleanup of old done tasks. Its unique key makes every
+        # sweep after the day's first a no-op. The respace gives short ranks
+        # back to a run of open tasks whose ranks grew long.
         chores={
             "cleanup": managers.tasks.cleanup.open_cleanup,
             "respace": managers.tasks.respace_ranks,
@@ -142,7 +164,9 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         tally=managers.tenancy_operator.tally_size,
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
-            WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(managers.tenancy, managers.billing),
+            WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(
+                managers.tenancy, managers.billing, payments_calls
+            ),
             WorkKind.TASK_REMINDER: TaskReminderHandlerImpl(managers.tasks),
             WorkKind.SLACK_POST: SlackPostHandlerImpl(
                 managers.tasks, managers.slack, container.slack
@@ -160,6 +184,8 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
                 managers.billing,
                 managers.slack,
                 container.identity_provider,
+                identity_calls,
+                payments_calls,
             ),
             WorkKind.UNASSIGN_TASKS: UnassignTasksHandlerImpl(managers.tasks),
             WorkKind.DELETE_ORG: DeleteOrgHandlerImpl(
@@ -167,6 +193,8 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
                 managers.billing,
                 managers.slack,
                 container.identity_provider,
+                identity_calls,
+                payments_calls,
             ),
         },
         topics=container.infra.get_topics(),

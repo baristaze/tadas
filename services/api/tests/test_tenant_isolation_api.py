@@ -220,6 +220,7 @@ def by_id_routes(other: Tenant) -> list[tuple[str, str, dict[str, Any]]]:
             {"json": {"after_id": task, "expected_version": 1}},
         ),
         ("DELETE", f"/v1/tasks/{task}", if_match),
+        ("GET", f"/v1/users/{other.member_id}", {}),
         ("PATCH", f"/v1/memberships/{other.member_id}", {"json": {"role": "admin"}}),
         ("DELETE", f"/v1/memberships/{other.member_id}", {}),
         ("PATCH", f"/v1/memberships/{other.owner_id}", {"json": {"role": "member"}}),
