@@ -170,7 +170,7 @@
       },
       "AskRequest": {
         "additionalProperties": false,
-        "description": "An ask for a lease: one resource by its id, or a selector, the labels\na resource of `kind` must offer. `payload` is in the shape the kind\nfixes; the term is bounded by the resource's, and the ask expires in line\nafter `wait_seconds`.",
+        "description": "An ask for a lease: one resource by its id, or a selector, the labels\na resource of `kind` must offer. `payload` is in the shape the kind\nfixes; the term is bounded by the resource's, and the ask expires in line\nafter `wait_seconds`. When the grant starts a job, `start_seconds` is the\nwindow the job has to start in, bounded the same way; none gives it the\nterm.",
         "properties": {
           "kind": {
             "$ref": "#/components/schemas/ResourceKind"
@@ -179,12 +179,12 @@
             "anyOf": [
               {
                 "items": {
-                  "maxLength": 64,
+                  "maxLength": 200,
                   "minLength": 1,
-                  "pattern": "^[a-z0-9:_.-]+$",
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
                   "type": "string"
                 },
-                "maxItems": 32,
+                "maxItems": 160,
                 "type": "array"
               },
               {
@@ -210,9 +210,22 @@
             ],
             "title": "Resource Id"
           },
+          "start_seconds": {
+            "anyOf": [
+              {
+                "maximum": 604800.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Seconds"
+          },
           "term_seconds": {
             "default": 60,
-            "maximum": 86400.0,
+            "maximum": 604800.0,
             "minimum": 1.0,
             "title": "Term Seconds",
             "type": "integer"
@@ -1209,6 +1222,17 @@
             ],
             "title": "Resource Id"
           },
+          "start_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Seconds"
+          },
           "status": {
             "$ref": "#/components/schemas/RequestStatus"
           },
@@ -1259,6 +1283,7 @@
           "waiter_kind",
           "waiter_id",
           "term_seconds",
+          "start_seconds",
           "wait_until",
           "rank",
           "status",
@@ -1281,7 +1306,7 @@
         "type": "string"
       },
       "LeaseView": {
-        "description": "One grant: the holder acts on the resource under `fencing_token` until\nit has used `expires_in_seconds`, counted from when it asked. The token is\nno secret: it is the number the resource's own side refuses to go below.",
+        "description": "One grant: the holder acts on the resource under `fencing_token` until\nit has used `expires_in_seconds`, counted from when it asked. The token is\nno secret: it is the number the resource's own side refuses to go below.\nA grant that started a job shows when the job started, and until then\nexpires at the end of the window the job has to start in.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -1333,6 +1358,18 @@
             "title": "Resource Id",
             "type": "string"
           },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
           "status": {
             "$ref": "#/components/schemas/LeaseStatus"
           },
@@ -1352,6 +1389,7 @@
           "expires_in_seconds",
           "status",
           "ended_at",
+          "started_at",
           "created_at"
         ],
         "title": "LeaseView",
@@ -2000,6 +2038,27 @@
         "title": "PurposeUsageView",
         "type": "object"
       },
+      "RenewRequest": {
+        "additionalProperties": false,
+        "description": "A renewal: the lease runs `seconds` from now, within the resource's\nbound, or its term again when it names none.",
+        "properties": {
+          "seconds": {
+            "anyOf": [
+              {
+                "maximum": 604800.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seconds"
+          }
+        },
+        "title": "RenewRequest",
+        "type": "object"
+      },
       "ReorderRequest": {
         "additionalProperties": false,
         "description": "Moves a waiting request in front of `before_id`, or to the end.",
@@ -2201,6 +2260,23 @@
           "revoked_at"
         ],
         "title": "SessionView",
+        "type": "object"
+      },
+      "SetTenantCapRequest": {
+        "additionalProperties": false,
+        "description": "An org's own cap on a lane: the most items it holds claimed there at\nonce, in place of the lane's cap.",
+        "properties": {
+          "cap": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Cap",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cap"
+        ],
+        "title": "SetTenantCapRequest",
         "type": "object"
       },
       "SignInCallbackRequest": {
@@ -2521,6 +2597,37 @@
           "head"
         ],
         "title": "StreamTruncatedDetail",
+        "type": "object"
+      },
+      "TenantCapView": {
+        "description": "An org's own cap on a lane, with who last set it and when.",
+        "properties": {
+          "cap": {
+            "title": "Cap",
+            "type": "integer"
+          },
+          "lane": {
+            "title": "Lane",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "updated_by": {
+            "format": "uuid",
+            "title": "Updated By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lane",
+          "cap",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "TenantCapView",
         "type": "object"
       },
       "TotpConfirmedView": {
@@ -4029,6 +4136,315 @@
           }
         },
         "summary": "Add Member",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org_id}/work/lanes/{lane}/cap": {
+      "delete": {
+        "description": "Removes the org's own cap on the lane and answers the cap it removed;\nthe lane's cap holds for it from the next claim on. `404` when it has\nnone.",
+        "operationId": "clear_tenant_cap_v1_admin_orgs__org_id__work_lanes__lane__cap_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lane",
+            "required": true,
+            "schema": {
+              "title": "Lane",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantCapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Tenant Cap",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "description": "The org's own cap on the lane; `404` when it has none, and the lane's\ncap holds for it.",
+        "operationId": "get_tenant_cap_v1_admin_orgs__org_id__work_lanes__lane__cap_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lane",
+            "required": true,
+            "schema": {
+              "title": "Lane",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantCapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tenant Cap",
+        "tags": [
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "Sets the org's own cap on the lane: the most items it holds claimed\nthere at once, in place of the lane's cap, from the next claim on.",
+        "operationId": "set_tenant_cap_v1_admin_orgs__org_id__work_lanes__lane__cap_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lane",
+            "required": true,
+            "schema": {
+              "title": "Lane",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTenantCapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantCapView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Tenant Cap",
         "tags": [
           "admin"
         ]
@@ -6561,7 +6977,7 @@
     },
     "/v1/leases/{lease_id}/renew": {
       "post": {
-        "description": "Its holder's: the lease runs its term again from now.",
+        "description": "Its holder's: the lease runs the seconds the body names from now, or\nits term again, within the resource's bound.",
         "operationId": "renew_v1_leases__lease_id__renew_post",
         "parameters": [
           {
@@ -6623,6 +7039,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RenewRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
