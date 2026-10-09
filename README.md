@@ -12,8 +12,8 @@ maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
 Its base is the guideline's scaffold,
-[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.54.0/scaffold/acme_root)
-at v0.54.0, rendered as Tadas. The `scaffold` branch keeps each render,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.55.0/scaffold/acme_root)
+at v0.55.0, rendered as Tadas. The `scaffold` branch keeps each render,
 and the main branch merges it, so every difference from the scaffold is
 Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
 a later release by a merge.
@@ -110,7 +110,7 @@ follows by hand.
 ## Layout
 
 - [om/](om/README.md): the object model: namespaces, storage, migrations.
-- [infra/](infra/README.md): cache, buckets, topics, queues, secrets, flags, observability.
+- [infra/](infra/README.md): cache, buckets, topics, queues, secrets, flags, outages, observability.
 - [integrations/](integrations/README.md): Slack, WorkOS, and Stripe, each an interface, a client, and a twin, and the webhook check.
 - [services/api/](services/api/README.md): the API, its gateway, and the realtime socket.
 - [workers/maintenance/](workers/maintenance/README.md): the work queue's worker and the sweep.

@@ -13,11 +13,12 @@ last, which the sweep then purges whole. Each step is one a rerun finds
 done, so a run that stopped halfway is finished by the next. A provider that
 cannot be reached, or that refuses the process's own key, parks the item,
 spending no attempt: nothing about the call has failed, and the work waits
-for the provider, or a person, to fix it. A provider that refuses the call
-itself fails the item at once, since asking again gets the same answer, and
-leaves a failed item for an operator to read and requeue. The org stays
-until the providers are done: deleted first, it could no longer run the
-work that names it.
+for the provider, or a person, to fix it. The failure marks the provider out
+for every worker, so the next item parks without a call until the mark's
+retry time. A provider that refuses the call itself fails the item at once,
+since asking again gets the same answer, and leaves a failed item for an
+operator to read and requeue. The org stays until the providers are done:
+deleted first, it could no longer run the work that names it.
 
 `UNASSIGN_TASKS` runs in each org the person left, under their name: their
 open tasks there go unassigned, each by the update a person makes to clear
@@ -34,7 +35,6 @@ retention. Every step, and every wait and failure, is the account's
 (ADR 0042)."""
 
 import logging
-from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
 from tadas.integrations.identity import IdentityProviderInterface
@@ -47,7 +47,7 @@ from tadas.om.tasks.types.task import TaskScope
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import DeleteAccountPayload, DeleteOrgPayload, WorkItem
-from tadas.workers.maintenance.providers import provider_calls
+from tadas.workers.maintenance.providers import ProviderCalls
 
 log = logging.getLogger(__name__)
 
@@ -66,17 +66,22 @@ class DeleteAccountHandlerImpl(WorkHandlerInterface):
         billing: BillingManagerInterface,
         slack: SlackManagerInterface,
         identity: IdentityProviderInterface,
+        identity_calls: ProviderCalls,
+        payments_calls: ProviderCalls,
     ) -> None:
         self._tenancy = tenancy
         self._billing = billing
         self._slack = slack
         self._identity = identity
+        self._identity_calls = identity_calls
+        self._payments_calls = payments_calls
 
     async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
-        payload = DeleteAccountPayload.model_validate(item.payload)
-        user_id = payload.provider_user_id
-        identity_step = None if user_id is None else lambda: self._identity.delete_user(user_id)
-        await end_providers(ctx, identity_step, self._billing, self._slack)
+        user_id = DeleteAccountPayload.model_validate(item.payload).provider_user_id
+        if user_id is not None:
+            async with self._identity_calls.calls():
+                await self._identity.delete_user(user_id)
+        await end_providers(ctx, self._billing, self._payments_calls, self._slack)
         await self._tenancy.org.delete_personal_org(ctx)
         log.info("the personal org %s of a deleted account is deleted", ctx.org_id)
 
@@ -92,36 +97,37 @@ class DeleteOrgHandlerImpl(WorkHandlerInterface):
         billing: BillingManagerInterface,
         slack: SlackManagerInterface,
         identity: IdentityProviderInterface,
+        identity_calls: ProviderCalls,
+        payments_calls: ProviderCalls,
     ) -> None:
         self._tenancy = tenancy
         self._billing = billing
         self._slack = slack
         self._identity = identity
+        self._identity_calls = identity_calls
+        self._payments_calls = payments_calls
 
     async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
-        payload = DeleteOrgPayload.model_validate(item.payload)
-        org_id = payload.provider_org_id
-        identity_step = (
-            None if org_id is None else lambda: self._identity.delete_organization(org_id)
-        )
-        await end_providers(ctx, identity_step, self._billing, self._slack)
+        org_id = DeleteOrgPayload.model_validate(item.payload).provider_org_id
+        if org_id is not None:
+            async with self._identity_calls.calls():
+                await self._identity.delete_organization(org_id)
+        await end_providers(ctx, self._billing, self._payments_calls, self._slack)
         await self._tenancy.org.delete_closed_org(ctx)
         log.info("the closed team org %s is deleted", ctx.org_id)
 
 
 async def end_providers(
     ctx: TenantContext,
-    identity_step: Callable[[], Awaitable[None]] | None,
     billing: BillingManagerInterface,
+    payments_calls: ProviderCalls,
     slack: SlackManagerInterface,
 ) -> None:
-    """The providers' side of a tenant that goes, in order: the identity
-    provider's record of it, then the processor's subscription and customer,
-    then the Slack app. A provider out of reach parks the item; one that
-    refuses the request fails it for good."""
-    async with provider_calls():
-        if identity_step is not None:
-            await identity_step()
+    """The providers' side of a tenant that goes, after the identity
+    provider's record of it: the processor's subscription and customer, then
+    the Slack app. A processor out of reach, or marked out, parks the item;
+    one that refuses the request fails it for good."""
+    async with payments_calls.calls():
         await billing.close_account(ctx)
     # Slack's side is best effort, as every removal of the app is: a Slack
     # that cannot be reached leaves the app in the workspace, and the token

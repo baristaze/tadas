@@ -566,10 +566,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def member_context(
         self, rctx: RequestContext, org_id: UUID, email: str
     ) -> TenantContext | None:
-        # Slack's profile may spell the address with capitals; the digest is
-        # of the folded address, so any spelling finds the person.
-        identity = await self._storage.read_identity_by_email_digest(email_digest(email.strip()))
-        if identity is None:
+        # The digest folds the address, so every spelling finds one person.
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email))
+        # The provider links a person once it has verified their address; a
+        # person it never linked holds an address someone typed for them.
+        if identity is None or identity.subject is None:
             return None
         try:
             org, user, membership = await principal_in(

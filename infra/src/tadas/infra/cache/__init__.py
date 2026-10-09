@@ -12,6 +12,7 @@ from tadas.infra.base import SYSTEM_SCOPE
 class CacheScope(StrEnum):
     BILLING_ACCOUNT = "billing_account"
     NETWORK_RESPONSE = "network_response"
+    OUTAGE = "outage"  # the outage signal: a provider failing for one credential
     RATE_LIMIT = "rate_limit"
     REALTIME_TICKET = "realtime_ticket"
     WORKER_LIVENESS = "worker_liveness"
