@@ -49,6 +49,8 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
+from tadas.om.tenancy.rules import email_digest
+from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -603,6 +605,36 @@ async def test_an_operator_adding_a_member_past_the_seats_is_refused(
         "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
     )
     assert claimed is not None and claimed[0] == org.id
+
+
+async def test_a_full_org_refuses_a_new_member_before_it_lands_and_takes_a_repeated_add(
+    world: World, tmp_path: Path
+) -> None:
+    """The seat gate is the org's admission. It is asked once the person is
+    known to be new to the org, and its refusal comes before anything is
+    written, the new identity included. A member already there is added
+    again without the gate, so a full org never refuses them."""
+    plane = Plane(world, tmp_path)
+    writer = await plane.admit(OperatorRole.WRITE, "root@example.test")
+    org = await plane.operator.create_org(writer, "Team", "team", "ann@team.test", "Ann")
+    await plane.billing.comp_plan(writer, org.id, Plan.TEAM)
+    tenancy = world.storage.get_tenancy_storage()
+
+    async def add(email: str) -> User:
+        return await plane.operator.add_member(writer, org.id, email, "M", Role.MEMBER)
+
+    first = await add("m1@team.test")
+    for n in range(2, 5):
+        await add(f"m{n}@team.test")
+    assert await tenancy.count_members(org.id) == 5, "Team's five seats, taken"
+    with pytest.raises(PlanLimitReached):
+        await add("late@team.test")
+    assert await tenancy.count_members(org.id) == 5, "refused before the member lands"
+    late = await tenancy.read_identity_by_email_digest(email_digest("late@team.test"))
+    assert late is None, "and before the new identity"
+    again = await add("m1@team.test")
+    assert again.id == first.id, "a repeated add asks no gate"
+    assert await tenancy.count_members(org.id) == 5
 
 
 async def test_the_seed_grants_its_own_team_a_plan_and_a_tenants_credential_cannot(
