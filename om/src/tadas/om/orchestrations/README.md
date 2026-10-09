@@ -19,7 +19,9 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
 - **Fail reason**: why a record ended unfinished: a bound of its input,
   or `defect`, a step that still failed on its last attempt.
 - **Period**: for a record kept per period, such as a day, the org, the
-  kind, and the period are its unique key.
+  kind, and the period are its unique key. The sweep opens the next
+  period's record as a chore, in the tenants where it is due
+  ([ADR 0089](../../../../../docs/adr/0089-the-sweep-runs-standing-chores-in-the-tenants-one-read-names.md)).
 
 ## What can happen
 
@@ -33,7 +35,11 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
 - **Wake.** A parked record runs again from its cursor when the reason
   clears (a `WAKE_PARKED` work item wakes every record of the org
   parked for it, a couple of seconds apart, or the one record it names
-  when the reason was that record's alone), or when a person resumes it.
+  when the reason was that record's alone), at the time its park named,
+  or when a person resumes it. A step that reads a provider's outage
+  parks on `provider_unavailable` until the outage's retry time, and
+  every park on one outage lands one wake of the org's records then
+  ([ADR 0088](../../../../../docs/adr/0088-a-providers-outage-is-a-shared-signal.md)).
 - **Succeed** after the last step, or **fail** on a bound.
 - **Sweep.** A settled record goes thirty days later. A parked or a
   running one is kept.

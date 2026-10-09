@@ -40,15 +40,24 @@ from tadas.workers.maintenance.orchestrations import (
     OrchestrationHandlerImpl,
     WakeParkedHandlerImpl,
 )
+from tadas.workers.maintenance.providers import ProviderCalls
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 log = logging.getLogger(__name__)
+
+IDENTITY = "identity"
+"""The identity provider, by the name its deliveries are queued under."""
+
+IDENTITY_CREDENTIAL = "TADAS_WORKOS_API_KEY"
+"""The secret the worker's calls to it are made with: the platform's own, by
+its name."""
 
 
 def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> LoopOptions:
     return LoopOptions(
         worker_id=settings.worker_id,
         lane=lane or settings.worker_lane,
+        tenant_cap=settings.worker_tenant_cap or None,
         capacity=settings.worker_capacity,
         lease=timedelta(seconds=settings.worker_lease_seconds),
         heartbeat_interval=timedelta(seconds=settings.worker_heartbeat_seconds),
@@ -73,6 +82,9 @@ def unstaged(purge: Callable[[], Awaitable[int]]) -> AcrossStep:
 
 def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoop:
     managers = container.managers
+    # Every call to the identity provider reads, marks, and clears its outage
+    # on the signal every worker shares.
+    identity_calls = ProviderCalls(container.infra.get_outages(), IDENTITY, IDENTITY_CREDENTIAL)
     return WorkerLoop(
         work=managers.work,
         outbox=managers.outbox,
@@ -106,6 +118,13 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         # more. So is the lease sweep's: the leases and requests one org's
         # pass ends.
         across_batches={"media": MEDIA_PURGE_BATCH, "lease_sweep": LEASE_SWEEP_BATCH},
+        # Per tenant, and only in the tenants one read across tenants names as
+        # due: the standing chores. The scaffold keeps no record per period,
+        # so it runs none. A copy that keeps one wires here the chore that
+        # opens the next period (its orchestration, started with its `period`)
+        # and the read of the tenants where it is due (ADR 0089).
+        chores={},
+        chore_tenants=None,
         # The platform's size, counted across tenants once an interval and
         # kept as the tally the operator plane reads instead of counting.
         tally=managers.tenancy_operator.tally_size,
@@ -117,10 +136,10 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             ),
             WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(managers.orchestrations),
             WorkKind.DELETE_ACCOUNT: DeleteAccountHandlerImpl(
-                managers.tenancy, container.identity_provider
+                managers.tenancy, container.identity_provider, identity_calls
             ),
             WorkKind.DELETE_ORG: DeleteOrgHandlerImpl(
-                managers.tenancy, container.identity_provider
+                managers.tenancy, container.identity_provider, identity_calls
             ),
         },
         topics=container.infra.get_topics(),
