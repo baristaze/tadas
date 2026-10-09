@@ -27,7 +27,11 @@ from tadas.workers.maintenance.accounts import (
     DeleteOrgHandlerImpl,
     UnassignTasksHandlerImpl,
 )
-from tadas.workers.maintenance.container import MEDIA_PURGE_BATCH, WorkerContainer
+from tadas.workers.maintenance.container import (
+    LEASE_SWEEP_BATCH,
+    MEDIA_PURGE_BATCH,
+    WorkerContainer,
+)
 from tadas.workers.maintenance.deliveries import (
     DeliveryConsumer,
     DeliveryOptions,
@@ -95,6 +99,7 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "billing": managers.billing.purge_tenant,
             "slack": managers.slack.purge_tenant,
             "orchestrations": managers.orchestrations.purge_tenant,
+            "leases": managers.leases.purge_tenant,
         },
         # Once a pass, across every tenant: each namespace's rows past their
         # retention.
@@ -110,9 +115,16 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "billing": unstaged(managers.billing.purge_across_tenants),
             "slack": unstaged(managers.slack.purge_across_tenants),
             "orchestrations": unstaged(managers.orchestrations.purge_across_tenants),
+            "leases": unstaged(managers.leases.purge_across_tenants),
+            # Not a purge: the leases past their expiry and the skew margin
+            # end, the requests past their wait expire, and each free
+            # resource is offered to its line, in every org with one due.
+            "lease_sweep": managers.leases.sweep,
         },
-        # The media purge's batch is its own: a whole one says there may be more.
-        across_batches={"media": MEDIA_PURGE_BATCH},
+        # The media purge's batch is its own: a whole one says there may be
+        # more. So is the lease sweep's: the leases and requests one org's
+        # pass ends.
+        across_batches={"media": MEDIA_PURGE_BATCH, "lease_sweep": LEASE_SWEEP_BATCH},
         # A record kept per day opens here: the org's cleanup of old done
         # tasks. Its unique key makes every sweep after the day's first a no-op.
         # The respace gives short ranks back to a run of open tasks whose

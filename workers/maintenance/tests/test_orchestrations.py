@@ -1,10 +1,11 @@
 """Long-running records in the worker, over the import: a record started, its
 steps claimed and run from the queue until it succeeds, the plan's bound
 parking it and the processor's delivery of a higher plan waking it, a step
-that errors retried by the queue from its cursor and failed as a defect on its
-last attempt, and a step for a record that no longer runs doing nothing. Then
-the sweep opening the day's cleanup, whose steps archive the old done tasks,
-and the sweep respacing a run of long ranks."""
+that waits in line for a resource and the grant that wakes it with its lease,
+a step that errors retried by the queue from its cursor and failed as a defect
+on its last attempt, and a step for a record that no longer runs doing nothing.
+Then the sweep opening the day's cleanup, whose steps archive the old done
+tasks, and the sweep respacing a run of long ranks."""
 
 from collections.abc import Mapping
 from datetime import timedelta
@@ -15,15 +16,20 @@ from slack_support import on_team, owner_of
 from test_billing_work import checkout, consumer_of, queued
 from worker_support import build_container, request, sign_in, start_import
 
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import derived_id, new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import TenantContext
+from tadas.om.leases.types.lease import Lease
+from tadas.om.leases.types.request import LeaseRequest, WaiterKind
+from tadas.om.leases.types.resource import Resource, ResourceKind
+from tadas.om.orchestrations.rules import advanced
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
     OrchestrationKind,
     OrchestrationStatus,
     ParkReason,
+    Step,
 )
 from tadas.om.tasks.rules import needs_respace
 from tadas.om.tasks.types.filter import TaskFilter
@@ -101,6 +107,88 @@ async def test_an_import_parks_at_the_plan_and_the_processors_delivery_wakes_it(
     team = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
     page = await container.managers.tasks.get_open_tasks(ctx, team, None, 200)
     assert {t.created_by for t in page.items} == {ctx.user_id}
+
+
+class Leasing:
+    """A step that needs a resource: it asks for a lease by a key its record
+    derives, parks on `resource` in the same call while it waits, and steps
+    once it holds one. Woken, it asks again by the key and finds its lease."""
+
+    def __init__(self, container: WorkerContainer, resource: Resource) -> None:
+        self.container = container
+        self.resource = resource
+        self.held: list[Lease] = []
+
+    async def __call__(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
+        now = utcnow()
+        ask = LeaseRequest(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            idempotency_key=derived_id(record.id, record.created_at, "resource"),
+            kind=ResourceKind.NOOP,
+            resource_id=self.resource.id,
+            waiter_kind=WaiterKind.ORCHESTRATION,
+            waiter_id=record.id,
+        )
+        parked = advanced(
+            record, now, ctx.user_id, cursor=record.cursor, total=record.total,
+            park=ParkReason.RESOURCE,
+        )  # fmt: skip
+        park = Step(record=parked, expected_version=record.version)
+        standing = await self.container.managers.leases.ask(ctx, ask, park)
+        if standing.lease is None:
+            return parked
+        self.held.append(standing.lease)
+        return await self.container.managers.tasks.imports.step_import(ctx, record)
+
+
+async def test_a_record_waits_in_line_and_the_grant_wakes_it_with_its_lease(
+    tmp_path: Path,
+) -> None:
+    container = build_container(tmp_path)
+    ctx = await owner_of(container, "ajax")
+    await on_team(container, ctx)
+    await drain(container, handlers_of(container))  # the plan's wake-up finds nothing parked
+    leases = container.managers.leases
+    now = utcnow()
+    dock = await leases.register(
+        ctx,
+        Resource(
+            id=new_id(), created_at=now, updated_at=now, created_by=ctx.user_id,
+            updated_by=ctx.user_id, kind=ResourceKind.NOOP, ref_id=new_id(),
+        ),
+    )  # fmt: skip
+    first = await leases.ask(
+        ctx,
+        LeaseRequest(
+            id=new_id(), created_at=now, updated_at=now, created_by=ctx.user_id,
+            updated_by=ctx.user_id, idempotency_key=new_id(), kind=ResourceKind.NOOP,
+            resource_id=dock.id,
+        ),
+    )  # fmt: skip
+    assert first.lease is not None
+    started = await start_import(container, ctx, 150)
+    leasing = Leasing(container, dock)
+    handlers = {
+        **handlers_of(container),
+        WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
+            container.managers.orchestrations, {OrchestrationKind.TASK_IMPORT: leasing}
+        ),
+    }
+    assert len(await drain(container, handlers)) == 1, "a record in line asks for no step"
+    parked = await container.managers.orchestrations.get(ctx, started.id)
+    assert (parked.status, parked.park_reason) == (OrchestrationStatus.PARKED, ParkReason.RESOURCE)
+    # The resource frees: the grant wakes the record it was for, and its
+    # steps run to the end under the lease it finds by its key.
+    await leases.release(ctx, first.lease.id)
+    ran = await drain(container, handlers)
+    assert [item.kind for item in ran] == [WorkKind.WAKE_PARKED, *[WorkKind.ORCHESTRATION] * 2]
+    done = await container.managers.orchestrations.get(ctx, started.id)
+    assert done.status is OrchestrationStatus.SUCCEEDED
+    assert {lease.token for lease in leasing.held} == {first.lease.token + 1}
 
 
 class Flaky:

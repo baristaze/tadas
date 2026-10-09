@@ -89,6 +89,7 @@ Across tenants, once a pass:
 | billing | `purge_deliveries` | the marks of the payment processor's deliveries, past any retry it still makes | `billing_delivery_retention_days`, 30 |
 | slack | `purge` | deleted installations, expired or redeemed install states, recorded posts | `slack_retention_days`, 30 |
 | orchestrations | `purge_settled` | settled records | the options' `retention`, 30 days |
+| leases | `purge_settled` | ended leases; settled requests; retired resources no lease holds | the options' `retention`, 30 days |
 | media | `read_purgeable`, then `purge_files_across_tenants` | a deleted file's object and row; an upload never confirmed | `media_retention_days`, 1; `media_pending_expiry_hours`, 24 |
 | outbox | `purge_done` | relayed rows, and rows that failed for good, in two statements | `outbox_retention_days`, 8 |
 | work | `purge_items` | done and failed items | `work_retention_days`, 30 |
@@ -98,8 +99,8 @@ personal org goes at the next pass): `purge_tenant` of tasks, media
 (every file, the object first), tenancy (users, memberships, API keys,
 sessions, socket tickets, invitations), events (the stream, then its
 cursor), billing (the account and its marks), Slack (every row of the
-org), and orchestrations. The org row stays, marked purged, as the
-record.
+org), orchestrations, and leases (resources, leases, requests). The org
+row stays, marked purged, as the record.
 
 No purge reaches `core.orgs`, `core.identities` (erased with the
 person's account), `activity.event_cursors` beyond a purged tenant's,

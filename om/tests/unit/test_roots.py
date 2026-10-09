@@ -9,6 +9,8 @@ from tadas.om.events import EventsManagerInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.leases import LeasesManagerInterface
+from tadas.om.leases.storage import LeasesStorageInterface
 from tadas.om.media import MediaManagerInterface
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.orchestrations import OrchestrationsManagerInterface
@@ -52,6 +54,7 @@ async def test_memory_root_serves_every_storage() -> None:
     assert isinstance(root.get_outbox_storage(), OutboxStorageInterface)
     assert isinstance(root.get_orchestrations_storage(), OrchestrationsStorageInterface)
     assert isinstance(root.get_billing_storage(), BillingStorageInterface)
+    assert isinstance(root.get_lease_storage(), LeasesStorageInterface)
     assert await root.healthcheck() is True
     await root.close()
 
@@ -130,6 +133,7 @@ def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     assert isinstance(managers.orchestrations, OrchestrationsManagerInterface)
     assert isinstance(managers.billing, BillingManagerInterface)
     assert isinstance(managers.billing_operator, BillingOperatorManagerInterface)
+    assert isinstance(managers.leases, LeasesManagerInterface)
 
 
 def test_the_tenancy_manager_carries_each_delegate(tmp_path: Path) -> None:

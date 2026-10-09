@@ -44,6 +44,7 @@ class ParkReason(StrEnum):
     """Why a record waits, and so what wakes it."""
 
     PLAN_LIMIT = "plan_limit"  # the plan's bound: a plan that rises, or a person, wakes it
+    RESOURCE = "resource"  # in line for a resource; the grant, or the request's end, wakes it
 
 
 class FailReason(StrEnum):

@@ -16,6 +16,7 @@ from tadas.services.api.routers import (
     events,
     flags,
     imports,
+    leases,
     media,
     slack,
     tasks,
@@ -35,6 +36,7 @@ HOSTED: dict[str, tuple[APIRouter, ...]] = {
     "billing": (billing.router,),
     # A tenant's Slack connection, and the endpoint Slack itself calls.
     "slack": (slack.router,),
+    "leases": (leases.router,),
 }
 """Every namespace this image hosts, and the routers that serve it."""
 

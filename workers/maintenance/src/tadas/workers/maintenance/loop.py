@@ -65,7 +65,8 @@ AcrossStep = Callable[[RequestContext], Awaitable[int]]
 the system scope, a batch per statement, under the pass's request stage (the
 tasks' purge mints a tenant's context from it for the attachments it
 detaches); it returns how many rows went, and a whole batch or more says
-there may be more."""
+there may be more. A namespace's sweep of what is due across tenants takes
+the same shape, and counts the rows it moved."""
 
 ChoreStep = Callable[[TenantContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period

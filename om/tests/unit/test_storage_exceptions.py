@@ -24,6 +24,7 @@ from contracts import (
     billing_storage,
     event_storage,
     idempotency_storage,
+    lease_storage,
     media_storage,
     orchestration_storage,
     outbox_storage,
@@ -100,6 +101,11 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("BillingStorageInterface", "purge_deliveries"),
         ("SlackStorageInterface", "purge"),
         ("OrchestrationsStorageInterface", "purge_settled"),
+        ("LeasesStorageInterface", "purge_settled"),
+        # The leases' sweep finds the orgs with a lease lapsed, a request past
+        # its wait, or a free resource with a line, and sweeps each under its
+        # service context.
+        ("LeasesStorageInterface", "read_due_orgs"),
         # The sweep's gauges: one read each across every tenant's rows.
         ("WorkStorageInterface", "oldest_ready_at"),
         ("WorkStorageInterface", "count_failed_since"),
@@ -117,6 +123,7 @@ CROSS_TENANT_CASES: dict[str, frozenset[str]] = {
     "BillingStorageInterface": billing_storage.CROSS_TENANT_CASES,
     "EventStorageInterface": event_storage.CROSS_TENANT_CASES,
     "IdempotencyStorageInterface": idempotency_storage.CROSS_TENANT_CASES,
+    "LeasesStorageInterface": lease_storage.CROSS_TENANT_CASES,
     "MediaStorageInterface": media_storage.CROSS_TENANT_CASES,
     "OrchestrationsStorageInterface": orchestration_storage.CROSS_TENANT_CASES,
     "OutboxStorageInterface": outbox_storage.CROSS_TENANT_CASES,
@@ -159,6 +166,7 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # And the sweep's read of the tenants whose tasks have a chore due,
         # across tenants like the purges: it reads for no tenant.
         ("TasksManagerInterface", "tenants_with_chores"),
+        ("LeasesManagerInterface", "purge_across_tenants"),
         # The sweep's gauges of the queue, read across tenants like the purge.
         ("WorkManagerInterface", "oldest_ready_age"),
         ("WorkManagerInterface", "failed_within"),
@@ -211,6 +219,9 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # lookup does.
         ("SlackManagerInterface", "finish_install"),
         ("SlackManagerInterface", "installation_for_team"),
+        # The leases' sweep works each due org's leases and lines under its
+        # tenant's service context, minted from this stage.
+        ("LeasesManagerInterface", "sweep"),
     }
 )
 
