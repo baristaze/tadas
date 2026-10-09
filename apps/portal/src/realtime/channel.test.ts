@@ -4,7 +4,7 @@ import { ApiError, type EventView } from "@tadas/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "../store/connection";
 import { CLOSE_UNAUTHENTICATED, openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
-import type { Envelope } from "./envelopes";
+import type { Envelope, EventEnvelope } from "./envelopes";
 import { watchPage, type PageLike } from "./pageVisibility";
 import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, HIDDEN_PAUSE_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
@@ -68,7 +68,13 @@ const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", us
 /** The stream in storage, as pages after a seq. */
 type Pages = (after: number) => EventView[];
 
-function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number, split = false) {
+function harness(
+  pages: Pages = () => [],
+  pageSize = 200,
+  clock?: () => number,
+  replayKey?: (envelope: EventEnvelope) => string,
+  split = false,
+) {
   const sockets: FakeSocket[] = [];
   const routed: Envelope[] = [];
   const replayed: Envelope[] = [];
@@ -99,6 +105,7 @@ function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number, 
     refreshAll,
     connection: useConnectionStore,
     pageSize,
+    replayKey,
   });
   return { channel, sockets, routed, replayed, announced, fetches, requestTicket, onUnauthenticated, refreshAll };
 }
@@ -331,7 +338,7 @@ describe("stream cursor", () => {
     // A live task push reads that one task; a replay routes only the last
     // record of each entity, so the lists it touches are read whole.
     const stream = [event(6), event(7), event(8)];
-    const h = harness((after) => stream.filter((e) => e.seq > after), 200, undefined, true);
+    const h = harness((after) => stream.filter((e) => e.seq > after), 200, undefined, undefined, true);
     channel = h.channel;
     await flush();
     h.sockets[0]!.accept();
@@ -370,6 +377,24 @@ describe("stream cursor", () => {
       .filter((e) => e.type === "event")
       .map((e) => (e as { payload: { kind: string } }).payload.kind);
     expect(kinds).toEqual(["media.file.updated", "tenancy.user.deleted"]);
+  });
+
+  it("routes a replay page once per record of an entity whose reader reads each record", async () => {
+    // A reader gathers what it is handed, so every member changed while the
+    // tab was away is read or placed, not only the last one.
+    const stream = [event(6), { ...event(7), target_id: "u6" }, event(8), { ...event(9), kind: "media.file.updated" }];
+    const byRecord = (envelope: EventEnvelope) =>
+      envelope.payload.kind.startsWith("tenancy.user.") ? `user/${envelope.payload.target_id}` : "file";
+    const h = harness((after) => stream.filter((e) => e.seq > after), 200, undefined, byRecord);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.receive(push(9));
+    await flush();
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([7, 8, 9]);
   });
 
   it("stops paging when a page moves the cursor nowhere", async () => {
@@ -421,7 +446,7 @@ describe("a reminder read back from the stream", () => {
   /** A channel with its cursor at 5, then dropped and reconnected: the open
    * replays from the cursor. */
   async function reconnected(stream: EventView[], pageSize = 200) {
-    const h = harness((after) => stream.filter((e) => e.seq > after).slice(0, pageSize), pageSize, undefined, true);
+    const h = harness((after) => stream.filter((e) => e.seq > after).slice(0, pageSize), pageSize, undefined, undefined, true);
     channel = h.channel;
     await flush();
     h.sockets[0]!.accept();
@@ -468,6 +493,7 @@ describe("a reminder read back from the stream", () => {
       },
       2,
       undefined,
+      undefined,
       true,
     );
     channel = h.channel;
@@ -490,7 +516,7 @@ describe("a reminder read back from the stream", () => {
       { ...reminded(4, "t1"), produced_at: "2026-09-16T12:00:01Z" },
       { ...taskUpdated(5, "t1"), produced_at: "2026-09-16T12:00:02Z" },
     ];
-    const h = harness((after) => stream.filter((e) => e.seq > after), 200, () => clock, true);
+    const h = harness((after) => stream.filter((e) => e.seq > after), 200, () => clock, undefined, true);
     channel = h.channel;
     await flush();
     h.sockets[0]!.accept();

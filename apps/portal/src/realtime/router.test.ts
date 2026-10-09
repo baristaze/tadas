@@ -2,7 +2,8 @@ import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { keys } from "../queries/keys";
 import { entityOf, parseEnvelope } from "./envelopes";
-import { isKeptFresh, PUSHED_ENTITIES, reminderOf, routeEnvelope } from "./router";
+import type { Hints } from "./hints";
+import { isKeptFresh, PUSHED_ENTITIES, reminderOf, replayKey, routeEnvelope } from "./router";
 
 function recording() {
   const queryClient = new QueryClient();
@@ -25,6 +26,11 @@ function pushOf(kind: string, extra: Record<string, unknown> = {}) {
   );
   expect(envelope).not.toBeNull();
   return envelope!;
+}
+
+/** A reader that hands each hint to `hint`. */
+function reading(hint: (id: string, version?: number) => unknown): Hints {
+  return { hint: (id, version) => void hint(id, version), stop: () => undefined };
 }
 
 /** Every kind the service pushes on the entity_changed topic. */
@@ -118,6 +124,29 @@ describe("routeEnvelope", () => {
     expect(seen).toEqual([keys.users.all, keys.me]);
   });
 
+  it("hands a push about an entity with a reader to that reader, with its version, and invalidates nothing", () => {
+    const { queryClient, seen } = recording();
+    const hinted: [string, number | undefined][] = [];
+    const reader: Hints = { hint: (id, version) => hinted.push([id, version]), stop: () => undefined };
+    expect(routeEnvelope(queryClient, pushOf("tenancy.user.updated", { version: 4 }), { user: reader })).toEqual({
+      invalidated: [],
+      hinted: "user",
+    });
+    expect(routeEnvelope(queryClient, pushOf("tenancy.user.deleted"), { user: reader })).toEqual({
+      invalidated: [],
+      hinted: "user",
+    });
+    expect(hinted).toEqual([
+      ["x", 4],
+      ["x", undefined],
+    ]);
+    expect(seen).toEqual([]);
+    // Every other entity is routed as before.
+    expect(routeEnvelope(queryClient, pushOf("tenancy.api_key.created"), { user: reader })).toEqual({
+      invalidated: [keys.apiKeys.all],
+    });
+  });
+
   it("refreshes the org's plan when its billing account changes", () => {
     // A checkout paid in another tab, or a cancellation, changes the plan the
     // chip and the billing page show, on the push.
@@ -145,31 +174,31 @@ describe("routeEnvelope", () => {
     }
   });
 
-  it("refreshes the task lists for a replayed task record, which stands for the records before it", () => {
+  it("refreshes the task lists for a task push no reader takes", () => {
     const { queryClient, seen } = recording();
     expect(routeEnvelope(queryClient, pushOf("tasks.task.reminded"))).toEqual({ invalidated: [keys.tasks.all] });
     expect(seen).toEqual([keys.tasks.all]);
   });
 
-  it("hands a live task push to the hints, one per push, and invalidates no list", () => {
+  it("hands a task push to the task reader, one per push, and invalidates no list", () => {
     for (const kind of ["tasks.task.created", "tasks.task.updated", "tasks.task.deleted", "tasks.task.restored", "tasks.task.archived", "tasks.task.reminded"]) {
       const { queryClient, seen } = recording();
       const hinted: string[] = [];
-      expect(routeEnvelope(queryClient, pushOf(kind), { hint: (id) => hinted.push(id) })).toEqual({
+      expect(routeEnvelope(queryClient, pushOf(kind), { task: reading((id) => hinted.push(id)) })).toEqual({
         invalidated: [],
-        hinted: ["x"],
+        hinted: "task",
       });
       expect(hinted).toEqual(["x"]);
       expect(seen).toEqual([]);
     }
   });
 
-  it("hands the hints the version a task push names, and none when it names none or not a number", () => {
+  it("hands the task reader the version a push names, and none when it names none or not a number", () => {
     const hinted: [string, number | undefined][] = [];
-    const sink = { hint: (id: string, version?: number) => hinted.push([id, version]) };
-    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: 4 }), sink);
-    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated"), sink);
-    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: "4" }), sink);
+    const readers = { task: reading((id, version) => hinted.push([id, version])) };
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: 4 }), readers);
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated"), readers);
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: "4" }), readers);
     expect(hinted).toEqual([
       ["x", 4],
       ["x", undefined],
@@ -183,19 +212,19 @@ describe("routeEnvelope", () => {
     const { queryClient, seen } = recording();
     const hinted: string[] = [];
     const outcome = routeEnvelope(queryClient, pushOf("orchestrations.orchestration.updated"), {
-      hint: (id) => hinted.push(id),
+      task: reading((id) => hinted.push(id)),
     });
     expect(outcome).toEqual({ invalidated: [keys.imports.all] });
     expect(seen.some((key) => isPrefixOf(key, keys.tasks.open("team")) || isPrefixOf(key, keys.tasks.all))).toBe(false);
     expect(hinted).toEqual([]);
   });
 
-  it("keeps every other kind on its invalidation when the hints are there", () => {
+  it("keeps every other kind on its invalidation when the task reader is there", () => {
     const hinted: string[] = [];
     for (const kind of SERVER_KINDS.filter((k) => !k.startsWith("tasks."))) {
       const { queryClient } = recording();
-      const withHints = routeEnvelope(queryClient, pushOf(kind), { hint: (id) => hinted.push(id) });
-      expect(withHints).toEqual(routeEnvelope(recording().queryClient, pushOf(kind)));
+      const withReader = routeEnvelope(queryClient, pushOf(kind), { task: reading((id) => hinted.push(id)) });
+      expect(withReader).toEqual(routeEnvelope(recording().queryClient, pushOf(kind)));
     }
     expect(hinted).toEqual([]);
   });
@@ -262,5 +291,21 @@ describe("isKeptFresh", () => {
     expect(isKeptFresh(keys.billing)).toBe(true);
     expect(isKeptFresh(keys.identity)).toBe(false);
     expect(isKeptFresh(keys.files.preview("f1"))).toBe(false);
+  });
+});
+
+describe("replayKey", () => {
+  it("keeps one push per record of an entity with a reader, and one per entity otherwise", () => {
+    const reader: Hints = { hint: () => undefined, stop: () => undefined };
+    const of = (kind: string, target: string) => {
+      const envelope = pushOf(kind, { target_id: target });
+      if (envelope.type !== "event") throw new Error("not a push");
+      return envelope;
+    };
+    const readers = { user: reader };
+    expect(replayKey(of("tenancy.user.updated", "a"), readers)).not.toBe(replayKey(of("tenancy.user.deleted", "b"), readers));
+    expect(replayKey(of("tenancy.user.updated", "a"), readers)).toBe(replayKey(of("tenancy.user.deleted", "a"), readers));
+    expect(replayKey(of("tenancy.api_key.created", "a"), readers)).toBe(replayKey(of("tenancy.api_key.deleted", "b"), readers));
+    expect(replayKey(of("tenancy.user.updated", "a"))).toBe(replayKey(of("tenancy.user.updated", "b")));
   });
 });

@@ -1,8 +1,9 @@
 import { QueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
-import type { MeView, TaskPageView, TaskView } from "@tadas/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError, type MeView, type TaskPageView, type TaskView } from "@tadas/client";
+import { createHints, HINT_BURST, HINT_WINDOW_MS } from "../realtime/hints";
 import { keys } from "./keys";
-import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "./taskCache";
+import { heldTask, placeTask, refreshTaskLists, removeTask, taskHintEffects, taskStamp } from "./taskCache";
 
 const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   id,
@@ -87,7 +88,7 @@ describe("the task cache", () => {
   it("does not bring a task back with a read issued before its 404 landed", () => {
     const { queryClient, ids } = cache();
     const issued = taskStamp(queryClient);
-    removeTask(queryClient, "b", { since: issued });
+    removeTask(queryClient, "b", { since: taskStamp(queryClient) });
     placeTask(queryClient, task("b", { rank: "1", version: 1 }), { since: issued });
     expect(ids(keys.tasks.open("team"))).toEqual(["a"]);
   });
@@ -169,5 +170,103 @@ describe("the task cache", () => {
     const { queryClient, invalidated } = cache();
     refreshTaskLists(queryClient);
     expect(invalidated).toEqual([keys.tasks.all]);
+  });
+});
+
+// A push about a task, read through the hint reader over the task's effects,
+// as the provider wires it.
+describe("tasks through the hint reader", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const settle = () => vi.advanceTimersByTimeAsync(HINT_WINDOW_MS);
+
+  function reader(answer: (id: string) => Promise<TaskView> = async (id) => task(id, { rank: "2", version: 2 })) {
+    const c = cache();
+    const read = vi.fn(answer);
+    const hints = createHints(taskHintEffects(c.queryClient, read));
+    return { ...c, read, hints };
+  }
+
+  it("reads one task per hint and places the answer in every list", async () => {
+    const { read, hints, ids } = reader(async (id) => task(id, { status: "done", version: 2 }));
+    hints.hint("a", 2);
+    await settle();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(ids(keys.tasks.open("team"))).toEqual(["b"]);
+    expect(ids(keys.tasks.done("team"))).toEqual(["a"]);
+    expect(ids(keys.tasks.done("mine"))).toEqual(["a"]);
+  });
+
+  it("reads a task again when it is pushed in a later window", async () => {
+    const { read, hints } = reader();
+    hints.hint("n");
+    await settle();
+    hints.hint("n");
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("takes a task out when its read answers 404", async () => {
+    const { hints, ids } = reader(async () => {
+      throw new ApiError(404, "not_found", "task a not found", null);
+    });
+    hints.hint("a");
+    await settle();
+    expect(ids(keys.tasks.open("team"))).toEqual(["b"]);
+    expect(ids(keys.tasks.open("mine"))).toEqual([]);
+  });
+
+  it("reads the lists once when a read fails for another reason", async () => {
+    const { hints, invalidated } = reader(async () => {
+      throw new ApiError(500, "internal", "something broke", null);
+    });
+    hints.hint("a");
+    await settle();
+    expect(invalidated).toEqual([keys.tasks.all]);
+  });
+
+  it(`reads the lists once, and no task, past ${HINT_BURST} tasks in a window`, async () => {
+    const { read, hints, invalidated } = reader();
+    for (let i = 0; i <= HINT_BURST; i += 1) hints.hint(`t${i}`);
+    await settle();
+    expect(read).not.toHaveBeenCalled();
+    expect(invalidated).toEqual([keys.tasks.all]);
+  });
+
+  it("reads nothing for a push naming a version this tab's write placed", async () => {
+    const { queryClient, read, hints } = reader();
+    placeTask(queryClient, task("a", { version: 2 }));
+    hints.hint("a", 2);
+    hints.hint("a", 1);
+    await settle();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("asks when the window closes, so an answer that lands after its push still counts", async () => {
+    const { queryClient, read, hints } = reader();
+    hints.hint("n", 2);
+    placeTask(queryClient, task("n", { rank: "5", version: 2 })); // the write's answer, inside the window
+    await settle();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it(`counts only the tasks it must read toward the burst of ${HINT_BURST}`, async () => {
+    const { queryClient, read, hints, invalidated } = reader();
+    for (let i = 0; i < 30; i += 1) placeTask(queryClient, task(`t${i}`, { version: 2 }));
+    for (let i = 0; i < 35; i += 1) hints.hint(`t${i}`, 2);
+    await settle();
+    expect(invalidated).toEqual([]);
+    expect(read).toHaveBeenCalledTimes(5);
+  });
+
+  it("reads nothing once stopped, and lets go of every answer heard", async () => {
+    const { queryClient, read, hints } = reader();
+    placeTask(queryClient, task("a", { version: 2 }));
+    hints.hint("n");
+    hints.stop();
+    await settle();
+    expect(read).not.toHaveBeenCalled();
+    expect(heldTask(queryClient, "a", 2)).toBeNull();
   });
 });
