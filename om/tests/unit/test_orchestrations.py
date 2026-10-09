@@ -268,7 +268,7 @@ async def test_the_parks_on_one_mark_land_one_wake_that_resumes_them_staggered(
         record = await orchestrations.start(ctx, a_record())
         parked = advanced(
             record, utcnow(), record.created_by, cursor=0, total=3,
-            park=ParkReason.PROVIDER_UNAVAILABLE,
+            park=ParkReason.PLAN_LIMIT,
         )  # fmt: skip
         await storage.write_orchestration(
             ctx.org_id, parked, record.version, step_rows(ctx, parked, wake_at=retry_at)
@@ -282,7 +282,7 @@ async def test_the_parks_on_one_mark_land_one_wake_that_resumes_them_staggered(
     wake = landed[0]
     assert wake.available_at == retry_at
     payload = WakeParkedPayload.model_validate(dict(wake.payload))
-    assert payload == WakeParkedPayload(reason=ParkReason.PROVIDER_UNAVAILABLE, not_before=retry_at)
+    assert payload == WakeParkedPayload(reason=ParkReason.PLAN_LIMIT, not_before=retry_at)
 
     # The item runs at the retry time: each record's next step a stagger
     # after the one before.
@@ -301,7 +301,7 @@ async def test_the_parks_on_one_mark_land_one_wake_that_resumes_them_staggered(
     # A park that names no time lands its hint alone, and a wake that names
     # none runs at once.
     assert len(step_rows(ctx, parks[0])) == 1
-    at_once = WakeParkedPayload(reason=ParkReason.PROVIDER_UNAVAILABLE)
+    at_once = WakeParkedPayload(reason=ParkReason.PLAN_LIMIT)
     assert not_before(WorkKind.WAKE_PARKED, at_once.model_dump(mode="json")) is None
 
 
@@ -322,7 +322,7 @@ async def test_a_wake_resumes_every_record_parked_for_its_reason_a_batch_at_a_ti
         record = await orchestrations.start(ctx, a_record())
         parked = advanced(
             record, utcnow(), record.created_by, cursor=0, total=3,
-            park=ParkReason.PROVIDER_UNAVAILABLE,
+            park=ParkReason.PLAN_LIMIT,
         )  # fmt: skip
         await storage.write_orchestration(ctx.org_id, parked, record.version, ())
         parks.append(parked)
@@ -336,7 +336,7 @@ async def test_a_wake_resumes_every_record_parked_for_its_reason_a_batch_at_a_ti
         await write(org_id, record, expected, rows)
 
     monkeypatch.setattr(storage, "write_orchestration", writes)
-    assert await orchestrations.wake(ctx, ParkReason.PROVIDER_UNAVAILABLE) == batch + 1
+    assert await orchestrations.wake(ctx, ParkReason.PLAN_LIMIT) == batch + 1
     for parked in parks:
         assert (await orchestrations.get(ctx, parked.id)).status is OrchestrationStatus.RUNNING
     steps = sorted(
@@ -345,7 +345,7 @@ async def test_a_wake_resumes_every_record_parked_for_its_reason_a_batch_at_a_ti
         if row.kind == work_row_kind(WorkKind.ORCHESTRATION)
     )
     assert [later - earlier for earlier, later in pairwise(steps)] == [timedelta(seconds=2)] * batch
-    assert await orchestrations.wake(ctx, ParkReason.PROVIDER_UNAVAILABLE) == 0
+    assert await orchestrations.wake(ctx, ParkReason.PLAN_LIMIT) == 0
 
 
 async def test_fail_is_conditioned_on_the_version_it_read(world: World) -> None:
