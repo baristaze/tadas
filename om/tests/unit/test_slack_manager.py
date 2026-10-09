@@ -16,7 +16,7 @@ import pytest
 
 from tadas.infra.exceptions import SecretNotFound
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.slack import SlackTokenRevoked
 from tadas.integrations.slack.twin import SlackTwinImpl
@@ -42,17 +42,26 @@ class World:
         self.storage = StorageMemoryImpl()
         self.infra = InfraLocalImpl(tmp_path)
         self.twin = SlackTwinImpl("test")
+        self.identity = IdentityProviderTwinImpl()
         self.managers: Managers = build_managers(
             self.storage,
             self.infra,
             TenancyOptions(dev_sign_in=True),
-            integrations=IntegrationsOverImpl(IdentityProviderAbsentImpl(), slack=self.twin),
+            integrations=IntegrationsOverImpl(self.identity, slack=self.twin),
         )
+
+    async def prove(self, email: str) -> None:
+        """The person signs in once through the identity provider, which
+        proves the address: an address the seeding or the local sign-in typed
+        names nobody to an integration until then (ADR 0090)."""
+        code = self.identity.issue_code(email)
+        await self.managers.tenancy.sign_in.sign_in_with_code(request(), code)
 
     async def org(self, slug: str) -> TenantContext:
         ctx, _ = await self.managers.tenancy.bootstrap(
             request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
         )
+        await self.prove(f"owner@{slug}.test")
         return ctx
 
     async def member(self, slug: str, email: str, role: Role = Role.MEMBER) -> TenantContext:
@@ -63,6 +72,7 @@ class World:
         memberships = await tenancy.sign_in.get_identity_memberships(identity, None, 10)
         org = next(m.org.id for m in memberships.items if m.org.slug == slug)
         session = await tenancy.sign_in.exchange_login(identity, org)
+        await self.prove(email)
         return await tenancy.authenticate(request(), session.token)
 
     async def install(self, ctx: TenantContext, team: str = "T0ACME") -> str:
