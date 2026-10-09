@@ -42,7 +42,13 @@ from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.accounts import DeleteAccountHandlerImpl
 from tadas.workers.maintenance.container import WorkerContainer
-from tadas.workers.maintenance.main import IDENTITY, IDENTITY_CREDENTIAL, build_loop
+from tadas.workers.maintenance.main import (
+    IDENTITY,
+    IDENTITY_CREDENTIAL,
+    PAYMENTS,
+    PAYMENTS_CREDENTIAL,
+    build_loop,
+)
 from tadas.workers.maintenance.providers import PROVIDER_WAIT, ProviderCalls
 
 LEASE = timedelta(seconds=30)
@@ -238,8 +244,14 @@ async def test_one_workers_failed_call_parks_the_next_without_a_call_until_one_a
 
     def worker() -> DeleteAccountHandlerImpl:
         calls = ProviderCalls(shared, IDENTITY, IDENTITY_CREDENTIAL, wait=wait)
+        payments = ProviderCalls(shared, PAYMENTS, PAYMENTS_CREDENTIAL, wait=wait)
         return DeleteAccountHandlerImpl(
-            container.managers.tenancy, container.identity_provider, calls
+            container.managers.tenancy,
+            container.managers.billing,
+            container.managers.slack,
+            container.identity_provider,
+            calls,
+            payments,
         )
 
     first, second = worker(), worker()
