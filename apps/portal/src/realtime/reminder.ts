@@ -1,13 +1,15 @@
 // A reminder as one flow with its effects handed in, so it runs in a test
-// without React. The push carries the task's id only, so the title is read
-// from the server; a task that cannot be read (deleted since, or the network
-// failed) is still announced, without its title.
-//
-// A reminder that fired while the portal was offline is announced too, once
-// the replay after the reconnect has read it back from the stream: one
-// notice each, by title, up to MISSED_REMINDERS_NAMED of them, and past that
-// one notice that counts them, which reads nothing.
+// without React. It is a notice on the channel (`channel.ts`), which hands
+// each one over once: a push at once, and a reminder that fired while the
+// portal was offline once the replay after the reconnect reads it back. The
+// push carries the task's id only, so the title is read from the server; a
+// task that cannot be read (deleted since, or the network failed) is still
+// announced, without its title. What one replay hands over is one notice
+// each, by title, up to MISSED_REMINDERS_NAMED of them, and past that one
+// notice that counts them, which reads nothing.
 import type { TaskView } from "@tadas/client";
+import type { ChannelDeps } from "./channel";
+import { reminderOf } from "./router";
 
 export interface ReminderEffects {
   /** Reads the task the push names. */
@@ -35,18 +37,19 @@ export async function announceReminder(taskId: string, effects: ReminderEffects)
   return message;
 }
 
-/** How many reminders read back by one replay are each announced by name. */
+/** How many reminders handed over at once are each announced by name. */
 export const MISSED_REMINDERS_NAMED = 3;
 
 export function missedRemindersMessage(count: number): string {
   return `You missed ${count} reminders while you were away.`;
 }
 
-/** Announces the reminders one replay read back, in stream order: each by its
- * task's title, one read a task, when there are at most
- * MISSED_REMINDERS_NAMED; otherwise one notice that counts them. A task
- * reminded twice counts once. Returns the messages shown. */
-export async function announceMissedReminders(
+/** Announces the reminders the channel handed over, in stream order: the one
+ * a push carries, or those one replay read back. Each by its task's title,
+ * one read a task, when there are at most MISSED_REMINDERS_NAMED; otherwise
+ * one notice that counts them. A task reminded twice counts once. Returns
+ * the messages shown. */
+export async function announceReminders(
   taskIds: readonly string[],
   effects: ReminderEffects,
 ): Promise<string[]> {
@@ -59,4 +62,16 @@ export async function announceMissedReminders(
   const shown: string[] = [];
   for (const id of distinct) shown.push(await announceReminder(id, effects));
   return shown;
+}
+
+/** The channel's notices, as reminders: a reminder is one, and what the
+ * channel hands over is announced. */
+export function reminderNotices(effects: ReminderEffects): Pick<ChannelDeps, "isAnnounced" | "announce"> {
+  return {
+    isAnnounced: (envelope) => reminderOf(envelope) !== null,
+    announce: (envelopes) => {
+      const reminded = envelopes.map(reminderOf).filter((id): id is string => id !== null);
+      void announceReminders(reminded, effects);
+    },
+  };
 }
