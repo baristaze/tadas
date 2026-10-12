@@ -1,14 +1,17 @@
-"""Following an import to its end. The import runs in the worker; the CLI
-opens the one channel, reads the import once the channel is open (so a
-change made before that read is in it, and one made after is pushed), and
-reads it again on every push about it. A push is a hint and the import is
-the truth. It stops when the import succeeded, parked, or failed."""
+"""The org's imports: how they are listed, how a short id names one, and
+following one to its end. The import runs in the worker; the CLI opens the
+one channel, reads the import once the channel is open (so a change made
+before that read is in it, and one made after is pushed), and reads it
+again on every push about it. A push is a hint and the import is the
+truth. It stops when the import succeeded, parked, or failed."""
 
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from datetime import UTC
 from typing import TextIO
 from uuid import UUID
 
+from tadas.apps.cli.model import SHORT_ID, short_id
 from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import Channel, State
@@ -16,6 +19,10 @@ from tadas.client.types import ImportView
 
 ENTITY = "orchestration"
 """The entity an import's pushes name: `orchestrations.orchestration.updated`."""
+
+RECENT = 20
+"""How many of the org's newest imports `imports` lists and a short id is
+resolved over."""
 
 OpenChannel = Callable[
     [ApiClient, Callable[[State], None], Callable[[], Awaitable[None]]],
@@ -59,12 +66,35 @@ def outcome(view: ImportView) -> str:
                 f"parked at row {view.cursor + 1}: the plan's active tasks are full "
                 f"({progress(view)}). An owner or an admin can change the plan in the "
                 "portal, under Settings, Billing, and the import goes on by itself; "
-                "or finish some tasks and press Resume on the tasks page"
+                f"or finish some tasks, then `tadas import --resume {short_id(view.id)}` "
+                "or Resume on the tasks page"
             )
         case "failed", _, reason if reason is not None:
             return f"failed: {reason.value.replace('_', ' ')} ({progress(view)})"
         case status, _, _:
             return f"{status}: {progress(view)}"
+
+
+def import_line(view: ImportView) -> str:
+    started = view.created_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+    return f"{short_id(view.id)}  {view.status.value:<9}  {started}  {progress(view)}"
+
+
+def import_table(views: Sequence[ImportView]) -> str:
+    """The org's imports, newest first: id, status, when it started (UTC), how far."""
+    header = f"{'ID':<{SHORT_ID}}  {'STATUS':<9}  {'STARTED (UTC)':<16}  PROGRESS"
+    return "\n".join([header, *(import_line(v) for v in views)])
+
+
+def resolve_import(reference: str, views: Sequence[ImportView]) -> ImportView:
+    """A full id or a unique tail of one, over the org's recent imports."""
+    wanted = reference.strip().lower()
+    matches = [v for v in views if wanted and str(v.id).endswith(wanted)]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise LookupError(f"no recent import matches {reference!r}; `tadas imports` lists them")
+    raise LookupError(f"{reference!r} matches more than one import; give more of the id")
 
 
 async def follow(
