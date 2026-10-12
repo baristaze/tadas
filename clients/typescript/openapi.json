@@ -566,6 +566,20 @@
         "title": "BulkTasksView",
         "type": "object"
       },
+      "CancelImportRequest": {
+        "additionalProperties": false,
+        "description": "Why the person cancels, kept in the logs with the import and not on\nit. The body may be left out.",
+        "properties": {
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "CancelImportRequest",
+        "type": "object"
+      },
       "CompPlanRequest": {
         "additionalProperties": false,
         "description": "The plan an operator grants without a payment; null, or free, takes\nthe grant back.",
@@ -1191,7 +1205,7 @@
         "type": "object"
       },
       "ImportView": {
-        "description": "An import of tasks from a CSV file, read as it runs. `status` is\n`running`, `parked`, `succeeded`, or `failed`. `total` is the file's data\nrows, null until the first step counted them; `cursor` is how many were\nread; `created` the tasks the import made, `skipped` the rows it passed\nover, and `row_errors` the first twenty of those with the reason. A\n`parked` import names its `park_reason`: `plan_limit` is the plan's bound\non active tasks, lifted by a higher plan (which resumes it) or by tasks\nfinished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names\nits `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,\n`no_title_column`, `file_gone`, or `defect`. Every change is pushed as\n`orchestrations.orchestration.updated` on the realtime channel.",
+        "description": "An import of tasks from a CSV file, read as it runs. `status` is\n`running`, `parked`, `succeeded`, `failed`, or `cancelled`. `total` is the\nfile's data rows, null until the first step counted them; `cursor` is how\nmany were read; `created` the tasks the import made, `skipped` the rows it\npassed over, and `row_errors` the first twenty of those with the reason. A\n`parked` import names its `park_reason`: `plan_limit` is the plan's bound\non active tasks, lifted by a higher plan (which resumes it) or by tasks\nfinished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names\nits `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,\n`no_title_column`, `file_gone`, or `defect`. A running or a parked one is\nended by `POST /v1/tasks/imports/{id}/cancel`: it settles `cancelled`,\nkeeping the tasks it made, and nothing runs it again. Every change is\npushed as `orchestrations.orchestration.updated` on the realtime channel.",
         "properties": {
           "created": {
             "title": "Created",
@@ -12764,6 +12778,115 @@
           }
         },
         "summary": "Get Import",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/imports/{import_id}/cancel": {
+      "post": {
+        "description": "A running or a parked import ends: it settles `cancelled`, the tasks it\nmade stay, and no plan that rises and no Resume runs it again. Whoever may\nresume it may cancel it. A cancelled one is answered as it is; one that\nsucceeded or failed is refused (422).",
+        "operationId": "cancel_import_v1_tasks_imports__import_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CancelImportRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Import",
         "tags": [
           "tasks"
         ]

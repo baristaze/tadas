@@ -1359,6 +1359,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/imports/{import_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Import
+         * @description A running or a parked import ends: it settles `cancelled`, the tasks it
+         *     made stay, and no plan that rises and no Resume runs it again. Whoever may
+         *     resume it may cancel it. A cancelled one is answered as it is; one that
+         *     succeeded or failed is refused (422).
+         */
+        post: operations["cancel_import_v1_tasks_imports__import_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/imports/{import_id}/resume": {
         parameters: {
             query?: never;
@@ -1829,6 +1852,18 @@ export interface components {
             skipped_count: number;
         };
         /**
+         * CancelImportRequest
+         * @description Why the person cancels, kept in the logs with the import and not on
+         *     it. The body may be left out.
+         */
+        CancelImportRequest: {
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /**
          * CompPlanRequest
          * @description The plan an operator grants without a payment; null, or free, takes
          *     the grant back.
@@ -2140,16 +2175,18 @@ export interface components {
         /**
          * ImportView
          * @description An import of tasks from a CSV file, read as it runs. `status` is
-         *     `running`, `parked`, `succeeded`, or `failed`. `total` is the file's data
-         *     rows, null until the first step counted them; `cursor` is how many were
-         *     read; `created` the tasks the import made, `skipped` the rows it passed
-         *     over, and `row_errors` the first twenty of those with the reason. A
+         *     `running`, `parked`, `succeeded`, `failed`, or `cancelled`. `total` is the
+         *     file's data rows, null until the first step counted them; `cursor` is how
+         *     many were read; `created` the tasks the import made, `skipped` the rows it
+         *     passed over, and `row_errors` the first twenty of those with the reason. A
          *     `parked` import names its `park_reason`: `plan_limit` is the plan's bound
          *     on active tasks, lifted by a higher plan (which resumes it) or by tasks
          *     finished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names
          *     its `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,
-         *     `no_title_column`, `file_gone`, or `defect`. Every change is pushed as
-         *     `orchestrations.orchestration.updated` on the realtime channel.
+         *     `no_title_column`, `file_gone`, or `defect`. A running or a parked one is
+         *     ended by `POST /v1/tasks/imports/{id}/cancel`: it settles `cancelled`,
+         *     keeping the tasks it made, and nothing runs it again. Every change is
+         *     pushed as `orchestrations.orchestration.updated` on the realtime channel.
          */
         ImportView: {
             /** Created */
@@ -6831,6 +6868,45 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_import_v1_tasks_imports__import_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CancelImportRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
