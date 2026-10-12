@@ -3,9 +3,10 @@ import type { AddFileRequest, FileView, ImportPageView, ImportView, StartImportR
 import { api } from "../app/api";
 import { keys } from "./keys";
 
-/** The org's newest imports; the tasks page shows the one that matters now.
- * A push about any import refreshes it, since its key starts with the entity. */
-export const RECENT_IMPORTS = 5;
+/** The org's newest imports; the tasks page shows each one that runs, waits,
+ * or ended lately, so a few imports stacked at once all fit. A push about any
+ * import refreshes it, since its key starts with the entity. */
+export const RECENT_IMPORTS = 20;
 
 export function useRecentImports(enabled = true) {
   return useQuery({

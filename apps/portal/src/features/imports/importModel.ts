@@ -1,22 +1,53 @@
-// Pure: which import the tasks page shows, and how it is said.
+// Pure: which imports the tasks page shows, and how each is said.
 import type { BillingView, ImportView, Plan, PlanLimit } from "@tadas/client";
 
 /** How long before the page opened an import may have ended and still show. */
 export const ENDED_SHOWN_MS = 15 * 60 * 1000;
 
-/** The import to show: the newest one, while it runs or waits, or once it
- * ended, until the person dismisses it. One that ended well before the page
- * opened (`openedAt`) is not news, and one older than the newest shows
- * nothing. */
-export function shownImport(
+/** The imports to show, newest first: every one that runs or waits, and each
+ * one that ended, until the person dismisses it. One that ended well before
+ * the page opened (`openedAt`) is not news. A second import stacks beside
+ * the first, so none a person started leaves the page while it is open. */
+export function shownImports(
   items: readonly ImportView[],
   dismissed: ReadonlySet<string>,
   openedAt: number,
-): ImportView | null {
-  const newest = items[0];
-  if (!newest || dismissed.has(newest.id)) return null;
-  if (newest.finished_at !== null && openedAt - Date.parse(newest.finished_at) > ENDED_SHOWN_MS) return null;
-  return newest;
+): ImportView[] {
+  return items
+    .filter((view) => {
+      if (view.finished_at === null) return true;
+      if (dismissed.has(view.id)) return false;
+      return openedAt - Date.parse(view.finished_at) <= ENDED_SHOWN_MS;
+    })
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+/** What one import's card draws. */
+export interface ImportCard {
+  id: string;
+  headline: string;
+  running: boolean;
+  parked: boolean;
+  parkedOnThePlan: boolean;
+  ended: boolean;
+  failed: boolean;
+  skipped: string[];
+  /** How far a running import is, when its total is known. */
+  percent: number | null;
+}
+
+export function importCard(view: ImportView): ImportCard {
+  return {
+    id: view.id,
+    headline: headline(view),
+    running: isRunning(view),
+    parked: view.status === "parked",
+    parkedOnThePlan: isParkedOnThePlan(view),
+    ended: view.finished_at !== null,
+    failed: view.status === "failed",
+    skipped: skippedLines(view),
+    percent: view.total ? Math.round((view.created / view.total) * 100) : null,
+  };
 }
 
 export function isRunning(view: ImportView): boolean {

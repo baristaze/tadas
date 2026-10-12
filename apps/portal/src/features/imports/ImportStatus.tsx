@@ -1,46 +1,57 @@
-// The import the page follows: a line of how far it is, pushed as the worker
-// moves it; when it parks on the plan, the upgrade and a Resume; when it
-// ends, what it did, until dismissed.
+// The imports the page follows, one card each, newest first: a line of how
+// far each is, pushed as the worker moves it; when one parks on the plan, the
+// upgrade and its Resume; when one ends, what it did, until dismissed.
 import { Button, Card, LinkButton, Muted } from "../../design/kit";
 import { tokens } from "../../design/tokens";
+import type { ImportCard } from "./importModel";
 import type { ImportVm } from "./useImportVm";
 
 export function ImportStatus({ vm }: { vm: ImportVm }) {
-  const shown = vm.shown;
-  if (!shown) return null;
-  const percent = shown.total ? Math.round((shown.created / shown.total) * 100) : null;
+  if (vm.cards.length === 0) return null;
+  return (
+    <div aria-label="Imports" style={{ display: "grid", gap: tokens.space.sm }}>
+      {vm.cards.map((card) => (
+        <ImportStatusCard key={card.id} card={card} vm={vm} />
+      ))}
+    </div>
+  );
+}
+
+function ImportStatusCard({ card, vm }: { card: ImportCard; vm: ImportVm }) {
   return (
     <Card>
       <div role="status" aria-live="polite" style={{ display: "grid", gap: tokens.space.sm }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: tokens.space.md, justifyContent: "space-between" }}>
-          <span style={{ fontWeight: shown.failed ? 600 : undefined, color: shown.failed ? tokens.color.danger : undefined }}>
-            {shown.headline}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: tokens.space.md,
+            justifyContent: "space-between",
+          }}
+        >
+          <span style={{ fontWeight: card.failed ? 600 : undefined, color: card.failed ? tokens.color.danger : undefined }}>
+            {card.headline}
           </span>
-          {shown.ended ? <LinkButton onClick={vm.dismiss}>Dismiss</LinkButton> : null}
+          <ImportActions card={card} vm={vm} />
         </div>
-        {shown.running && percent !== null ? (
+        {card.running && card.percent !== null ? (
           <div className="tadas-progress" aria-hidden="true">
-            <div className="tadas-progress-bar" style={{ width: `${percent}%` }} />
+            <div className="tadas-progress-bar" style={{ width: `${card.percent}%` }} />
           </div>
         ) : null}
-        {shown.parkedOnThePlan ? (
-          <div style={{ display: "flex", gap: tokens.space.sm, flexWrap: "wrap", alignItems: "center" }}>
-            {vm.canUpgrade ? <Button onClick={vm.upgrade}>See plans</Button> : null}
-            <Button tone="plain" onClick={() => void vm.resume()} disabled={vm.resuming}>
-              Resume
-            </Button>
-            <Muted>
-              {vm.canUpgrade
-                ? "A higher plan resumes it by itself. Or finish some tasks, then Resume."
-                : "Ask an owner or an admin to upgrade, or finish some tasks, then Resume."}
-            </Muted>
-          </div>
+        {card.parkedOnThePlan ? (
+          <Muted>
+            {vm.canUpgrade
+              ? "A higher plan resumes it by itself. Or finish some tasks, then Resume."
+              : "Ask an owner or an admin to upgrade, or finish some tasks, then Resume."}
+          </Muted>
         ) : null}
-        {shown.skipped.length > 0 && !shown.running ? (
+        {card.skipped.length > 0 && !card.running ? (
           <details>
             <summary style={{ cursor: "pointer", color: tokens.color.muted }}>Skipped rows</summary>
             <ul style={{ margin: `${tokens.space.xs} 0 0`, paddingLeft: tokens.space.lg }}>
-              {shown.skipped.map((line) => (
+              {card.skipped.map((line) => (
                 <li key={line}>
                   <Muted>{line}</Muted>
                 </li>
@@ -50,5 +61,22 @@ export function ImportStatus({ vm }: { vm: ImportVm }) {
         ) : null}
       </div>
     </Card>
+  );
+}
+
+/** Everything a person can do to one import, in one place: the upgrade and
+ * Resume while it waits on the plan, Dismiss once it ended. */
+function ImportActions({ card, vm }: { card: ImportCard; vm: ImportVm }) {
+  if (!card.parked && !card.ended) return null;
+  return (
+    <div style={{ display: "flex", gap: tokens.space.sm, alignItems: "center", flexShrink: 0 }}>
+      {card.parkedOnThePlan && vm.canUpgrade ? <Button onClick={vm.upgrade}>See plans</Button> : null}
+      {card.parked ? (
+        <Button tone="plain" onClick={() => void vm.resume(card.id)} disabled={vm.resuming(card.id)}>
+          Resume
+        </Button>
+      ) : null}
+      {card.ended ? <LinkButton onClick={() => vm.dismiss(card.id)}>Dismiss</LinkButton> : null}
+    </div>
   );
 }
