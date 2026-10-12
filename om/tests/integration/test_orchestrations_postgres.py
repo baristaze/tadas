@@ -1,10 +1,11 @@
 """The two long-running records over Postgres: every manager over the
 relational root, the file in the local store. An import on Free parks at
 the plan's bound in the step's own commit, a plan that rises queues its wake
-in the account's commit, and the woken import finishes; the day's cleanup
-opens once, archives the old done task, and leaves the one reopened. A
-candidate reopened between a step's read and its write is the storage
-contract's case."""
+in the account's commit, and the woken import finishes; one a person cancels
+settles at its cursor, and nothing runs it again. The day's cleanup opens
+once, archives the old done task, and leaves the one reopened. A candidate
+reopened between a step's read and its write is the storage contract's
+case."""
 
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -16,6 +17,7 @@ from unit.test_task_import import World as ImportWorld
 from unit.test_task_import import titled
 
 from tadas.om.billing.types.plan import Plan
+from tadas.om.exceptions import PreconditionFailed
 from tadas.om.orchestrations.types.orchestration import OrchestrationStatus, ParkReason
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings
@@ -80,3 +82,25 @@ async def test_the_days_cleanup_archives_the_old_done_task_and_leaves_the_rest(
     assert (finished.status, finished.applied) == (OrchestrationStatus.SUCCEEDED, 1)
     assert await world.archived_titles(ctx) == ["old"]
     assert await world.done_titles(ctx) == ["recent"]
+
+
+async def test_a_cancelled_import_settles_at_its_cursor_and_nothing_runs_it_again(
+    storage: StoragePostgresImpl, tmp_path: Path
+) -> None:
+    world = ImportWorld(tmp_path, storage)
+    orchestrations = world.managers.orchestrations
+    ctx = await world.org(Plan.FREE)
+    started = await world.start(ctx, titled(25))
+    parked = await world.run(ctx, started.id)
+    assert (parked.status, parked.cursor) == (OrchestrationStatus.PARKED, 10)
+    ended = await orchestrations.cancel(ctx, started.id, "the wrong file")
+    assert (ended.status, ended.cursor, ended.applied) == (OrchestrationStatus.CANCELLED, 10, 10)
+    assert await orchestrations.get(ctx, started.id) == ended
+    # A plan that rises wakes nothing, and a step that read the record before
+    # the cancel lands nothing.
+    await world.managers.billing.grant_seeded_plan(ctx, Plan.PRO)
+    assert await orchestrations.wake(ctx, ParkReason.PLAN_LIMIT) == 0
+    with pytest.raises(PreconditionFailed):
+        await world.managers.tasks.imports.step_import(ctx, started)
+    assert await orchestrations.get(ctx, started.id) == ended
+    assert len(await world.open_titles(ctx)) == 10

@@ -189,15 +189,16 @@ the API checked and queued), each with a dead-letter queue named with
    sent back. The long-running records
    are `orchestrations`, one outcome per kind and state,
    `<kind>_<state>`: `_running` when a record starts, `_parked` when a
-   step waits, `_resumed`, `_succeeded`, and `_failed`. The kinds are
-   an import (`task_import_*`, which parks on the plan's bound) and the
-   daily cleanup of old done tasks (`task_cleanup_*`, whose `_running`
-   is the sweep opening an org's day). A park on the plan is a
-   tenant's own limit, not a finding. A parked record is woken by the
-   event that clears its reason (`WAKE_PARKED`) or by a person; one
-   that stays parked is read beside the billing lines of step 8. A
-   `_failed` is a bound of the file (a person's to fix; the worker log
-   line says which), or `defect`, a step that still failed
+   step waits, `_resumed`, `_succeeded`, `_failed`, and `_cancelled`, a
+   person's end. The kinds are an import (`task_import_*`, which parks
+   on the plan's bound) and the daily cleanup of old done tasks
+   (`task_cleanup_*`, whose `_running` is the sweep opening an org's
+   day). A park on the plan is a tenant's own limit, not a finding. A
+   parked record is woken by the event that clears its reason
+   (`WAKE_PARKED`) or by a person; one that stays parked is read beside
+   the billing lines of step 8. A `_failed` is a bound of the file (a
+   person's to fix; the worker log line says which), or `defect`, a
+   step that still failed
    on its item's last attempt, which the maintenance log names at level
    `ERROR` with the record's id and the org's (`<kind> <id> in org
    <org> failed: defect ...`), so step 7 finds it. A running record
@@ -531,7 +532,7 @@ the API checked and queued), each with a dead-letter queue named with
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route (cloud: one p95 <ms, or none>, every route together)
 - Workers: <outcomes per kind>, oldest ready item <age>, failed in the last fifteen minutes <n>, oldest pending outbox row <age>
 - Failed work items: <item id, kind, org id, reason; or none>
-- Orchestrations: imports <started, parked, succeeded, failed>, cleanups <opened, succeeded, failed>, defects <record and org ids, or none>
+- Orchestrations: imports <started, parked, succeeded, failed, cancelled>, cleanups <opened, succeeded, failed>, defects <record and org ids, or none>
 - Queues: webhooks <n> (dead <n>), slack <n> (dead <n>), deliveries <outcomes>; services api, maintenance <running>/<desired>
 - Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, webhook <configured | off: tadas/<env>/workos_webhook_secret | signature refused: tadas/<env>/workos_webhook_secret | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack <configured | off: tadas/<env>/slack_client_secret, tadas/<env>/slack_signing_secret, slack_client_id | signature refused: tadas/<env>/slack_signing_secret | not in the window>, broken installations <org ids, or none>
 - Pool and cache: <checkouts, timeouts, hits, misses>

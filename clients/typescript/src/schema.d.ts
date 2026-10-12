@@ -2749,7 +2749,7 @@ export interface components {
          * OrchestrationStatus
          * @enum {string}
          */
-        OrchestrationStatus: "running" | "parked" | "succeeded" | "failed";
+        OrchestrationStatus: "running" | "parked" | "succeeded" | "failed" | "cancelled";
         /**
          * OrgDeletedView
          * @description The org is gone for everyone in it: `deleted_at` is when. `session` is

@@ -469,6 +469,7 @@ class OrchestrationStatus(StrEnum):
     parked = 'parked'
     succeeded = 'succeeded'
     failed = 'failed'
+    cancelled = 'cancelled'
 
 
 class OrgKind(StrEnum):
