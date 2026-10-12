@@ -4,7 +4,7 @@ import { storeFetch } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { mediaCalls } from "../../queries/attachments";
 import { useBilling } from "../../queries/billing";
-import { importCalls, useRecentImports, useResumeImport } from "../../queries/imports";
+import { importCalls, useCancelImport, useRecentImports, useResumeImport } from "../../queries/imports";
 import { keys } from "../../queries/keys";
 import { useMe } from "../../queries/tenancy";
 import { notify } from "../../store/notices";
@@ -27,6 +27,7 @@ export function useImportVm(canWrite: boolean) {
   const recent = useRecentImports(canWrite);
   const billing = useBilling();
   const resume = useResumeImport();
+  const cancel = useCancelImport();
   const orgId = useMe().data?.org.id ?? null;
   const dismissedByOrg = usePreferencesStore((s) => s.dismissedImports);
   const dismissImport = usePreferencesStore((s) => s.dismissImport);
@@ -36,6 +37,8 @@ export function useImportVm(canWrite: boolean) {
   const [picked, setPicked] = useState<File | null>(null);
   const [starting, setStarting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // The import whose Cancel asks before it ends it: a cancel is final.
+  const [asking, setAsking] = useState<string | null>(null);
   // An import that ended long before the page opened is not news; one that
   // ends while it is open stays until dismissed.
   const [openedAt] = useState(() => Date.now());
@@ -88,6 +91,17 @@ export function useImportVm(canWrite: boolean) {
     }
   };
 
+  const cancelImport = async (id: string) => {
+    try {
+      await cancel.mutateAsync(id);
+    } catch (caught) {
+      notify(errorMessage(caught, "Could not cancel the import."));
+    } finally {
+      setAsking(null);
+      refresh();
+    }
+  };
+
   const upgrade = () => {
     if (billing.data) openUpgrade(activeTasksLimit(billing.data));
   };
@@ -110,6 +124,13 @@ export function useImportVm(canWrite: boolean) {
     /** Whether this import's Resume is on its way. */
     resuming: (id: string) => resume.isPending && resume.variables === id,
     resume: resumeImport,
+    /** Whether this import's Cancel waits on the person's yes. */
+    askingCancel: (id: string) => asking === id,
+    askCancel: (id: string) => setAsking(id),
+    keepImport: () => setAsking(null),
+    /** Whether this import's cancel is on its way. */
+    cancelling: (id: string) => cancel.isPending && cancel.variables === id,
+    cancel: cancelImport,
     upgrade,
     canUpgrade: billing.data?.can_manage ?? false,
     dismiss: (id: string) => {

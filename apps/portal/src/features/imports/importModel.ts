@@ -93,6 +93,8 @@ export function headline(view: ImportView): string {
       }.`;
     case "failed":
       return `Import failed: ${FAILURES[view.fail_reason ?? "defect"] ?? FAILURES.defect}`;
+    case "cancelled":
+      return `Import cancelled. ${progressLine(view)}.`;
     default:
       return progressLine(view);
   }

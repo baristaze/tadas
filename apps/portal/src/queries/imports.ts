@@ -31,3 +31,10 @@ export function useResumeImport() {
     mutationFn: (id: string) => api.post<ImportView>(`/v1/tasks/imports/${id}/resume`),
   });
 }
+
+/** Ends a running or a parked import; the tasks it made stay. */
+export function useCancelImport() {
+  return useMutation({
+    mutationFn: (id: string) => api.post<ImportView>(`/v1/tasks/imports/${id}/cancel`),
+  });
+}
