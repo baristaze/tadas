@@ -35,7 +35,6 @@ from tadas.services.api.types.tasks import (
     UpdateTaskRequest,
 )
 
-
 NO_REASON = "none given"
 """What a cancel logs as its reason when the person gave none."""
 
