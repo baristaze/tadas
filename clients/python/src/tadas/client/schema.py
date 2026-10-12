@@ -80,6 +80,17 @@ class Ids(RootModel[list[UUID]]):
     root: Annotated[list[UUID], Field(max_length=1000, title='Ids')]
 
 
+class CancelImportRequest(BaseModel):
+    """
+    Why the person cancels, kept in the logs with the import and not on
+    it. The body may be left out.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    reason: Annotated[str | None, Field(max_length=500, title='Reason')] = ''
+
+
 class ConfirmTotpRequest(BaseModel):
     """
     The first code from the authenticator, which confirms the secret.
@@ -1271,16 +1282,18 @@ class IdentityView(BaseModel):
 class ImportView(BaseModel):
     """
     An import of tasks from a CSV file, read as it runs. `status` is
-    `running`, `parked`, `succeeded`, or `failed`. `total` is the file's data
-    rows, null until the first step counted them; `cursor` is how many were
-    read; `created` the tasks the import made, `skipped` the rows it passed
-    over, and `row_errors` the first twenty of those with the reason. A
+    `running`, `parked`, `succeeded`, `failed`, or `cancelled`. `total` is the
+    file's data rows, null until the first step counted them; `cursor` is how
+    many were read; `created` the tasks the import made, `skipped` the rows it
+    passed over, and `row_errors` the first twenty of those with the reason. A
     `parked` import names its `park_reason`: `plan_limit` is the plan's bound
     on active tasks, lifted by a higher plan (which resumes it) or by tasks
     finished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names
     its `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,
-    `no_title_column`, `file_gone`, or `defect`. Every change is pushed as
-    `orchestrations.orchestration.updated` on the realtime channel.
+    `no_title_column`, `file_gone`, or `defect`. A running or a parked one is
+    ended by `POST /v1/tasks/imports/{id}/cancel`: it settles `cancelled`,
+    keeping the tasks it made, and nothing runs it again. Every change is
+    pushed as `orchestrations.orchestration.updated` on the realtime channel.
     """
     created: Annotated[int, Field(title='Created')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]

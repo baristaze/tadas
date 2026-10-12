@@ -24,6 +24,7 @@ uv run tadas detach 8b949fce 1c2d3e4f
 uv run tadas import tasks.csv        # title, notes, due_on, assignee_email; follows it to the end
 uv run tadas imports                 # the org's recent imports and their status; --json
 uv run tadas import --resume 5057e18d   # a parked import goes on; no new import starts
+uv run tadas import --cancel 5057e18d   # it ends where it stands; --reason "why"
 uv run tadas listen                  # the team's tasks, reminders among them; --mine for yours
 uv run tadas logout
 ```
@@ -73,7 +74,11 @@ uv run tadas logout
   takes a full id or a short one `imports` shows, resumes that import,
   and follows it with the same lines and exit codes; an id no recent
   import has is refused (exit 1). Going on this way never imports the
-  same rows twice.
+  same rows twice. `import --cancel <id>` ends a running or a parked
+  import, with an optional `--reason` kept in the logs: it reads
+  `cancelled` with the row it stopped at, the tasks it made stay, and
+  nothing runs it again (exit 0). A followed import someone cancels ends
+  the follow with that line (exit 1).
 - `src/tadas/apps/cli/model.py` is pure and unit tested: how a change is
   told, which tasks are mine, how a short id resolves. The short id is
   the tail of the task's id, because ids are time-ordered and every task

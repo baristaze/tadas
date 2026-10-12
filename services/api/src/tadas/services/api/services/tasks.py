@@ -10,6 +10,7 @@ from tadas.services.api.types.tasks import (
     AddTaskRequest,
     BulkTasksRequest,
     BulkTasksView,
+    CancelImportRequest,
     ImportPageView,
     ImportView,
     MoveTaskRequest,
@@ -79,6 +80,11 @@ class TasksServiceInterface(ABC):
 
     @abstractmethod
     async def resume_import(self, ctx: TenantContext, import_id: UUID) -> ImportView: ...
+
+    @abstractmethod
+    async def cancel_import(
+        self, ctx: TenantContext, import_id: UUID, body: CancelImportRequest | None
+    ) -> ImportView: ...
 
     @abstractmethod
     async def create_task(

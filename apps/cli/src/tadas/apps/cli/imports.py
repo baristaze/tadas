@@ -3,7 +3,8 @@ following one to its end. The import runs in the worker; the CLI opens the
 one channel, reads the import once the channel is open (so a change made
 before that read is in it, and one made after is pushed), and reads it
 again on every push about it. A push is a hint and the import is the
-truth. It stops when the import succeeded, parked, or failed."""
+truth. It stops when the import succeeded, parked, failed, or was
+cancelled."""
 
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
@@ -67,10 +68,16 @@ def outcome(view: ImportView) -> str:
                 f"({progress(view)}). An owner or an admin can change the plan in the "
                 "portal, under Settings, Billing, and the import goes on by itself; "
                 f"or finish some tasks, then `tadas import --resume {short_id(view.id)}` "
-                "or Resume on the tasks page"
+                "or Resume on the tasks page. "
+                f"`tadas import --cancel {short_id(view.id)}` ends it instead"
             )
         case "failed", _, reason if reason is not None:
             return f"failed: {reason.value.replace('_', ' ')} ({progress(view)})"
+        case "cancelled", _, _:
+            return (
+                f"cancelled at row {view.cursor + 1} ({progress(view)}): the tasks it "
+                "made stay, and the rest of the file is not imported"
+            )
         case status, _, _:
             return f"{status}: {progress(view)}"
 

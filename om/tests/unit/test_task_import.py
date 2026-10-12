@@ -1,8 +1,9 @@
 """The import of tasks from a CSV file, over the memory roots: the steps a
 worker takes, called here one after another. Every outcome: done, rows
 skipped, a park on the plan's bound and its wake by a plan that rose or by a
-person, a failure on each bound, and a step that died before its commit or
-ran twice, neither of which makes a task twice."""
+person, a person's cancel that no wake undoes, a failure on each bound, and a
+step that died before its commit or ran twice, neither of which makes a task
+twice."""
 
 from collections.abc import Sequence
 from pathlib import Path
@@ -14,15 +15,17 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
-from tadas.om.exceptions import PreconditionFailed, ValidationFailed
+from tadas.om.exceptions import NotFound, PreconditionFailed, ValidationFailed
 from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.orchestrations.rules import ROW_ERRORS_KEPT
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
+    OrchestrationKind,
     OrchestrationStatus,
     ParkReason,
     Step,
+    TaskCleanupInput,
 )
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.root import Managers, build_managers
@@ -235,6 +238,64 @@ async def test_resume_answers_a_running_import_as_it_is_and_refuses_a_settled_on
     await world.run(ctx, started.id)
     with pytest.raises(ValidationFailed):
         await world.managers.tasks.imports.resume_import(ctx, started.id)
+
+
+async def test_a_cancelled_import_stays_cancelled_when_the_plan_rises(world: World) -> None:
+    """Two imports of the same rows park on a full plan. Without a cancel, the
+    plan's rise wakes both and each makes every row a task: each row twice.
+    The person cancels the first, and the rise runs only the second."""
+    ctx = await world.org(Plan.FREE)
+    for n in range(10):
+        await world.managers.tasks.create_task(ctx, _task(ctx, f"Mine {n}"))
+    first = await world.run(ctx, (await world.start(ctx, titled(15))).id)
+    second = await world.run(ctx, (await world.start(ctx, titled(15))).id)
+    for parked in (first, second):
+        assert (parked.status, parked.park_reason) == (
+            OrchestrationStatus.PARKED,
+            ParkReason.PLAN_LIMIT,
+        )
+        assert (parked.cursor, parked.applied) == (0, 0)
+
+    cancelled = await world.managers.tasks.imports.cancel_import(ctx, first.id, "started twice")
+    assert cancelled.status is OrchestrationStatus.CANCELLED
+    assert cancelled.park_reason is None and cancelled.finished_at is not None
+    again = await world.managers.tasks.imports.cancel_import(ctx, first.id, "again")
+    assert again == cancelled, "a cancelled import is answered as it is"
+
+    await world.managers.billing.grant_seeded_plan(ctx, Plan.PRO)
+    assert await world.managers.orchestrations.wake(ctx, ParkReason.PLAN_LIMIT) == 1
+    done = await world.run(ctx, second.id)
+    assert (done.status, done.applied) == (OrchestrationStatus.SUCCEEDED, 15)
+    imported = [t for t in await world.open_titles(ctx) if t.startswith("Task ")]
+    assert imported == [f"Task {n}" for n in range(1, 16)], "every row is a task once"
+
+    with pytest.raises(ValidationFailed):
+        await world.managers.tasks.imports.resume_import(ctx, first.id)
+    assert await world.run(ctx, first.id) == cancelled, "the cancelled import never ran again"
+    with pytest.raises(ValidationFailed):
+        await world.managers.tasks.imports.cancel_import(ctx, second.id, "too late")
+
+
+async def test_a_cancel_names_an_import_and_never_another_kinds_record(world: World) -> None:
+    ctx = await world.org(Plan.TEAM)
+    now = utcnow()
+    cleanup = await world.managers.orchestrations.start(
+        ctx,
+        Orchestration(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            kind=OrchestrationKind.TASK_CLEANUP,
+            input=TaskCleanupInput(older_than_days=90, before=now).model_dump(mode="json"),
+            period=now.date().isoformat(),
+        ),
+    )
+    with pytest.raises(NotFound):
+        await world.managers.tasks.imports.cancel_import(ctx, cleanup.id, "not an import")
+    kept = await world.managers.orchestrations.get(ctx, cleanup.id)
+    assert kept.status is OrchestrationStatus.RUNNING
 
 
 @pytest.mark.parametrize(

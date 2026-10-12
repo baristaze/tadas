@@ -935,6 +935,16 @@ class ApiClient:
         resumed = await self.request("POST", f"/v1/tasks/imports/{import_id}/resume")
         return ImportView.model_validate(resumed)
 
+    async def cancel_import(self, import_id: UUID, reason: str | None = None) -> ImportView:
+        """Ends a running or a parked import; the tasks it made stay. `reason`
+        is logged with it."""
+        cancelled = await self.request(
+            "POST",
+            f"/v1/tasks/imports/{import_id}/cancel",
+            json=None if reason is None else {"reason": reason},
+        )
+        return ImportView.model_validate(cancelled)
+
     # Events and the channel
 
     async def events_after(self, after_seq: int, limit: int = LIMIT_MAX) -> list[EventView]:

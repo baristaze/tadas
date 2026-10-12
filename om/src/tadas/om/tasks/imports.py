@@ -46,6 +46,17 @@ class TasksImportsManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def cancel_import(
+        self, ctx: TenantContext, import_id: UUID, reason: str
+    ) -> Orchestration:
+        """A person's end of a running or a parked import: it settles
+        `cancelled` and keeps the tasks it made, and no wake or resume runs
+        it again. It takes the permission `resume_import` takes. A cancelled
+        import is answered as it is; one that succeeded or failed is refused
+        (`ValidationFailed`). `reason` is the person's why, logged with it."""
+        ...
+
+    @abstractmethod
     async def step_import(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         """One step of an import: reads the file, checks its bounds, and makes
         the tasks of the next batch of rows in one commit with the record's

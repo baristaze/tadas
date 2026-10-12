@@ -64,7 +64,7 @@ describe("the words", () => {
     expect(headline(view({ skipped: 3 }))).toBe("Importing tasks: created 20 of 50, skipped 3 rows.");
   });
 
-  it("says a park on the plan, the end, and a failure", () => {
+  it("says a park on the plan, the end, a failure, and a cancel", () => {
     const parked = view({ status: "parked", park_reason: "plan_limit", created: 10, cursor: 10 });
     expect(headline(parked)).toBe("Import paused at your plan's limit of active tasks. Created 10 of 50.");
     expect(headline(view({ status: "succeeded", created: 48, skipped: 2 }))).toBe(
@@ -72,6 +72,9 @@ describe("the words", () => {
     );
     expect(headline(view({ status: "failed", fail_reason: "no_title_column" }))).toBe(
       "Import failed: the file has no title column.",
+    );
+    expect(headline(view({ status: "cancelled", created: 10, cursor: 10 }))).toBe(
+      "Import cancelled. Created 10 of 50.",
     );
   });
 

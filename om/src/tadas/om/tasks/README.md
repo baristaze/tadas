@@ -175,11 +175,15 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   take the org past its plan's active tasks, the import parks there and
   keeps the tasks it made. A plan that rises wakes it; so does Resume,
   after tasks were finished. It goes on from the row it stopped at.
+- **A person ends an import.** Cancel settles a running or a parked
+  import `cancelled`. The tasks it made stay, the rest of the file is
+  not imported, and no plan that rises and no Resume runs it again.
+  Whoever may resume an import may cancel it.
 - **A second import stacks.** An import started while another is open
   runs beside it, and each parks and resumes on its own
   ([ADR 1002](../../../../../docs/adr/1002-a-second-import-stacks-beside-the-first.md)).
   Two imports of one file make each task twice; Resume goes on with the
-  parked one instead.
+  parked one instead, and Cancel ends the one no longer wanted.
 - **A row makes one task, however often its step runs.** A task's id is
   derived from the import and the row number, so a step that runs twice
   meets its tasks already there.

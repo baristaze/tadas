@@ -2,14 +2,15 @@
 the orgs, the switch between them, who the session is, the task verbs
 (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`), a task's files
 (`attach`, `attachments`, `download`, `detach`), `import`, which follows
-its import to the end, or resumes a parked one and follows it, and
-`imports`, the org's recent imports. `listen` stays and prints every change the
-team makes to its tasks as it happens. Every command is a thin call into
-the client; the API decides, the CLI shows. A verb that changes a task
-reads it first and sends the version it read, so a change that raced
-another is refused (exit 1) and never overwrites it. Exit codes: 0 done,
-1 the API refused (an import that parked or failed among them), 2 usage,
-3 not signed in, 4 the API is unreachable."""
+its import to the end, resumes a parked one and follows it, or cancels a
+running or a parked one, and `imports`, the org's recent imports. `listen`
+stays and prints every change the team makes to its tasks as it happens.
+Every command is a thin call into the client; the API decides, the CLI
+shows. A verb that changes a task reads it first and sends the version it
+read, so a change that raced another is refused (exit 1) and never
+overwrites it. Exit codes: 0 done, 1 the API refused (a followed import
+that parked, failed, or was cancelled among them), 2 usage, 3 not signed
+in, 4 the API is unreachable."""
 
 import asyncio
 import json
@@ -722,16 +723,44 @@ def import_tasks(
             help="Resume a parked import instead: its id, or the short id `imports` shows.",
         ),
     ] = None,
+    cancel: Annotated[
+        str | None,
+        typer.Option(
+            "--cancel",
+            help="Cancel a running or parked import instead: its id, or the short id "
+            "`imports` shows. The tasks it made stay.",
+        ),
+    ] = None,
+    reason: Annotated[
+        str | None, typer.Option("--reason", help="With --cancel: why, kept with it in the logs.")
+    ] = None,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
     """Import tasks from a CSV file and follow the import to its end. Columns:
     title (needed), notes, due_on (2026-10-01), assignee_email (a member).
     With --resume, a parked import goes on from the row it stopped at, and
-    no new import starts."""
-    if (path is None) == (resume is None):
-        _fail("give exactly one of a CSV file and --resume", EXIT_USAGE)
+    no new import starts. With --cancel, a running or parked import ends
+    where it stands, and nothing runs it again."""
+    if sum(given is not None for given in (path, resume, cancel)) != 1:
+        _fail("give exactly one of a CSV file, --resume, and --cancel", EXIT_USAGE)
+    if reason is not None and cancel is None:
+        _fail("--reason goes with --cancel", EXIT_USAGE)
     upload = (path.name, path.read_bytes()) if path is not None else None
+
+    async def end(client: ApiClient) -> str:
+        ended = await client.cancel_import(await _import_id(client, cancel or ""), reason)
+        if as_json:
+            typer.echo(ended.model_dump_json(indent=2))
+        else:
+            typer.echo(outcome(ended))
+        return ended.status.value
+
+    if cancel is not None:
+        # A cancel is answered at once; there is nothing to follow.
+        if run(end, api) != "cancelled":
+            raise typer.Exit(EXIT_REFUSED)
+        return
 
     async def go(client: ApiClient) -> str:
         if upload is None:
@@ -750,7 +779,8 @@ def import_tasks(
 
     status = run(go, api)
     if status != "succeeded":
-        # Parked or failed: nothing more was created, and the line says why.
+        # Parked, failed, or cancelled: nothing more was created, and the
+        # line says why.
         raise typer.Exit(EXIT_REFUSED)
 
 

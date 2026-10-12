@@ -1,6 +1,7 @@
 // The imports the page follows, one card each, newest first: a line of how
 // far each is, pushed as the worker moves it; when one parks on the plan, the
-// upgrade and its Resume; when one ends, what it did, until dismissed.
+// upgrade and its Resume; while one runs or waits, its Cancel, which asks
+// first; when one ends, what it did, until dismissed.
 import { Button, Card, LinkButton, Muted } from "../../design/kit";
 import { tokens } from "../../design/tokens";
 import type { ImportCard } from "./importModel";
@@ -40,7 +41,9 @@ function ImportStatusCard({ card, vm }: { card: ImportCard; vm: ImportVm }) {
             <div className="tadas-progress-bar" style={{ width: `${card.percent}%` }} />
           </div>
         ) : null}
-        {card.parkedOnThePlan ? (
+        {asking(card, vm) ? (
+          <Muted>Cancel this import? The tasks it made stay, and the rest of the file is not imported.</Muted>
+        ) : card.parkedOnThePlan ? (
           <Muted>
             {vm.canUpgrade
               ? "A higher plan resumes it by itself. Or finish some tasks, then Resume."
@@ -64,16 +67,41 @@ function ImportStatusCard({ card, vm }: { card: ImportCard; vm: ImportVm }) {
   );
 }
 
+/** Whether the card asks before its import is cancelled: only while there
+ * is still something to cancel. */
+function asking(card: ImportCard, vm: ImportVm): boolean {
+  return (card.running || card.parked) && vm.askingCancel(card.id);
+}
+
+const actionsStyle = { display: "flex", gap: tokens.space.sm, alignItems: "center", flexShrink: 0 } as const;
+
 /** Everything a person can do to one import, in one place: the upgrade and
- * Resume while it waits on the plan, Dismiss once it ended. */
+ * Resume while it waits on the plan, Cancel while it runs or waits, and
+ * Dismiss once it ended. Every Resume has a Cancel beside it. */
 function ImportActions({ card, vm }: { card: ImportCard; vm: ImportVm }) {
-  if (!card.parked && !card.ended) return null;
+  if (asking(card, vm)) {
+    return (
+      <div style={actionsStyle}>
+        <Button tone="danger" onClick={() => void vm.cancel(card.id)} disabled={vm.cancelling(card.id)}>
+          Cancel import
+        </Button>
+        <Button tone="plain" onClick={vm.keepImport}>
+          Keep it
+        </Button>
+      </div>
+    );
+  }
   return (
-    <div style={{ display: "flex", gap: tokens.space.sm, alignItems: "center", flexShrink: 0 }}>
+    <div style={actionsStyle}>
       {card.parkedOnThePlan && vm.canUpgrade ? <Button onClick={vm.upgrade}>See plans</Button> : null}
       {card.parked ? (
         <Button tone="plain" onClick={() => void vm.resume(card.id)} disabled={vm.resuming(card.id)}>
           Resume
+        </Button>
+      ) : null}
+      {card.running || card.parked ? (
+        <Button tone="plain" onClick={() => vm.askCancel(card.id)}>
+          Cancel
         </Button>
       ) : null}
       {card.ended ? <LinkButton onClick={() => vm.dismiss(card.id)}>Dismiss</LinkButton> : null}

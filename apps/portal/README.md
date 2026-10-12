@@ -133,6 +133,9 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   so every import that runs or is parked has a card of its own, newest
   first: a progress line (created N of M, skipped K), and when it parks
   on the plan's active tasks, the one upgrade dialog and its own Resume.
+  Every card that runs or is parked has a Cancel, beside Resume where
+  there is one; it asks first, since a cancel is final, and the card
+  then reads cancelled with what the import made.
   A card's actions live in one place (`ImportActions` in
   `ImportStatus.tsx`). An import that ended shows what it did until
   dismissed; the dismissal is kept per org in the preferences store

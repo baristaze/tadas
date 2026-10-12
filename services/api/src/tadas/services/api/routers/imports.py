@@ -1,8 +1,9 @@
 """Import routes: the CSV file's upload started, the import started naming
-it, the org's imports, one import, and a parked import resumed. The file's
-bytes and its confirm are the media routes'. An import runs in the worker; a
-caller reads it here, or hears of it on the realtime channel. Mounted before
-the task routes, so `/tasks/imports` is never read as a task's id."""
+it, the org's imports, one import, a parked import resumed, and a running or
+a parked one cancelled. The file's bytes and its confirm are the media
+routes'. An import runs in the worker; a caller reads it here, or hears of
+it on the realtime channel. Mounted before the task routes, so
+`/tasks/imports` is never read as a task's id."""
 
 from uuid import UUID
 
@@ -13,7 +14,12 @@ from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.resolve import TasksService
 from tadas.services.api.types.common import ErrorResponse
 from tadas.services.api.types.media import AddFileRequest, FileView
-from tadas.services.api.types.tasks import ImportPageView, ImportView, StartImportRequest
+from tadas.services.api.types.tasks import (
+    CancelImportRequest,
+    ImportPageView,
+    ImportView,
+    StartImportRequest,
+)
 
 router = APIRouter(prefix="/tasks/imports", tags=["tasks"])
 
@@ -65,3 +71,14 @@ async def resume_import(ctx: Ctx, tasks: TasksService, import_id: UUID) -> Impor
     at once if the plan still has no room. A running one is answered as it
     is; a finished one is refused (422)."""
     return await tasks.resume_import(ctx, import_id)
+
+
+@router.post("/{import_id}/cancel", response_model=ImportView)
+async def cancel_import(
+    ctx: Ctx, tasks: TasksService, import_id: UUID, body: CancelImportRequest | None = None
+) -> ImportView:
+    """A running or a parked import ends: it settles `cancelled`, the tasks it
+    made stay, and no plan that rises and no Resume runs it again. Whoever may
+    resume it may cancel it. A cancelled one is answered as it is; one that
+    succeeded or failed is refused (422)."""
+    return await tasks.cancel_import(ctx, import_id, body)
