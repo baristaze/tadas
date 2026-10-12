@@ -98,3 +98,4 @@ def test_the_scan_sees_the_whole_tree() -> None:
     assert is_infra_impl("tadas.infra.impl.local")
     assert is_infra_impl("tadas.infra.topics.dispatch")
     assert not is_infra_impl("tadas.infra.topics")
+    assert not is_infra_impl("tadas.infra.cache.read")
