@@ -97,9 +97,11 @@ app, and `main.py` is the `tadas-api` command: `serve`, `migrate`,
 - **Imports.** Starting the upload of a CSV file to import (the bytes and
   the confirm are the file routes'); starting its import, answered 202
   while the worker reads it a hundred rows a step; the org's newest
-  imports; one import; resuming one parked on the plan.
+  imports; one import; resuming one parked on the plan; cancelling one
+  that runs or is parked, which keeps the tasks it made.
   (`/v1/tasks/imports/files`, `/v1/tasks/imports`,
-  `/v1/tasks/imports/{import_id}`, `/v1/tasks/imports/{import_id}/resume`)
+  `/v1/tasks/imports/{import_id}`, `/v1/tasks/imports/{import_id}/resume`,
+  `/v1/tasks/imports/{import_id}/cancel`)
 - **Attachments.** A task's files a page at a time, starting an
   upload of one, removing one. (`/v1/tasks/{task_id}/attachments`,
   `/v1/tasks/{task_id}/attachments/{file_id}`)
