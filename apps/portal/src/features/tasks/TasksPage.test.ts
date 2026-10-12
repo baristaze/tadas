@@ -57,7 +57,7 @@ const imports = vi.hoisted(() => ({
   starting: false,
   failure: null,
   start: () => Promise.resolve(),
-  shown: null,
+  cards: [],
 }));
 
 vi.mock("./useTasksVm", () => ({ useTasksVm: () => vm }));

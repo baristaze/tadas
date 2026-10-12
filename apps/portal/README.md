@@ -126,12 +126,18 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   text box) opens a small dialog that picks a CSV file. The file goes up
   the way an attachment does (`importFlow.ts`, its effects handed in), and
   the import starts naming it. The rows are read in the worker; the page
-  follows the org's newest import by what the channel pushes
+  follows the org's recent imports by what the channel pushes
   (`orchestrations.orchestration.updated`, whose entity keys
-  `queries/imports.ts`), with no polling: a progress line (created N of M,
-  skipped K), and when the import parks on the plan's active tasks, the
-  one upgrade dialog and Resume. An import that ended shows what it did
-  until dismissed. Under the done list, "Show archived" opens the done
+  `queries/imports.ts`), with no polling. A second import stacks beside
+  the first ([ADR 1002](../../docs/adr/1002-a-second-import-stacks-beside-the-first.md)),
+  so every import that runs or is parked has a card of its own, newest
+  first: a progress line (created N of M, skipped K), and when it parks
+  on the plan's active tasks, the one upgrade dialog and its own Resume.
+  A card's actions live in one place (`ImportActions` in
+  `ImportStatus.tsx`). An import that ended shows what it did until
+  dismissed; the dismissal is kept per org in the preferences store
+  (`src/store/preferences.ts`), so it holds across a reload, and is
+  pruned once its import leaves the recent ones. Under the done list, "Show archived" opens the done
   tasks the daily cleanup archived (`ArchivedTasks.tsx`), each with
   Restore.
 - A write refused for a plan's bound opens the upgrade dialog instead of

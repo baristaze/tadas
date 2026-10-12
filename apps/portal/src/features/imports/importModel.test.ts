@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { BillingView, ImportView } from "@tadas/client";
-import { activeTasksLimit, ENDED_SHOWN_MS, headline, progressLine, shownImport, skippedLines } from "./importModel";
+import {
+  activeTasksLimit,
+  ENDED_SHOWN_MS,
+  headline,
+  importCard,
+  progressLine,
+  shownImports,
+  skippedLines,
+} from "./importModel";
 
 function view(fields: Partial<ImportView> = {}): ImportView {
   return {
@@ -24,19 +32,27 @@ function view(fields: Partial<ImportView> = {}): ImportView {
 
 const OPENED = Date.parse("2026-09-25T10:05:00Z");
 
-describe("shownImport", () => {
-  it("shows the newest import while it runs, and nothing once dismissed", () => {
-    const newest = view({ id: "new" });
-    expect(shownImport([newest, view({ id: "old" })], new Set(), OPENED)).toBe(newest);
-    expect(shownImport([newest], new Set(["new"]), OPENED)).toBeNull();
-    expect(shownImport([], new Set(), OPENED)).toBeNull();
+describe("shownImports", () => {
+  it("shows every import that runs or waits, newest first, whatever was dismissed", () => {
+    const first = view({ id: "first", status: "parked", park_reason: "plan_limit", created_at: "2026-09-25T09:00:00Z" });
+    const second = view({ id: "second", status: "parked", park_reason: "plan_limit", created_at: "2026-09-25T09:30:00Z" });
+    const third = view({ id: "third", created_at: "2026-09-25T10:00:00Z" });
+    const shown = shownImports([second, first, third], new Set(["first"]), OPENED);
+    expect(shown.map((v) => v.id)).toEqual(["third", "second", "first"]);
+    expect(shown.map(importCard).map((c) => [c.parked, c.running])).toEqual([
+      [false, true],
+      [true, false],
+      [true, false],
+    ]);
+    expect(shownImports([], new Set(), OPENED)).toEqual([]);
   });
 
-  it("keeps an import that ended while the page was open, not one long before it", () => {
-    const recent = view({ status: "succeeded", finished_at: "2026-09-25T10:04:00Z" });
-    expect(shownImport([recent], new Set(), OPENED)).toBe(recent);
+  it("keeps an import that ended while the page was open until dismissed, and not one long before it", () => {
+    const recent = view({ id: "recent", status: "succeeded", finished_at: "2026-09-25T10:04:00Z" });
+    expect(shownImports([recent], new Set(), OPENED)).toEqual([recent]);
+    expect(shownImports([recent], new Set(["recent"]), OPENED)).toEqual([]);
     const long = new Date(OPENED - ENDED_SHOWN_MS - 1000).toISOString();
-    expect(shownImport([view({ status: "succeeded", finished_at: long })], new Set(), OPENED)).toBeNull();
+    expect(shownImports([view({ status: "succeeded", finished_at: long })], new Set(), OPENED)).toEqual([]);
   });
 });
 
