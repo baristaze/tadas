@@ -2835,6 +2835,22 @@ export interface components {
          */
         Permission: "read" | "write" | "manage_members" | "manage_keys" | "manage_billing";
         /**
+         * PlaceView
+         * @description A waiting request's place (1 is next in some line it stands in) and
+         *     the estimate of its wait in seconds, as its standing answers them.
+         */
+        PlaceView: {
+            /** Estimate Seconds */
+            estimate_seconds: number | null;
+            /** Place */
+            place: number | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+        };
+        /**
          * Plan
          * @enum {string}
          */
@@ -2884,22 +2900,6 @@ export interface components {
             /** Per Seat Cents */
             per_seat_cents: number;
             plan: components["schemas"]["Plan"];
-        };
-        /**
-         * PlaceView
-         * @description A waiting request's place (1 is next in some line it stands in) and
-         *     the estimate of its wait in seconds, as its standing answers them.
-         */
-        PlaceView: {
-            /** Estimate Seconds */
-            estimate_seconds: number | null;
-            /** Place */
-            place: number | null;
-            /**
-             * Request Id
-             * Format: uuid
-             */
-            request_id: string;
         };
         /**
          * PlatformSizeView

@@ -519,6 +519,16 @@ class Permission(StrEnum):
     manage_billing = 'manage_billing'
 
 
+class PlaceView(BaseModel):
+    """
+    A waiting request's place (1 is next in some line it stands in) and
+    the estimate of its wait in seconds, as its standing answers them.
+    """
+    estimate_seconds: Annotated[float | None, Field(title='Estimate Seconds')]
+    place: Annotated[int | None, Field(title='Place')]
+    request_id: Annotated[UUID, Field(title='Request Id')]
+
+
 class Plan(StrEnum):
     free = 'free'
     pro = 'pro'
@@ -559,16 +569,6 @@ class PlanOfferView(BaseModel):
     limits: PlanLimitsView
     per_seat_cents: Annotated[int, Field(title='Per Seat Cents')]
     plan: Plan
-
-
-class PlaceView(BaseModel):
-    """
-    A waiting request's place (1 is next in some line it stands in) and
-    the estimate of its wait in seconds, as its standing answers them.
-    """
-    estimate_seconds: Annotated[float | None, Field(title='Estimate Seconds')]
-    place: Annotated[int | None, Field(title='Place')]
-    request_id: Annotated[UUID, Field(title='Request Id')]
 
 
 class PlatformSizeView(BaseModel):
