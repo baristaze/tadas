@@ -2,8 +2,8 @@
 
 Tadas from the terminal. A command does one thing and returns: sign in and
 out, the orgs, the task verbs (`add`, `ls`, `edit`, `done`, `reopen`, `rm`,
-`mv`), a task's files (`attach`, `attachments`, `download`, `detach`), and
-`import`. `listen` stays and prints every change the team makes to its
+`mv`), a task's files (`attach`, `attachments`, `download`, `detach`),
+`import`, and `imports`. `listen` stays and prints every change the team makes to its
 tasks as it happens.
 
 ```bash
@@ -22,6 +22,8 @@ uv run tadas attachments 8b949fce         # id, size, type, name
 uv run tadas download 8b949fce 1c2d3e4f   # the file's short id; --out <path>
 uv run tadas detach 8b949fce 1c2d3e4f
 uv run tadas import tasks.csv        # title, notes, due_on, assignee_email; follows it to the end
+uv run tadas imports                 # the org's recent imports and their status; --json
+uv run tadas import --resume 5057e18d   # a parked import goes on; no new import starts
 uv run tadas listen                  # the team's tasks, reminders among them; --mine for yours
 uv run tadas logout
 ```
@@ -63,6 +65,15 @@ uv run tadas logout
   of the file, with the reason. The columns are `title` (needed),
   `notes`, `due_on` (`2026-10-01`), and `assignee_email` (a member), by
   header name; the file is at most 1 MB and 5,000 rows.
+- A second `import` stacks beside the first: both run, and each parks
+  and resumes on its own
+  ([ADR 1002](../../docs/adr/1002-a-second-import-stacks-beside-the-first.md)).
+  `imports` lists the org's twenty newest imports: the short id, the
+  status, when it started (UTC), and how far it is. `import --resume <id>`
+  takes a full id or a short one `imports` shows, resumes that import,
+  and follows it with the same lines and exit codes; an id no recent
+  import has is refused (exit 1). Going on this way never imports the
+  same rows twice.
 - `src/tadas/apps/cli/model.py` is pure and unit tested: how a change is
   told, which tasks are mine, how a short id resolves. The short id is
   the tail of the task's id, because ids are time-ordered and every task
