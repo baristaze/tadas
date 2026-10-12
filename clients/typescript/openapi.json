@@ -2509,7 +2509,8 @@
           "running",
           "parked",
           "succeeded",
-          "failed"
+          "failed",
+          "cancelled"
         ],
         "title": "OrchestrationStatus",
         "type": "string"
