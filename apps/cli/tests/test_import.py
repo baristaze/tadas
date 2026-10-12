@@ -2,8 +2,8 @@
 channel: the file uploaded and its import started, then followed as the
 worker's steps land (run here through the managers, as the worker runs
 them) until it stops; the line each outcome ends on, and its exit code; the
-org's imports listed; and a parked import resumed rather than started
-again."""
+org's imports listed; a parked import resumed rather than started again;
+and a parked import cancelled, which nothing resumes."""
 
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -140,18 +140,53 @@ def test_imports_lists_the_orgs_imports_and_resume_goes_on_with_a_parked_one(
     ], "the parked import went on; no second import started"
 
 
-def test_import_takes_a_file_or_resume_and_refuses_an_id_no_import_has(
+@pytest.mark.usefixtures("follows_the_worker")
+def test_cancel_settles_a_parked_import_cancelled_and_nothing_resumes_it(
+    stack: Stack, tmp_path: Path
+) -> None:
+    on_plan(stack, None)  # Free: ten active tasks
+    rows = tmp_path / "tasks.csv"
+    rows.write_text("title\n" + "".join(f"Task {n}\n" for n in range(1, 16)))
+    parked = stack.tadas("import", str(rows))
+    assert parked.exit_code == 1
+    short = stack.tadas("imports").output.splitlines()[1].split()[0]
+    assert f"`tadas import --cancel {short}` ends it instead" in parked.output
+
+    cancelled = stack.tadas("import", "--cancel", short, "--reason", "started twice")
+    assert cancelled.exit_code == 0, cancelled.output
+    assert cancelled.stdout.splitlines()[-1] == (
+        "cancelled at row 11 (created 10 of 15, skipped 0): the tasks it made stay, "
+        "and the rest of the file is not imported"
+    )
+    listed = stack.tadas("imports").output.splitlines()
+    assert listed[1].split()[:2] == [short, "cancelled"]
+    again = stack.tadas("import", "--cancel", short, "--json")
+    assert again.exit_code == 0 and json.loads(again.stdout)["status"] == "cancelled"
+    on_plan(stack, Plan.TEAM)
+    refused = stack.tadas("import", "--resume", short)
+    assert refused.exit_code == 1, "a cancelled import is not resumed"
+    after = stack.tadas("imports", "--json")
+    assert [i["status"] for i in json.loads(after.stdout)] == ["cancelled"]
+
+
+def test_import_takes_one_of_a_file_resume_and_cancel_and_refuses_an_id_no_import_has(
     stack: Stack, tmp_path: Path
 ) -> None:
     rows = tmp_path / "tasks.csv"
     rows.write_text("title\nOne\n")
     assert stack.tadas("import").exit_code == 2
     both = stack.tadas("import", str(rows), "--resume", "abc")
-    assert (both.exit_code, both.stderr) == (2, "give exactly one of a CSV file and --resume\n")
-    for reference in ("nothing", "", "../../etc"):
-        missing = stack.tadas("import", "--resume", reference)
-        assert missing.exit_code == 1
-        assert missing.stderr.startswith("no recent import matches")
+    exactly_one = "give exactly one of a CSV file, --resume, and --cancel\n"
+    assert (both.exit_code, both.stderr) == (2, exactly_one)
+    two_ids = stack.tadas("import", "--resume", "abc", "--cancel", "abc")
+    assert (two_ids.exit_code, two_ids.stderr) == (2, exactly_one)
+    alone = stack.tadas("import", str(rows), "--reason", "why")
+    assert (alone.exit_code, alone.stderr) == (2, "--reason goes with --cancel\n")
+    for flag in ("--resume", "--cancel"):
+        for reference in ("nothing", "", "../../etc"):
+            missing = stack.tadas("import", flag, reference)
+            assert missing.exit_code == 1
+            assert missing.stderr.startswith("no recent import matches")
 
 
 def view(**fields: object) -> ImportView:
@@ -184,3 +219,5 @@ def test_a_parked_import_says_where_it_stopped_and_what_lifts_it() -> None:
     assert imports.outcome(view(status="failed", fail_reason="too_many_rows")) == (
         "failed: too many rows (created 10 of 50, skipped 0)"
     )
+    cancelled = imports.outcome(view(status="cancelled", finished_at="2026-09-25T09:05:00Z"))
+    assert cancelled.startswith("cancelled at row 11 (created 10 of 50, skipped 0)")
