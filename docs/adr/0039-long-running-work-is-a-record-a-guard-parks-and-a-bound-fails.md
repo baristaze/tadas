@@ -17,7 +17,8 @@ period.
 **One mechanism, a namespace of its own.**
 `om/src/tadas/om/orchestrations` holds the record, its storage in
 Postgres and in memory under the tenant fence, and its manager:
-`start`, `get`, `get_recent`, `resume`, `wake`, `fail`, and the purges.
+`start`, `get`, `get_recent`, `resume`, `wake`, `fail`, `cancel`, and
+the purges.
 The record (`Orchestration`) holds a kind, its input, a period, a
 status, a cursor, a total, what the steps applied and skipped, the
 first twenty skipped rows with a reason, a park reason, a fail reason,
@@ -61,7 +62,9 @@ reason was that record's alone. Every billing account write that lifts
 the org's plan (a payment's delivery, the seed's grant, an operator's
 grant) lands one in the account's own commit. A person may resume a
 parked record too (`resume`), with Resume
-(`POST /v1/tasks/imports/{id}/resume`) after finishing some tasks. A
+(`POST /v1/tasks/imports/{id}/resume`) after finishing some tasks, or
+cancel it (`cancel`): it settles `cancelled`, keeping what it made
+([ADR 0099](0099-a-person-cancels-a-running-or-a-parked-record.md)). A
 woken record is not trusted: its next step asks its guard again. A
 bound of the input fails the record with its reason, which a product
 adds beside `defect`. The park is the record's status, never a deferred
@@ -136,8 +139,8 @@ record and its org.
 
 A settled record is purged thirty days later; a parked or running one
 is kept. A record whose last attempt could not write its failure stays
-running until its org is purged, and the work queue's dead letter
-names it.
+running until a person cancels it or its org is purged, and the work
+queue's dead letter names it.
 
 The numbers are illustrative: the file's megabyte and five thousand
 rows, the batches of a hundred and five hundred, the twenty rows named,

@@ -116,7 +116,8 @@ it, holds it for a short lease, and does it.
 An **orchestration** is a long job kept as a record, done one step at a
 time, such as an import or a day's cleanup. It succeeds, fails, or
 parks until what it waits for is back: an import that reached the
-plan's bound of active tasks waits for a plan that lifts it.
+plan's bound of active tasks waits for a plan that lifts it. A person
+may cancel it on the way.
 
 A **lease** lends one holder a thing only one may use at a time, such
 as a loading dock, for a term it renews. Each grant carries a token
