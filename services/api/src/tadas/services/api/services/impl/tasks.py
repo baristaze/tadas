@@ -21,6 +21,7 @@ from tadas.services.api.types.tasks import (
     AddTaskRequest,
     BulkTasksRequest,
     BulkTasksView,
+    CancelImportRequest,
     ImportPageView,
     ImportView,
     MoveTaskRequest,
@@ -33,6 +34,10 @@ from tadas.services.api.types.tasks import (
     TaskView,
     UpdateTaskRequest,
 )
+
+
+NO_REASON = "none given"
+"""What a cancel logs as its reason when the person gave none."""
 
 
 def encode_cursor(status: TaskStatus, task: Task) -> str:
@@ -217,6 +222,12 @@ class TasksServiceImpl(TasksServiceInterface):
 
     async def resume_import(self, ctx: TenantContext, import_id: UUID) -> ImportView:
         return import_view(await self._tasks.imports.resume_import(ctx, import_id))
+
+    async def cancel_import(
+        self, ctx: TenantContext, import_id: UUID, body: CancelImportRequest | None
+    ) -> ImportView:
+        reason = (body.reason if body is not None else "") or NO_REASON
+        return import_view(await self._tasks.imports.cancel_import(ctx, import_id, reason))
 
     async def create_task(
         self, ctx: TenantContext, body: AddTaskRequest, task_id: UUID

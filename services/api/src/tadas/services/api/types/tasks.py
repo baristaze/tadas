@@ -176,6 +176,13 @@ class StartImportRequest(RequestBody):
     file_id: UUID
 
 
+class CancelImportRequest(RequestBody):
+    """Why the person cancels, kept in the logs with the import and not on
+    it. The body may be left out."""
+
+    reason: str = Field(default="", max_length=500)
+
+
 class RowErrorView(View):
     """A row the import skipped: its number, the first data row being 1, and why."""
 
@@ -185,16 +192,18 @@ class RowErrorView(View):
 
 class ImportView(View):
     """An import of tasks from a CSV file, read as it runs. `status` is
-    `running`, `parked`, `succeeded`, or `failed`. `total` is the file's data
-    rows, null until the first step counted them; `cursor` is how many were
-    read; `created` the tasks the import made, `skipped` the rows it passed
-    over, and `row_errors` the first twenty of those with the reason. A
+    `running`, `parked`, `succeeded`, `failed`, or `cancelled`. `total` is the
+    file's data rows, null until the first step counted them; `cursor` is how
+    many were read; `created` the tasks the import made, `skipped` the rows it
+    passed over, and `row_errors` the first twenty of those with the reason. A
     `parked` import names its `park_reason`: `plan_limit` is the plan's bound
     on active tasks, lifted by a higher plan (which resumes it) or by tasks
     finished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names
     its `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,
-    `no_title_column`, `file_gone`, or `defect`. Every change is pushed as
-    `orchestrations.orchestration.updated` on the realtime channel."""
+    `no_title_column`, `file_gone`, or `defect`. A running or a parked one is
+    ended by `POST /v1/tasks/imports/{id}/cancel`: it settles `cancelled`,
+    keeping the tasks it made, and nothing runs it again. Every change is
+    pushed as `orchestrations.orchestration.updated` on the realtime channel."""
 
     id: UUID
     file_id: UUID

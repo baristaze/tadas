@@ -102,6 +102,12 @@ class TasksImportsManagerImpl(TasksImportsManagerInterface):
         await self.get_import(ctx, import_id)
         return await self._orchestrations.resume(ctx, import_id)
 
+    async def cancel_import(
+        self, ctx: TenantContext, import_id: UUID, reason: str
+    ) -> Orchestration:
+        await self.get_import(ctx, import_id)
+        return await self._orchestrations.cancel(ctx, import_id, reason)
+
     async def step_import(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         ctx.require(Permission.WRITE)
         file_id = TaskImportInput.model_validate(dict(record.input)).file_id

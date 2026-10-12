@@ -1,19 +1,20 @@
 """Imports and the archive over the live app, on the local store: the CSV
 file's upload started under its own purpose, the import started naming it
-(202, under the idempotency record), read, listed, and resumed; the file a
-purpose other than the import's refused; the steps the worker would take
-run through the managers, so the import reads parked on Free's bound; and an
-archived task listed apart from the done list and restored."""
+(202, under the idempotency record), read, listed, resumed, and cancelled by
+whoever may resume it and nobody else; the file a purpose other than the
+import's refused; the steps the worker would take run through the managers,
+so the import reads parked on Free's bound; and an archived task listed apart
+from the done list and restored."""
 
 from datetime import timedelta
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from api_support import seed_request, sign_in
+from api_support import add_member, seed_request, sign_in, sign_in_as
 
 from tadas.om.base import utcnow
-from tadas.om.context import TenantContext
+from tadas.om.context import Role, TenantContext
 from tadas.om.orchestrations.types.orchestration import OrchestrationStatus
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.container import AppContainer
@@ -93,6 +94,43 @@ async def test_an_import_is_started_read_listed_and_parks_on_free(
     assert resumed.status_code == 200 and resumed.json()["status"] == "running"
     again = await client.post(f"/v1/tasks/imports/{started['id']}/resume", headers=free_owner)
     assert again.json()["status"] == "running", "a running import is answered as it is"
+
+
+async def test_whoever_may_resume_an_import_cancels_it_and_nobody_else(
+    client: httpx.AsyncClient, container: AppContainer, free_owner: dict[str, str]
+) -> None:
+    stored = await upload(client, free_owner)
+    started = (await start(client, free_owner, stored.json()["id"])).json()
+    ctx = await worker_context(container, free_owner)
+    record = await container.managers.orchestrations.get(ctx, UUID(started["id"]))
+    while record.status is OrchestrationStatus.RUNNING:
+        record = await container.managers.tasks.imports.step_import(ctx, record)
+    path = f"/v1/tasks/imports/{started['id']}/cancel"
+
+    # A viewer may not resume it, so may not cancel it; another org's owner
+    # is answered as for an id that never existed.
+    await add_member(container, ctx.org_id, "vic@example.test", Role.VIEWER)
+    viewer = await sign_in_as(client, "vic@example.test", ctx.org_id)
+    assert (await client.post(path, headers=viewer)).status_code == 403
+    _, other = await container.managers.tenancy.bootstrap(
+        seed_request(), "Bolt", "bolt", "eve@example.test", "Eve"
+    )
+    eve = await sign_in_as(client, "eve@example.test", other.id)
+    assert (await client.post(path, headers=eve)).status_code == 404
+    too_long = await client.post(path, headers=free_owner, json={"reason": "x" * 501})
+    assert too_long.status_code == 422, too_long.text
+    unread = await client.get(f"/v1/tasks/imports/{started['id']}", headers=free_owner)
+    assert unread.json()["status"] == "parked", "nothing a refusal answered changed it"
+
+    cancelled = await client.post(path, headers=free_owner, json={"reason": "started twice"})
+    assert cancelled.status_code == 200, cancelled.text
+    ended = cancelled.json()
+    assert (ended["status"], ended["park_reason"]) == ("cancelled", None)
+    assert (ended["cursor"], ended["created"]) == (10, 10), "the tasks it made stay"
+    again = await client.post(path, headers=free_owner)
+    assert again.status_code == 200 and again.json() == ended, "answered as it is"
+    resumed = await client.post(f"/v1/tasks/imports/{started['id']}/resume", headers=free_owner)
+    assert resumed.status_code == 422, resumed.text
 
 
 async def test_a_file_that_is_not_an_import_is_refused(
