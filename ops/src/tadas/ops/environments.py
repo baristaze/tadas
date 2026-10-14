@@ -71,7 +71,7 @@ LOCAL_OPERATORS = {
 """The two operator identities `make seed` puts on the local allowlist: the
 read operator, whose `read` token is the file's `TADAS_OPERATOR_TOKEN`, and
 the provisioner, whose `write` token is `TADAS_PROVISIONER_TOKEN` in the
-provisioner's file. They are the platform's own, made by their first grant,
+provisioner's file. They are the system's own, made by their first grant,
 so no person signs in as either and nothing but the grant command mints
 their tokens."""
 
@@ -250,7 +250,9 @@ def environment_of(
         api_url=api_url.rstrip("/"),
         operator_token=get("TADAS_OPERATOR_TOKEN"),
         provisioner_token=provisioner_token,
-        error_tracker_url=get("TADAS_ERROR_TRACKER_URL", LOCAL_ERROR_TRACKER_URL if local else None),
+        error_tracker_url=get(
+            "TADAS_ERROR_TRACKER_URL", LOCAL_ERROR_TRACKER_URL if local else None
+        ),
         error_tracker_token=get(
             "TADAS_ERROR_TRACKER_TOKEN", LOCAL_ERROR_TRACKER_TOKEN if local else None
         ),

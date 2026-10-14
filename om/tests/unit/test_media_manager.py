@@ -7,8 +7,6 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of
-from contracts.factories import make_org
 
 from tadas.infra.buckets import Buckets
 from tadas.infra.exceptions import UploadRefused
@@ -16,8 +14,8 @@ from tadas.infra.flags import Flag
 from tadas.infra.flags.memory import FlagRule, FlagsMemoryImpl
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import Role, TenantContext
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import FeatureOff, NotAuthorized, NotFound, ValidationFailed
 from tadas.om.media import rules
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
@@ -25,6 +23,9 @@ from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+
+from contracts.doubles import Members, context, media_of
+from contracts.factories import make_org
 
 PDF = b"%PDF-1.7 a small file"
 
@@ -46,7 +47,7 @@ def outbox() -> OutboxStorageMemoryImpl:
 
 @pytest.fixture
 def relay(outbox: OutboxStorageMemoryImpl, infra: InfraLocalImpl) -> OutboxRelayImpl:
-    return OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    return OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
 
 
 @pytest.fixture

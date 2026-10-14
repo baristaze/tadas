@@ -1,10 +1,11 @@
 import pytest
-from contracts.work_storage import WorkStorageContract
 
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.storage.impl.postgres import WorkStoragePostgresImpl
+
+from contracts.work_storage import WorkStorageContract
 
 pytestmark = pytest.mark.integration
 

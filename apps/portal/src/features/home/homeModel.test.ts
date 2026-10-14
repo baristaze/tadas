@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { MeView } from "@tadas/client";
+import type { tenancy } from "@tadas/client";
 import { homeCard, membersLine } from "./homeModel";
 
-const me: MeView = {
+const me: tenancy.MeView = {
   app: "portal",
   role: "admin",
   permissions: ["read", "write", "manage_members"],

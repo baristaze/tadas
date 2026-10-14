@@ -1,9 +1,11 @@
+from enum import StrEnum
 from pathlib import Path
 
 from worker_support import RecordingHandler, build_container, make_item, sign_in
 
+from tadas.om.root import KINDS
 from tadas.om.tenancy.rules import ROLE_PERMISSIONS
-from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkKind
+from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.handler import NoopHandlerImpl
 from tadas.workers.maintenance.main import build_loop
 
@@ -18,6 +20,22 @@ async def test_handler_is_idempotent_over_the_memory_container(tmp_path: Path) -
     assert [handled.id for handled in handler.handled] == [item.id, item.id]
 
 
+class ShipmentKind(StrEnum):
+    """A kind of a copy's own namespace, named in its `kinds.py`."""
+
+    NOTIFY_SHIPMENT = "NOTIFY_SHIPMENT"
+
+
+async def test_an_item_takes_a_kind_a_namespace_of_the_copy_registers(tmp_path: Path) -> None:
+    """A copy registers its kinds by name in its own namespace, never in
+    `WorkKind`, and its handler's test builds its item here: the helper takes
+    a registered kind's name, as the registry and the row do."""
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    item = make_item(ctx, kind=ShipmentKind.NOTIFY_SHIPMENT)
+    assert item.kind == "NOTIFY_SHIPMENT"
+
+
 async def test_handler_keeps_nothing_per_item(tmp_path: Path) -> None:
     # The production handler runs for the life of the worker; a record of what it
     # handled would grow with every item.
@@ -30,15 +48,16 @@ async def test_handler_keeps_nothing_per_item(tmp_path: Path) -> None:
 
 
 def test_every_kind_is_asked_for_by_a_permission_as_wide_as_its_handler(tmp_path: Path) -> None:
-    """Whoever may ask for a kind may make every call its handler makes: the
-    authorization at enqueue covers the whole run."""
+    """Every kind the root registers has a handler, the scaffold's own among
+    them, and whoever may ask for a kind may make every call its handler
+    makes: the authorization at enqueue covers the whole run."""
     loop = build_loop(build_container(tmp_path))
     handlers = loop._handlers  # pyright: ignore[reportPrivateUsage] (the worker's own table)
-    assert set(handlers) == set(WorkKind) == set(WORK_ENQUEUE_PERMISSIONS)
-    for kind, handler in handlers.items():
-        asking = WORK_ENQUEUE_PERMISSIONS[kind]
-        requires = type(handler).REQUIRES
+    assert set(handlers) == {kind.name for kind in KINDS}
+    assert set(WorkKind) <= set(handlers)
+    for kind in KINDS:
+        requires = type(handlers[kind.name]).REQUIRES
         for role, permissions in ROLE_PERMISSIONS.items():
-            if asking in permissions:
+            if kind.permission in permissions:
                 missing = [p for p in requires if p not in permissions]
-                assert not missing, f"{role.value} asks for {kind.value} without {missing}"
+                assert not missing, f"{role.value} asks for {kind.name} without {missing}"

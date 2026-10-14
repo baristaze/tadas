@@ -9,7 +9,7 @@ credential recheck and the pings come to about 216 database round trips
 an hour, about 72 transactions
 ([ADR 0058](0058-a-socket-asks-again-and-its-pong-answers-from-the-bus.md)).
 The socket also holds memory, a connection on an API task, and a
-subscription on the bus. A session lasts weeks and a background tab
+subscription on the bus. An auth session lasts weeks and a background tab
 stays open, so most sockets belong to tabs nobody is looking at.
 
 A reconnect costs about 5 transactions: the ticket, its redemption, the
@@ -38,7 +38,7 @@ them), a window `focus`, and `online`. Several at once make one connect,
 since only a paused channel connects. The resume is a first connect: it
 asks for a fresh ticket, and the socket's open replays from the cursor.
 A stream trimmed past the cursor is a resync, as on any reconnect
-([ADR 0040](0040-the-event-stream-has-a-floor.md)). An `online` that
+([ADR 0040](0040-the-change-event-stream-has-a-floor.md)). An `online` that
 finds the tab still hidden starts the five minutes over.
 
 **While paused, no query counts as kept fresh by a push.** The query
@@ -46,8 +46,8 @@ cache keys that on the status `open`, and `paused` is not `open`. So
 the focus that ends a pause also reads every stale query, and nothing
 stays frozen if a resume were missed.
 
-**A session that ended while paused signs out on return.** The ticket
-request carries the session. The API answers it with 401, and the
+**An auth session that ended while paused signs out on return.** The ticket
+request carries the auth session. The API answers it with 401, and the
 transport client signs out, as it does for any request.
 
 ## Consequences

@@ -1,10 +1,10 @@
 import { useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import type { MembershipChoiceView } from "@tadas/client";
+import type { tenancy } from "@tadas/client";
 import { useMe, useMyMemberships, useSwitchOrg } from "../queries/tenancy";
 import { useNoticesStore } from "../store/notices";
-import { adoptSession } from "./adoptSession";
-import { forgetSession, holdSession } from "./forgetSession";
+import { adoptAuthSession } from "./adoptAuthSession";
+import { forgetAuthSession, holdAuthSession } from "./forgetAuthSession";
 import { inFlight, oneAtATime } from "./oneAtATime";
 import { chipChoices } from "./orgChipModel";
 import { switchOrg } from "./switchOrg";
@@ -19,13 +19,13 @@ export function useOrgChipVm() {
   const choices = chipChoices(memberships.isPending ? undefined : memberships.data, me.data?.org.id);
 
   // One pick, one exchange: a second click while the first is in flight is dropped.
-  const pick = async (membership: MembershipChoiceView) => {
+  const pick = async (membership: tenancy.MembershipChoiceView) => {
     const outcome = await oneAtATime(switching.current, () =>
       switchOrg({
         exchange: () => exchange.mutateAsync(membership.org.id),
-        hold: holdSession,
-        adopt: adoptSession,
-        forget: forgetSession,
+        hold: holdAuthSession,
+        adopt: adoptAuthSession,
+        forget: forgetAuthSession,
         report: notify,
       }),
     );

@@ -11,10 +11,9 @@ from tadas.om.orchestrations.storage.tables.orchestrations import Orchestrations
 from tadas.om.orchestrations.types.orchestration import (
     SETTLED,
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
+    OrchestrationStep,
     ParkReason,
-    Step,
 )
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
@@ -40,7 +39,7 @@ def cas_statement(org_id: UUID, record: Orchestration, expected_version: int) ->
     )
 
 
-def step_statement(org_id: UUID, step: Step, applied: int) -> Update:
+def orchestration_step_statement(org_id: UUID, step: OrchestrationStep, applied: int) -> Update:
     """The step's companion statement, run by the storage of the namespace
     whose rows the step changes, in the transaction that changes them: the
     record as the step left it, its `applied` grown by the rows the effect
@@ -50,10 +49,14 @@ def step_statement(org_id: UUID, step: Step, applied: int) -> Update:
     return cas_statement(org_id, record, step.expected_version)
 
 
-async def land_step(session: AsyncSession, org_id: UUID, step: Step, applied: int) -> None:
-    """Runs `step_statement` in the caller's transaction and rolls it back,
+async def land_orchestration_step(
+    session: AsyncSession, org_id: UUID, step: OrchestrationStep, applied: int
+) -> None:
+    """Runs `orchestration_step_statement` in the caller's transaction and rolls it back,
     with the effect, when the record moved: `PreconditionFailed`."""
-    if (await session.execute(step_statement(org_id, step, applied))).scalar_one_or_none() is None:
+    if (
+        await session.execute(orchestration_step_statement(org_id, step, applied))
+    ).scalar_one_or_none() is None:
         await session.rollback()
         raise PreconditionFailed(
             f"orchestration {step.record.id} is no longer at version {step.expected_version}"
@@ -70,7 +73,7 @@ class OrchestrationsStoragePostgresImpl(PgStorageBase, OrchestrationsStorageInte
                 # key answers, read first so the insert never meets it.
                 held = select(Orchestrations.id).where(
                     Orchestrations.org_id == org_id,
-                    Orchestrations.kind == record.kind.value,
+                    Orchestrations.kind == record.kind,
                     Orchestrations.period == record.period,
                 )
                 if (await session.execute(held)).first() is not None:
@@ -91,12 +94,10 @@ class OrchestrationsStoragePostgresImpl(PgStorageBase, OrchestrationsStorageInte
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Orchestration)
 
-    async def read_recent(
-        self, org_id: UUID, kind: OrchestrationKind, limit: int
-    ) -> list[Orchestration]:
+    async def read_recent(self, org_id: UUID, kind: str, limit: int) -> list[Orchestration]:
         stmt = (
             select(Orchestrations)
-            .where(Orchestrations.org_id == org_id, Orchestrations.kind == kind.value)
+            .where(Orchestrations.org_id == org_id, Orchestrations.kind == kind)
             .order_by(Orchestrations.id.desc())
             .limit(limit)
         )

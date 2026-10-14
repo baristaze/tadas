@@ -1,4 +1,4 @@
-# ADR 0020: The CLI signs in as a person and holds one session
+# ADR 0020: The CLI signs in as a person and holds one auth session
 
 **Status**: accepted (2026-09-28)
 
@@ -17,20 +17,20 @@ mint one.
 ## Decision
 
 The CLI signs in as a person and follows the person's rules instead of
-the key's. It holds one session, in one org. `tadas login` signs the
+the key's. It holds one auth session, in one org. `tadas login` signs the
 person in through the identity provider's device flow, or locally with
 `--dev-email` ([ADR 0029](0029-a-local-sign-in-by-address.md)). It
-exchanges the sign-in for a session in one org and keeps it in
-`$TADAS_HOME/session.json` (`~/.config/tadas` by default).
+exchanges the sign-in for an auth session in one org and keeps it in
+`$TADAS_HOME/auth_session.json` (`~/.config/tadas` by default).
 
 - `tadas login` takes the org by `--org`, or the only membership.
 - `tadas orgs` lists the person's memberships.
-- `tadas switch <slug>` presents the kept session to the exchange. The
+- `tadas switch <slug>` presents the kept auth session to the exchange. The
   API ends it in the same write that makes the new one, and the file
-  keeps the new one. So the CLI never holds two sessions, the property
+  keeps the new one. So the CLI never holds two auth sessions, the property
   an API key gives by construction.
-- A sign-in over a kept session ends the old one once the new one is
-  kept ([ADR 0047](0047-a-sign-in-over-a-held-session-ends-it-from-the-client.md)).
+- A sign-in over a kept auth session ends the old one once the new one is
+  kept ([ADR 0047](0047-a-sign-in-over-a-held-auth-session-ends-it-from-the-client.md)).
 
 `TADAS_TOKEN` may hold an API key, and then the CLI is exactly what
 DEL-17 describes. An API key there is the environment's credential: the

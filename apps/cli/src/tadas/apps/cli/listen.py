@@ -17,9 +17,10 @@ from uuid import UUID
 import httpx
 
 from tadas.apps.cli.model import describe
-from tadas.client.client import ApiClient, ApiError
+from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import Channel, State
+from tadas.client.transport import ApiError
 
 Changes = AsyncIterable[EntityChanged]
 OnResync = Callable[[], Awaitable[None]]

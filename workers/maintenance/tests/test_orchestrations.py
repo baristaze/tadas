@@ -14,19 +14,22 @@ from worker_support import build_container, make_item, request, sign_in, start_n
 
 from tadas.om.base import derived_id, new_id, utcnow
 from tadas.om.context import TenantContext
+from tadas.om.leases.types.leasable_resource import LeasableResource, LeasableResourceKind
 from tadas.om.leases.types.lease import Lease
 from tadas.om.leases.types.request import LeaseRequest, WaiterKind
-from tadas.om.leases.types.resource import Resource, ResourceKind
+from tadas.om.orchestrations.kinds import OrchestrationKindSpec
 from tadas.om.orchestrations.rules import advanced
-from tadas.om.orchestrations.steps import step_rows
+from tadas.om.orchestrations.steps import orchestration_step_rows
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
+    NoopInput,
     Orchestration,
     OrchestrationKind,
     OrchestrationStatus,
+    OrchestrationStep,
     ParkReason,
-    Step,
 )
+from tadas.om.root import ORCHESTRATION_KINDS
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WakeParkedPayload, WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
@@ -37,13 +40,13 @@ LEASE = timedelta(seconds=30)
 KINDS = [WorkKind.ORCHESTRATION, WorkKind.WAKE_PARKED]
 
 
-def handlers_of(container: WorkerContainer) -> Mapping[WorkKind, WorkHandlerInterface]:
+def handlers_of(container: WorkerContainer) -> Mapping[str, WorkHandlerInterface]:
     """The worker's own handlers."""
     return build_loop(container)._handlers  # pyright: ignore[reportPrivateUsage]
 
 
 async def drain(
-    container: WorkerContainer, handlers: Mapping[WorkKind, WorkHandlerInterface]
+    container: WorkerContainer, handlers: Mapping[str, WorkHandlerInterface]
 ) -> list[WorkItem]:
     """Claims every available step and wake-up and runs it with `handlers`,
     settling it as the loop does."""
@@ -68,7 +71,7 @@ async def test_a_record_steps_from_the_queue_until_it_succeeds(tmp_path: Path) -
     done = await container.managers.orchestrations.get(ctx, started.id)
     assert (done.status, done.cursor, done.total) == (OrchestrationStatus.SUCCEEDED, 3, 3)
     assert done.finished_at is not None
-    # The platform ran the steps; the record is still the person's.
+    # The system ran the steps; the record is still the person's.
     assert {item.created_by for item in ran} == {ctx.user_id}
 
 
@@ -94,7 +97,7 @@ class Guarded:
         )
         storage = self.container.storage.get_orchestrations_storage()
         await storage.write_orchestration(
-            ctx.org_id, parked, record.version, step_rows(ctx, parked)
+            ctx.org_id, parked, record.version, orchestration_step_rows(ctx, parked)
         )
         return parked
 
@@ -107,7 +110,9 @@ async def test_a_guard_parks_the_record_and_the_wake_up_resumes_it(tmp_path: Pat
     handlers = {
         **handlers_of(container),
         WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
-            container.managers.orchestrations, {OrchestrationKind.NOOP: guarded}
+            container.managers.orchestrations,
+            ORCHESTRATION_KINDS,
+            {OrchestrationKind.NOOP: guarded},
         ),
     }
     assert len(await drain(container, handlers)) == 1, "a parked record asks for no step"
@@ -142,7 +147,7 @@ class Leasing:
     derives, parks on `resource` in the same call while it waits, and steps
     once it holds one. Woken, it asks again by the key and finds its lease."""
 
-    def __init__(self, container: WorkerContainer, resource: Resource) -> None:
+    def __init__(self, container: WorkerContainer, resource: LeasableResource) -> None:
         self.container = container
         self.resource = resource
         self.held: list[Lease] = []
@@ -156,16 +161,16 @@ class Leasing:
             created_by=ctx.user_id,
             updated_by=ctx.user_id,
             idempotency_key=derived_id(record.id, record.created_at, "resource"),
-            kind=ResourceKind.NOOP,
-            resource_id=self.resource.id,
+            kind=LeasableResourceKind.NOOP,
+            leasable_resource_id=self.resource.id,
             waiter_kind=WaiterKind.ORCHESTRATION,
             waiter_id=record.id,
         )
         parked = advanced(
             record, now, ctx.user_id, cursor=record.cursor, total=record.total,
-            park=ParkReason.RESOURCE,
+            park=ParkReason.LEASABLE_RESOURCE,
         )  # fmt: skip
-        park = Step(record=parked, expected_version=record.version)
+        park = OrchestrationStep(record=parked, expected_version=record.version)
         standing = await self.container.managers.leases.ask(ctx, ask, park)
         if standing.lease is None:
             return parked
@@ -182,17 +187,17 @@ async def test_a_record_waits_in_line_and_the_grant_wakes_it_with_its_lease(
     now = utcnow()
     dock = await leases.register(
         ctx,
-        Resource(
+        LeasableResource(
             id=new_id(), created_at=now, updated_at=now, created_by=ctx.user_id,
-            updated_by=ctx.user_id, kind=ResourceKind.NOOP, ref_id=new_id(),
+            updated_by=ctx.user_id, kind=LeasableResourceKind.NOOP, ref_id=new_id(),
         ),
     )  # fmt: skip
     first = await leases.ask(
         ctx,
         LeaseRequest(
             id=new_id(), created_at=now, updated_at=now, created_by=ctx.user_id,
-            updated_by=ctx.user_id, idempotency_key=new_id(), kind=ResourceKind.NOOP,
-            resource_id=dock.id,
+            updated_by=ctx.user_id, idempotency_key=new_id(), kind=LeasableResourceKind.NOOP,
+            leasable_resource_id=dock.id,
         ),
     )  # fmt: skip
     assert first.lease is not None
@@ -201,12 +206,17 @@ async def test_a_record_waits_in_line_and_the_grant_wakes_it_with_its_lease(
     handlers = {
         **handlers_of(container),
         WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
-            container.managers.orchestrations, {OrchestrationKind.NOOP: leasing}
+            container.managers.orchestrations,
+            ORCHESTRATION_KINDS,
+            {OrchestrationKind.NOOP: leasing},
         ),
     }
     assert len(await drain(container, handlers)) == 1, "a record in line asks for no step"
     parked = await container.managers.orchestrations.get(ctx, started.id)
-    assert (parked.status, parked.park_reason) == (OrchestrationStatus.PARKED, ParkReason.RESOURCE)
+    assert (parked.status, parked.park_reason) == (
+        OrchestrationStatus.PARKED,
+        ParkReason.LEASABLE_RESOURCE,
+    )
     # The resource frees: the grant wakes the record it was for, and its
     # steps run to the end under the lease it finds by its key.
     await leases.release(ctx, first.lease.id)
@@ -238,7 +248,7 @@ async def test_a_step_that_errors_is_the_queues_to_retry_and_goes_on_from_its_cu
     started = await start_noop(container, ctx, 3)
     flaky = Flaky(container)
     handler = OrchestrationHandlerImpl(
-        container.managers.orchestrations, {OrchestrationKind.NOOP: flaky}
+        container.managers.orchestrations, ORCHESTRATION_KINDS, {OrchestrationKind.NOOP: flaky}
     )
     steps = [WorkKind.ORCHESTRATION]
     claimed = await container.managers.work.claim(request(), "default", steps, "test", LEASE)
@@ -270,7 +280,9 @@ async def test_the_last_attempt_fails_the_record_as_a_defect(tmp_path: Path) -> 
     ctx = await sign_in(container)
     started = await start_noop(container, ctx, 3)
     handler = OrchestrationHandlerImpl(
-        container.managers.orchestrations, {OrchestrationKind.NOOP: Flaky(container)}
+        container.managers.orchestrations,
+        ORCHESTRATION_KINDS,
+        {OrchestrationKind.NOOP: Flaky(container)},
     )
     claimed = await container.managers.work.claim(request(), "default", KINDS, "test", LEASE)
     assert claimed is not None
@@ -294,3 +306,21 @@ async def test_a_step_for_a_record_that_no_longer_runs_does_nothing(tmp_path: Pa
     ran = await drain(container, handlers_of(container))
     assert len(ran) == 1, "the first step's item ran and found nothing to do"
     assert await container.managers.orchestrations.get(ctx, started.id) == ended
+
+
+def test_a_step_for_a_kind_nobody_registered_is_refused_at_the_build(tmp_path: Path) -> None:
+    """A copy keys its kind's step by the name its own module registers; a
+    step for a name the registry does not hold is refused before any item
+    is claimed."""
+    container = build_container(tmp_path)
+    orchestrations = container.managers.orchestrations
+    steps = {
+        OrchestrationKind.NOOP: orchestrations.step_noop,
+        "dock_import": orchestrations.step_noop,
+    }
+    with pytest.raises(ValueError, match="no orchestration kind is registered as dock_import"):
+        OrchestrationHandlerImpl(orchestrations, ORCHESTRATION_KINDS, steps)
+    copys = ORCHESTRATION_KINDS.extended((OrchestrationKindSpec("dock_import", NoopInput),))
+    assert isinstance(
+        OrchestrationHandlerImpl(orchestrations, copys, steps), OrchestrationHandlerImpl
+    )

@@ -8,15 +8,13 @@ from collections.abc import Sequence
 from datetime import timedelta
 from uuid import UUID
 
-from contracts.outbox_storage import a_user, claim_all, make_row
-
 from tadas.infra.breaker import Breaker
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.infra.topics.breaker import TopicsBreakerImpl
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import new_id
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.outbox.impl.relay import (
     DEAD_LETTER_KIND,
     UNPUBLISHED,
@@ -26,6 +24,8 @@ from tadas.om.outbox.impl.relay import (
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
+
+from contracts.outbox_storage import a_user, claim_all, make_row
 
 NO_GRACE = OutboxOptions(grace=timedelta(0), backoff_base=timedelta(0), max_attempts=3)
 
@@ -86,7 +86,7 @@ def stored(outbox: OutboxStorageMemoryImpl) -> dict[UUID, OutboxRow]:
 async def test_a_dropped_publish_leaves_the_row_pending_until_the_bus_takes_it() -> None:
     outbox, bus, org = CountedMarks(), Bus(), new_id()
     (row,) = await landed(outbox, org, 1)
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), bus, options=NO_GRACE)
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), bus, options=NO_GRACE)
     counted = publish_failures()
     bus.down = True
 
@@ -116,7 +116,7 @@ async def test_a_batch_with_one_dropped_publish_marks_only_the_published_rows() 
     outbox, bus, org = CountedMarks(), Bus(), new_id()
     rows = await landed(outbox, org, 3)
     bus.drops = {rows[1].target_id}
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), bus, options=NO_GRACE)
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), bus, options=NO_GRACE)
     counted = publish_failures()
 
     assert not await relay.relay_all(org, rows)
@@ -129,7 +129,7 @@ async def test_the_sweep_marks_the_published_rows_of_a_batch_and_retries_the_dro
     outbox, bus, org = CountedMarks(), Bus(), new_id()
     rows = await landed(outbox, org, 3)
     bus.drops = {rows[2].target_id}
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), bus, options=NO_GRACE)
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), bus, options=NO_GRACE)
 
     assert await relay.relay_pending(10) == 2
     assert outbox.marks == [{rows[0].id, rows[1].id}], "one mark, no row-by-row retry"
@@ -147,7 +147,7 @@ async def test_a_publish_dropped_on_every_attempt_is_a_dead_letter() -> None:
     attempts are spent, counted, and named in the tenant's stream."""
     outbox, bus, org = CountedMarks(), Bus(), new_id()
     (row,) = await landed(outbox, org, 1)
-    events = EventStorageMemoryImpl()
+    events = ChangeEventStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events, bus, options=NO_GRACE)
     counted = dead_letters()
     bus.down = True
@@ -178,7 +178,7 @@ async def test_an_open_breaker_is_a_dropped_publish_and_not_a_delivered_one() ->
         ),
     )
     assert breaker.is_open
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), bus, options=NO_GRACE)
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), bus, options=NO_GRACE)
     assert not await relay.relay(org, row)
     assert outbox.marks == []
     assert [r.id for r in await claim_all(outbox)] == [row.id]
@@ -192,7 +192,7 @@ async def test_a_held_request_whose_publish_is_dropped_leaves_its_rows_to_the_sw
     rows = [
         row.model_copy(update={"request_id": request_id}) for row in await landed(outbox, org, 2)
     ]
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), bus, options=NO_GRACE)
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), bus, options=NO_GRACE)
     relay.hold(request_id)
     assert await relay.relay_all(org, rows), "held, not relayed"
     bus.down = True

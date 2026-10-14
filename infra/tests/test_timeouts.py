@@ -115,8 +115,9 @@ def test_every_client_construction_names_a_timeout() -> None:
     found = client_constructions()
     sites = {site.split(":")[0] for site, _ in found}
     assert sites >= {
-        "clients/python/src/tadas/client/client.py",
+        "clients/python/src/tadas/client/calls/media.py",
         "clients/python/src/tadas/client/realtime.py",
+        "clients/python/src/tadas/client/transport.py",
         "infra/src/tadas/infra/buckets/s3.py",
         "infra/src/tadas/infra/queues/sqs.py",
         "infra/src/tadas/infra/secrets/aws.py",

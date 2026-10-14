@@ -5,7 +5,7 @@ unit tested without either."""
 from collections.abc import Sequence
 from uuid import UUID
 
-from tadas.client.types import MembershipChoiceView, OrgKind
+from tadas.client.types.tenancy import MembershipChoiceView, OrgKind
 
 
 def describe(kind: str, target_id: UUID, actor: str) -> str:

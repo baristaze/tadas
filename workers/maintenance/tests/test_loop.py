@@ -30,14 +30,15 @@ from tadas.infra.observability import (
 )
 from tadas.infra.topics import TopicPayload, Topics
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.change_events.impl.manager import ChangeEventsOptions
+from tadas.om.change_events.types.change_event import ChangeEvent
 from tadas.om.context import RequestContext, TenantContext
-from tadas.om.events.impl.manager import EventsOptions
-from tadas.om.events.types.event import Event
 from tadas.om.exceptions import LeaseLost, Unavailable
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationKind
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
+from tadas.om.root import KINDS
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
@@ -135,7 +136,7 @@ class LeaseLosingWork(WorkManagerInterface):
         self,
         rctx: RequestContext,
         lane: str,
-        kinds: Sequence[WorkKind],
+        kinds: Sequence[str],
         worker_id: str,
         lease: timedelta,
         tenant_cap: int | None = None,
@@ -257,7 +258,7 @@ class StopOnClaimWork(LeaseLosingWork):
         self,
         rctx: RequestContext,
         lane: str,
-        kinds: Sequence[WorkKind],
+        kinds: Sequence[str],
         worker_id: str,
         lease: timedelta,
         tenant_cap: int | None = None,
@@ -285,7 +286,7 @@ class EnqueueDuringClaimWork(LeaseLosingWork):
         self,
         rctx: RequestContext,
         lane: str,
-        kinds: Sequence[WorkKind],
+        kinds: Sequence[str],
         worker_id: str,
         lease: timedelta,
         tenant_cap: int | None = None,
@@ -312,7 +313,7 @@ class EmptyClaimCountingWork(LeaseLosingWork):
         self,
         rctx: RequestContext,
         lane: str,
-        kinds: Sequence[WorkKind],
+        kinds: Sequence[str],
         worker_id: str,
         lease: timedelta,
         tenant_cap: int | None = None,
@@ -390,20 +391,38 @@ def start_loop(
         purges={
             "media": container.managers.media.purge_tenant,
             "tenancy": container.managers.tenancy.purge_tenant,
-            "events": container.managers.events.purge_tenant,
+            "change_events": container.managers.change_events.purge_tenant,
         },
         across={
             "media": unstaged(container.managers.media.purge_across_tenants),
             "tenancy": unstaged(container.managers.tenancy.purge_across_tenants),
             "idempotency": unstaged(container.managers.idempotency.purge_across_tenants),
-            "events": unstaged(container.managers.events.purge_across_tenants),
+            "change_events": unstaged(container.managers.change_events.purge_across_tenants),
         },
+        kinds=KINDS,
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
         liveness=liveness or container.infra.get_cache(CacheScope.WORKER_LIVENESS),
         options=options,
     )
     return loop, asyncio.create_task(loop.run())
+
+
+def test_a_handler_for_a_kind_the_registry_does_not_hold_is_refused(tmp_path: Path) -> None:
+    """Nobody can enqueue a kind the root does not register, so a handler for
+    one is a mistake the worker refuses at build, never a kind it claims."""
+    container = build_container(tmp_path)
+    with pytest.raises(ValueError, match="no work kind is registered as STRAY"):
+        WorkerLoop(
+            work=container.managers.work,
+            outbox=container.managers.outbox,
+            purges={},
+            kinds=KINDS,
+            handlers={WorkKind.NOOP: RecordingHandler(), "STRAY": RecordingHandler()},
+            topics=container.infra.get_topics(),
+            liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
+            options=LoopOptions(worker_id="w1"),
+        )
 
 
 async def claim_all(outbox: OutboxStorageInterface) -> list[OutboxRow]:
@@ -605,7 +624,7 @@ async def test_a_refusal_fails_the_item_at_once_as_a_dead_letter(tmp_path: Path)
     assert stored.status is WorkStatus.FAILED
     assert (stored.attempts, stored.max_attempts) == (1, 3)
     assert stored.last_error == "refused: the provider said no"
-    events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await container.managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [(e.kind, e.target_id) for e in events] == [(DEAD_LETTER_KIND, stored.id)]
     assert outcome("work", "dead_letter") == dead + 1
     assert outcome("worker", "refused") == refused + 1
@@ -616,15 +635,19 @@ async def test_a_park_hands_the_item_back_and_spends_no_attempt(tmp_path: Path) 
     assert stored.status is WorkStatus.QUEUED and stored.attempts == 0
     assert stored.last_error == "parked: not yet"
     assert stored.available_at > utcnow() + timedelta(minutes=4)
-    assert await container.managers.events.get_events(ctx, after_seq=0, limit=10) == []
+    assert (
+        await container.managers.change_events.get_change_events(ctx, after_seq=0, limit=10) == []
+    )
 
 
 async def test_any_other_error_requeues_the_item_with_a_delay(tmp_path: Path) -> None:
     container, ctx, stored = await run_once(tmp_path, RuntimeError("boom"))
     assert stored.status is WorkStatus.QUEUED and stored.attempts == 1
-    assert stored.last_error == "RuntimeError", "the type alone; its text is not the platform's"
+    assert stored.last_error == "RuntimeError", "the type alone; its text is not the system's"
     assert stored.available_at > utcnow()
-    assert await container.managers.events.get_events(ctx, after_seq=0, limit=10) == []
+    assert (
+        await container.managers.change_events.get_change_events(ctx, after_seq=0, limit=10) == []
+    )
 
 
 @on_the_test_clock
@@ -893,7 +916,7 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     loop.stop()
     await task
     assert await claim_all(outbox) == [], "the sweep relayed the row"
-    events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await container.managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, record.id)]
     # With no retention the second sweep purged the done row: nothing pending,
     # nothing done, and the relay of a purged row is never asked for.
@@ -1077,12 +1100,12 @@ async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
     where it is."""
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    storage = container.storage.get_event_storage()
+    storage = container.storage.get_change_event_storage()
     aged = utcnow() - timedelta(days=100)
     for _ in range(5):
-        await storage.append_events(ctx.org_id, [aged_event(ctx, aged)])
-    options = EventsOptions(retention=timedelta(days=90), purge_batch=2)
-    monkeypatch.setattr(container.managers.events, "_options", options)
+        await storage.append_change_events(ctx.org_id, [aged_event(ctx, aged)])
+    options = ChangeEventsOptions(retention=timedelta(days=90), purge_batch=2)
+    monkeypatch.setattr(container.managers.change_events, "_options", options)
     trims: list[int] = []
     trim = storage.trim
 
@@ -1104,8 +1127,8 @@ async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
     assert [e.seq for e in kept] == list(range(6, head + 1)), "whole above the floor"
 
 
-def aged_event(ctx: TenantContext, produced_at: datetime) -> Event:
-    return Event(
+def aged_event(ctx: TenantContext, produced_at: datetime) -> ChangeEvent:
+    return ChangeEvent(
         id=new_id(),
         org_id=ctx.org_id,
         kind="tenancy.test.noted",

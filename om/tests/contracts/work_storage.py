@@ -13,9 +13,13 @@ from tadas.om.exceptions import TenantMismatch
 from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.types.tenant_cap import TenantCap
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
+
 from contracts.racing import race
 
 LEASE = timedelta(seconds=30)
+
+INTERFACE = WorkStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
@@ -98,7 +102,7 @@ class WorkStorageContract:
         assert claimed.claim_token is not None
         assert claimed.attempts == 1
         assert claimed.created_by == item.created_by, "the person who asked for the work"
-        assert claimed.updated_by == EMPTY_UUID, "the claim is the platform's write"
+        assert claimed.updated_by == EMPTY_UUID, "the claim is the system's write"
         assert claimed.lease_expires_at is not None and claimed.lease_expires_at > utcnow()
         assert claimed.payload == {}
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE) is None
@@ -224,7 +228,7 @@ class WorkStorageContract:
                 assert item.claimed_by is None and item.lease_expires_at is None
                 assert item.claim_token is None
                 assert item.last_error == "lease expired" and item.updated_at == now
-                assert item.updated_by == EMPTY_UUID, "the requeue is the platform's write"
+                assert item.updated_by == EMPTY_UUID, "the requeue is the system's write"
                 if item.max_attempts == 1:
                     assert item.status is WorkStatus.FAILED
                 else:

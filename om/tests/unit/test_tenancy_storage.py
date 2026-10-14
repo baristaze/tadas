@@ -1,5 +1,4 @@
 import pytest
-from contracts.tenancy_storage import TenancyStorageContract
 
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
@@ -8,8 +7,20 @@ from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 
+from contracts.tenancy_credentials_storage import TenancyCredentialsStorageContract
+from contracts.tenancy_members_storage import TenancyMembersStorageContract
+from contracts.tenancy_org_storage import TenancyOrgStorageContract
+from contracts.tenancy_sign_in_storage import TenancySignInStorageContract
+from contracts.tenancy_storage import TenancyStorageContract
 
-class TestTenancyStorageMemory(TenancyStorageContract):
+
+class TestTenancyStorageMemory(
+    TenancyCredentialsStorageContract,
+    TenancyMembersStorageContract,
+    TenancyOrgStorageContract,
+    TenancySignInStorageContract,
+    TenancyStorageContract,
+):
     @pytest.fixture
     def outbox(self) -> OutboxStorageInterface:
         return OutboxStorageMemoryImpl()

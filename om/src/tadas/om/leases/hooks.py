@@ -1,24 +1,33 @@
 """The hooks a kind registers, as a work kind registers its handler. A
-resource kind says what a grant of it starts and whether a request may still
-be granted, and a kind that refuses some asks registers a check of them too;
-a waiter kind says whether a waiter still waits and what wakes it. The root
-hands the manager one impl per kind, and a kind with none is refused at the
-ask; a kind with no check accepts every ask."""
+resource kind says what its ask carries, what a grant of it starts, and
+whether a request may still be granted, and a kind that refuses some asks
+registers a check of them too; a waiter kind says whether a waiter still
+waits and what wakes it. The root hands the manager one impl per kind, keyed
+by the kind's name, which the namespace that owns the kind declares in its
+own module. A kind with none is refused at the ask; a kind with no check
+accepts every ask."""
 
 from abc import ABC, abstractmethod
+from typing import ClassVar
 from uuid import UUID
 
+from tadas.om.base import OmBase
 from tadas.om.context import TenantContext
+from tadas.om.leases.types.leasable_resource import LeasableResource
 from tadas.om.leases.types.lease import Lease
 from tadas.om.leases.types.request import LeaseRequest
-from tadas.om.leases.types.resource import Resource
 from tadas.om.outbox.types.row import OutboxRow
 
 
-class ResourceKindInterface(ABC):
+class LeasableResourceKindInterface(ABC):
+    ASK: ClassVar[type[OmBase]]
+    """The shape of what an ask of the kind carries, which the ask holds its
+    payload to. Every kind declares it; the manager refuses at its build a
+    kind that does not."""
+
     @abstractmethod
     async def may_grant(
-        self, ctx: TenantContext, resource: Resource, request: LeaseRequest
+        self, ctx: TenantContext, resource: LeasableResource, request: LeaseRequest
     ) -> bool:
         """Asked just before a grant, under the context of whatever freed the
         resource: whether the request may still be granted, read live (the
@@ -27,7 +36,7 @@ class ResourceKindInterface(ABC):
 
     @abstractmethod
     def grant_rows(
-        self, ctx: TenantContext, resource: Resource, request: LeaseRequest, lease: Lease
+        self, ctx: TenantContext, resource: LeasableResource, request: LeaseRequest, lease: Lease
     ) -> tuple[OutboxRow, ...]:
         """What a grant starts: the rows it lands in the grant's own commit,
         a `work.<kind>` row among them for a job to enqueue. That row is the
@@ -44,7 +53,7 @@ class AskCheckInterface(ABC):
 
     @abstractmethod
     async def check_ask(
-        self, ctx: TenantContext, request: LeaseRequest, resource: Resource | None
+        self, ctx: TenantContext, request: LeaseRequest, resource: LeasableResource | None
     ) -> None:
         """Asked at the ask, under the asker's context, once its payload has
         its kind's shape and before anything lands: whether this asker may

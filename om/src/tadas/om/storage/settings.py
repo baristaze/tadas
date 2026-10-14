@@ -57,7 +57,9 @@ class StorageSettings(BaseSettings):
     # reads the one URL, as the cloud's one instance serves all four; the
     # local stack sets all four, one instance per role.
     database_url: str = "postgresql+asyncpg://tadas_runtime:tadas_runtime@127.0.0.1:55432/tadas"
-    database_system_url: str = "postgresql+asyncpg://tadas_system:tadas_system@127.0.0.1:55432/tadas"
+    database_system_url: str = (
+        "postgresql+asyncpg://tadas_system:tadas_system@127.0.0.1:55432/tadas"
+    )
     database_url_core: str | None = None
     database_url_activity: str | None = None
     database_url_queue: str | None = None

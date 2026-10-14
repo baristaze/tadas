@@ -14,6 +14,9 @@ from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.outbox.types.row import OutboxRow
 
+INTERFACE = MediaStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
+
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "create_file",

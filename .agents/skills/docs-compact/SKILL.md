@@ -1,7 +1,7 @@
 ---
 name: docs-compact
-description: "Compact the tree's documents to what holds at the head of the main branch: rewrite each ADR to its present decision with a status of one date, remove the ADRs that constrain nothing, cut the changelog to the latest release, clean the rows of specs/architecture.md, and rewrite the comments that tell what the code did before. With --migrations, fold each role's migration chain into one revision under the head's revision id, shown equal by a schema dump. Works on a branch, pushes nothing, and reports what it removed, rewrote, and kept."
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash(git status:*), Bash(git fetch:*), Bash(git symbolic-ref:*), Bash(git switch:*), Bash(git log:*), Bash(git diff:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(git ls-files:*), Bash(git rm:*), Bash(git mv:*), Bash(git add:*), Bash(git commit:*), Bash(git restore:*), Bash(git clean:*), Bash(git grep:*), Bash(diff:*), Bash(mkdir:*), Bash(gh release:*), Bash(gh run:*), Bash(gh api:*), Bash(docker info:*), Bash(docker compose:*), Bash(uv run:*), Bash(make setup), Bash(make openapi), Bash(make check), Bash(make infra-up), Bash(make migrate)
+description: "Compact the tree's documents to what holds at the head of the main branch: rewrite each ADR to its present decision with a status of one date, remove the ADRs that constrain nothing, cut the changelog to the latest release, clean the rows of specs/architecture.md, and rewrite the comments that tell what the code did before. With --migrations, fold the revisions each role's chain owns into one revision under the head's revision id, shown equal by a schema dump; in a copy or a layer, on its base's head, with the base's files left as rendered. Works on a branch, pushes nothing, and reports what it removed, rewrote, and kept."
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash(git status:*), Bash(git fetch:*), Bash(git symbolic-ref:*), Bash(git switch:*), Bash(git log:*), Bash(git diff:*), Bash(git rev-parse:*), Bash(git merge-base:*), Bash(git ls-files:*), Bash(git ls-tree:*), Bash(git rm:*), Bash(git mv:*), Bash(git add:*), Bash(git commit:*), Bash(git restore:*), Bash(git clean:*), Bash(git grep:*), Bash(diff:*), Bash(mkdir:*), Bash(gh release:*), Bash(gh run:*), Bash(gh api:*), Bash(docker info:*), Bash(docker compose:*), Bash(uv run:*), Bash(make setup), Bash(make openapi), Bash(make check), Bash(make infra-up), Bash(make migrate)
 ---
 
 # docs-compact
@@ -27,13 +27,22 @@ an option only the history explains: no, so it goes.
 
 Without the flag the skill rewrites text only, and never opens
 `om/migrations/`: a search lists lines of it, as step 6's does, and no
-file there is read whole or changed. With it, it also folds each role's
-migration chain into one revision, as step 7 says. It runs at the root
-of the checkout.
+file there is read whole or changed. With it, it also folds the
+revisions each role's chain owns into one revision, as step 7 says:
+every revision, or in a copy or a layer, those the render of its base
+does not hold.
+
+It runs at the root of the tree, the folder that holds the tree's
+Makefile, and every command it gives runs there. In a copy, that folder
+is the root of the checkout. In a layer, it is the folder of the
+layer's repository that holds its tree. In the guideline's repository,
+it is the folder that holds this scaffold, never the repository's root;
+that repository has no `scaffold` branch, so the fold there holds the
+whole chain.
 
 ## Role and credential
 
-None of the platform's: it reads no environment. On the local stack it
+None of the system's: it reads no environment. On the local stack it
 logs in to the databases it makes and drops, one for the gates and two
 for the fold, and to the stack's own for one thing: the fold's
 precondition brings it to its head (`make migrate`). It reads the
@@ -71,9 +80,10 @@ left as it is, and the report names it under Kept.
    either exists, both take the next free suffix (`_2`), so a run never
    overwrites another's. Make the folder (`mkdir -p`).
 2. **Take the inventory**, and keep it for the report. Read nothing
-   under `node_modules`, a lock file, a generated file
-   (`clients/typescript/openapi.json` and the two schemas `make openapi`
-   writes), or a skill folder that is a link.
+   under `node_modules`, a lock file, a generated file (what `make
+   openapi` writes: `clients/openapi/`, `clients/typescript/src/schema/`,
+   and `clients/python/src/tadas/client/schema/`), or a skill folder that
+   is a link.
    - Every `docs/adr/NNNN-*.md`: its status line, its `##` headings, and
      who cites it, in the code, the config, and the Markdown. A citation
      takes one of four forms. `ADR NNNN`, `ADR-NNNN`, or `ADRNNNN`, in a
@@ -92,21 +102,30 @@ left as it is, and the report names it under Kept.
      which the search prints, ends in `ADR`.
 
    - `CHANGELOG.md`: its release sections, when the tree has one.
-   - The Substitutions and Deviations rows of `specs/architecture.md`.
+   - The Substitutions and Deviations rows of `specs/architecture.md`;
+     with a `scaffold` branch, those below each table's marker.
    - The sentences that tell a past, in the Markdown and in the code's
      comments and docstrings. `references/phrases.txt`, in this skill's
      folder, lists the phrases that mark one, a pattern a line, each
      matched as whole words. The pathspec leaves out what the skill
      never edits: its own folder, `om/migrations/`, the three generated
-     files, and the lock files.
+     folders, and the lock files.
 
      ```bash
-     git grep -nIiwE -f .agents/skills/docs-compact/references/phrases.txt -- . ':!.agents/skills/docs-compact' ':!om/migrations' ':!clients/typescript/openapi.json' ':!clients/typescript/src/schema.d.ts' ':!clients/python/src/tadas/client/schema.py' ':!*.lock' ':!*.lock.hcl' ':!pnpm-lock.yaml'
+     git grep -nIiwE -f .agents/skills/docs-compact/references/phrases.txt -- . ':!.agents/skills/docs-compact' ':!om/migrations' ':!clients/openapi' ':!clients/typescript/src/schema' ':!clients/python/src/tadas/client/schema' ':!*.lock' ':!*.lock.hcl' ':!pnpm-lock.yaml'
      ```
 
      The list is the sweep: the skill reads each hit in its paragraph,
      and does not read every file.
 3. **Compact the ADRs**, each once, then commit them alone.
+   - **The tree's own alone.** With a `scaffold` branch (`git rev-parse
+     --verify --quiet origin/scaffold` prints its id), each ADR that
+     `git ls-tree -r --name-only origin/scaffold -- docs/adr` lists is
+     its base's, and stays as the render gave it: a copy never edits an
+     ADR its base gave, and the next move rewrites it with no conflict.
+     None is rewritten, removed, or the target of a move or a fold
+     below; a decision of the tree's own that extends one stays in the
+     tree's ADR that cites it.
    - **Rewrite in place** an ADR whose decision holds. Its status is
      `**Status**: accepted (<date>)` and nothing more, with the date
      the old status gives for its acceptance, wherever in the line it
@@ -165,7 +184,8 @@ left as it is, and the report names it under Kept.
      leaves in doubt is kept and listed too. Either is rewritten in
      place as this step's first item says, its status one date.
    - A file under `docs/adr/` that is not an ADR, such as a picture,
-     goes when no ADR links it. An ADR never goes for want of a link.
+     goes when no ADR links it; the folder's `README.md` stays. An ADR
+     never goes for want of a link.
 4. **Cut the changelog** to its latest release: the lines above the
    first release, that one section, and one line that says every
    release's notes stay on the repository host. Each older section goes
@@ -176,7 +196,11 @@ left as it is, and the report names it under Kept.
    substitution or the deviation is, in the present tense, with its end
    condition when it has one. A date, a release, and "ended with" go. A
    row whose ADR step 3 removed goes, or names the ADR that holds it
-   now. The pin line stays as it is. Commit.
+   now. The pin line stays as it is, and so does each table's marker
+   line, `<!-- A copy adds its entries below this line. -->`. With a
+   `scaffold` branch, the rows above a marker are the base's and stay
+   as the render gave them: only the tree's own table below it is
+   cleaned. Commit.
 6. **Rewrite the sentences** of step 2's sweep, each hit judged once.
    - A sentence about the code's past goes, or is rewritten to what the
      code does: what a former release did, what changed, what a value
@@ -193,10 +217,17 @@ left as it is, and the report names it under Kept.
      that ends the contract has not landed, and it is in flight.
      - A piece of the schema (a column, a default, a constraint, a
        trigger, a function): the last up file that names it decides,
-       by the stamp the file's name begins with. The head holds the
-       piece unless that file drops it and does not make it again.
-       `git grep -nwF '<its name>' -- 'om/migrations/sql/*.up.sql'`
-       lists the lines to read.
+       in the chain's order: each file after the one its wrapper's
+       `down_revision` names, never by the stamp its name begins with.
+       The head holds the piece unless that file drops it and does not
+       make it again. This lists the lines to read, and the command
+       below it prints each role's order:
+       `git grep -nwF '<its name>' -- 'om/migrations/sql/*.up.sql'`.
+
+       ```bash
+       uv run --package tadas-om python -c "from tadas.om.storage.migrate import chain; from tadas.om.storage.roles import DatabaseRole; [print(r.value, *chain(r)) for r in DatabaseRole]"
+       ```
+
      - Any other piece (a field of a response, a setting, a branch of
        the code) is the code the comment sits on: the head holds it.
 
@@ -221,9 +252,15 @@ left as it is, and the report names it under Kept.
    it is and the report says which part failed.
 8. **Run the gates.** `make setup` first, which installs the tree and
    formats its Python; commit what it changes, apart. Then `make
-   openapi`, which writes the API document and its two schemas from the
-   code, a docstring step 6 rewrote included; commit what it changes,
-   apart. Then `make check`. When `docker info` exits 0, also `make
+   openapi`, which writes each namespace's API document and its two
+   schemas from the code, a docstring step 6 rewrote included; commit
+   what it changes, apart. Then `make check`. In the guideline's
+   repository, the scaffold pins the last release's checker, older than
+   the scaffold it checks, so `make check` runs the checkout's instead,
+   through the Makefile's override: `make check ARCH_CHECK="uv run
+   --no-project --python $(cat .python-version) python
+   $(git rev-parse --show-toplevel)/checkers/arch_check.py"`. When
+   `docker info` exits 0, also `make
    infra-up`, and then `make migrate`, `make migrate-check`, and `make
    test-integration` on a database the run makes and drops, never the
    stack's own: the integration tests empty every table of the
@@ -281,7 +318,10 @@ left as it is, and the report names it under Kept.
   `--migrations`, and only one that pins a revision the fold removes,
   tests a backfill it removes, or steps down from the head.
 - Never opens `om/migrations/` without `--migrations`, and never edits
-  an applied migration file: a fold replaces a chain whole.
+  an applied migration file: a fold replaces the revisions it owns
+  whole, and leaves every file the render of its base holds as the
+  render gave it.
+- Never edits or removes an ADR the render of its base holds.
 - Never writes to a shared database or to an environment, and never
   runs a test on the local stack's own database: its gates and its fold
   run on databases it made on the local stack, and drops.
@@ -324,8 +364,8 @@ Branch <name> at <commit>, cut from <main> at <commit>. Migrations: <folded | no
 
 ## The fold (with `--migrations`)
 
-| role | head id | revisions folded | backfills left out | dump of the chain against the fold's |
-|---|---|---|---|---|
+| role | head id | parent | revisions folded | backfills left out | dump of the chain against the fold's |
+|---|---|---|---|---|---|
 
 The last commit before the fold: <sha>. A snapshot older than the fold is restored at that commit's release, which migrates it to the head, and then moves to the current one.
 

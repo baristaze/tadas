@@ -3,7 +3,6 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
-from contracts.idempotency_storage import attempt_minted_at, attempt_of, make_record
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.context import (
@@ -29,6 +28,8 @@ from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImp
 from tadas.om.idempotency.types.record import IdempotencyRecord
 from tadas.om.tenancy.rules import operator_permissions_of, permissions_of
 
+from contracts.idempotency_storage import attempt_minted_at, attempt_of, make_record
+
 APP = AppContext(type=AppType.API, version="api@test")
 
 
@@ -39,7 +40,7 @@ def context(role: Role = Role.MEMBER, org_id: UUID | None = None) -> TenantConte
         org_id=org_id or new_id(),
         role=role,
         permissions=permissions_of(role),
-        credential_kind=CredentialKind.SESSION_TOKEN,
+        credential_kind=CredentialKind.AUTH_SESSION_TOKEN,
     )
 
 

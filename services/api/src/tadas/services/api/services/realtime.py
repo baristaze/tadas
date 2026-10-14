@@ -11,7 +11,8 @@ from collections.abc import Callable
 from tadas.infra.topics import Topics
 from tadas.om.context import ActorScope, TenantContext
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
-from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
+from tadas.services.api.realtime.envelopes import ChangeEventEnvelope
+from tadas.services.api.types.change_events import IssuedTicketView
 
 CREDENTIAL_REVOKED = "credential_revoked"
 """The close reason when the session or the api key behind the socket was revoked."""
@@ -58,7 +59,7 @@ class RealtimeServiceInterface(ABC):
 
     @abstractmethod
     def subscribe(
-        self, ctx: ActorScope, topic: Topics, deliver: Callable[[EventEnvelope], None]
+        self, ctx: ActorScope, topic: Topics, deliver: Callable[[ChangeEventEnvelope], None]
     ) -> Callable[[], None]:
         """Hands `deliver` every push on `topic` for the caller's tenant, projected
         onto its view; returns the unsubscribe callable. Raises ValidationFailed

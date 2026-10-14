@@ -4,14 +4,6 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.work_cap import (
-    a_burst_drains_as_fast_as_the_worker_runs_at_a_cap_of_two,
-    a_second_item_is_passed_over_at_a_cap_of_one,
-    a_tenants_own_cap_holds_in_place_of_the_lanes,
-    a_tenants_own_cap_holds_on_a_lane_with_no_cap,
-    an_operator,
-)
-from contracts.work_storage import make_item
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES
@@ -35,18 +27,22 @@ from tadas.om.exceptions import (
     ValidationFailed,
     WorkNotFailed,
 )
-from tadas.om.root import Managers, build_managers
+from tadas.om.root import KINDS, Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.rules import operator_permissions_of
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
 from tadas.om.work.impl.operator import REQUEUED_KIND
-from tadas.om.work.types.work_item import (
-    WORK_ENQUEUE_PERMISSIONS,
-    WorkItem,
-    WorkKind,
-    WorkStatus,
+from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
+
+from contracts.work_cap import (
+    a_burst_drains_as_fast_as_the_worker_runs_at_a_cap_of_two,
+    a_second_item_is_passed_over_at_a_cap_of_one,
+    a_tenants_own_cap_holds_in_place_of_the_lanes,
+    a_tenants_own_cap_holds_on_a_lane_with_no_cap,
+    an_operator,
 )
+from contracts.work_storage import make_item
 
 LEASE = timedelta(seconds=30)
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -325,7 +321,7 @@ async def test_requeue_stale_runs_once_across_tenants_and_dead_letters_in_each(
     assert await managers.work.requeue_stale(request(), limit=2) == 1
     assert await managers.work.requeue_stale(request(), limit=2) == 0
 
-    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [(e.kind, e.target_id, e.payload["last_error"]) for e in events] == [
         (DEAD_LETTER_KIND, exhausted.id, "lease expired")
     ]
@@ -333,7 +329,7 @@ async def test_requeue_stale_runs_once_across_tenants_and_dead_letters_in_each(
     assert [(p.org_id, p.kind) for p in seen if isinstance(p, EntityChangedPayload)] == [
         (ctx.org_id, DEAD_LETTER_KIND)
     ]
-    assert await managers.events.get_events(bob, after_seq=0, limit=10) == []
+    assert await managers.change_events.get_change_events(bob, after_seq=0, limit=10) == []
     ids = set()
     for _ in range(2):
         again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
@@ -369,7 +365,7 @@ async def test_a_dead_letter_in_a_gone_tenant_is_counted_without_an_event(
     assert OUTCOMES.labels(subsystem="work", outcome="dead_letter")._value.get() == counted + 1
     failed = await storage.get_work_storage().read_item(ctx.org_id, doomed.id)
     assert failed is not None and failed.status is WorkStatus.FAILED
-    assert await storage.get_event_storage().read_after(ctx.org_id, 0, 10) == []
+    assert await storage.get_change_event_storage().read_after(ctx.org_id, 0, 10) == []
     moved = await storage.get_work_storage().read_item(bob.org_id, bobs.id)
     assert moved is not None and moved.status is WorkStatus.QUEUED
 
@@ -448,18 +444,18 @@ async def test_a_reused_idempotency_key_returns_the_row_it_named(
 async def test_enqueue_refuses_a_payload_outside_the_kinds_shape(
     managers: Managers, ctx: TenantContext
 ) -> None:
-    # WORK_PAYLOADS fixes the shape per kind; NOOP carries nothing.
+    # The kind's spec fixes the shape; NOOP carries nothing.
     item = make_item().model_copy(update={"created_by": ctx.user_id, "payload": {"extra": 1}})
     with pytest.raises(ValidationFailed):
         await managers.work.enqueue(ctx, item)
 
 
 async def test_an_enqueue_takes_the_permission_its_kind_is_asked_for_with(
-    managers: Managers, ctx: TenantContext, monkeypatch: pytest.MonkeyPatch
+    managers: Managers, ctx: TenantContext
 ) -> None:
     """The run has the service role, so whoever asks for a kind holds the
-    permission `WORK_ENQUEUE_PERMISSIONS` names for it: a member, who may
-    write, never queues the deletion of the org."""
+    permission its spec names: a member, who may write, never queues the
+    deletion of the org."""
     tenancy = managers.tenancy
     await tenancy.add_member(request(APP), "ajax", "bob@example.test", "Bob", Role.MEMBER)
     login = await tenancy.sign_in.dev_sign_in(request(APP), "bob@example.test")
@@ -468,7 +464,8 @@ async def test_an_enqueue_takes_the_permission_its_kind_is_asked_for_with(
     )
     member = await tenancy.authenticate(request(APP), issued.token)
     assert member.has(Permission.WRITE) and not member.has(Permission.MANAGE_MEMBERS)
-    assert WORK_ENQUEUE_PERMISSIONS[WorkKind.DELETE_ORG] is Permission.MANAGE_MEMBERS
+    deleting = KINDS.get(WorkKind.DELETE_ORG)
+    assert deleting is not None and deleting.permission is Permission.MANAGE_MEMBERS
 
     def deletion() -> WorkItem:
         return make_item().model_copy(
@@ -477,15 +474,16 @@ async def test_an_enqueue_takes_the_permission_its_kind_is_asked_for_with(
 
     with pytest.raises(NotAuthorized, match="member lacks manage_members"):
         await managers.work.enqueue(member, deletion())
-    assert await managers.work.claim(request(), "default", list(WorkKind), "w1", LEASE) is None
+    everything = [kind.name for kind in KINDS]
+    assert await managers.work.claim(request(), "default", everything, "w1", LEASE) is None
     # The owner holds it, and the member still asks for a kind that takes `write`.
     queued = await managers.work.enqueue(ctx, deletion())
     assert (queued.kind, queued.status) == (WorkKind.DELETE_ORG, WorkStatus.QUEUED)
-    assert (await managers.work.enqueue(member, make_item())).kind is WorkKind.NOOP
-    # A kind the table does not name is asked for by nobody, the owner included.
-    monkeypatch.delitem(WORK_ENQUEUE_PERMISSIONS, WorkKind.NOOP)
-    with pytest.raises(NotAuthorized, match="no permission asks for work of kind NOOP"):
-        await managers.work.enqueue(ctx, make_item())
+    assert (await managers.work.enqueue(member, make_item())).kind == WorkKind.NOOP
+    # A kind the registry does not hold is asked for by nobody, the owner included.
+    stray = make_item().model_copy(update={"kind": "STRAY"})
+    with pytest.raises(NotAuthorized, match="no permission asks for work of kind STRAY"):
+        await managers.work.enqueue(ctx, stray)
 
 
 async def test_a_failed_item_is_a_dead_letter_with_an_audit_event(
@@ -504,7 +502,7 @@ async def test_a_failed_item_is_a_dead_letter_with_an_audit_event(
     work_ctx, claimed_item = claimed
     failed = await managers.work.fail(work_ctx, claimed_item, "boom")
     assert failed.status is WorkStatus.FAILED and failed.updated_by == EMPTY_UUID
-    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [(e.kind, e.target_id, e.payload["last_error"]) for e in events] == [
         (DEAD_LETTER_KIND, item.id, "boom")
     ]
@@ -526,7 +524,7 @@ async def test_a_failure_for_good_is_a_dead_letter_with_attempts_left(
     failed = await managers.work.fail_for_good(claimed[0], claimed[1], "refused: no")
     assert failed.status is WorkStatus.FAILED and failed.claim_token is None
     assert (failed.attempts, failed.last_error) == (1, "refused: no")
-    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [(e.kind, e.target_id, e.payload["attempts"]) for e in events] == [
         (DEAD_LETTER_KIND, item.id, 1)
     ]
@@ -575,7 +573,7 @@ async def test_an_operator_requeues_a_failed_item_as_a_fresh_one(
     assert [p.kind for p in woken if isinstance(p, WorkAvailablePayload)] == ["NOOP"]
 
     # The diary names the requeue, who made it, and what the item was.
-    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [e.kind for e in events] == [DEAD_LETTER_KIND, REQUEUED_KIND]
     audit = events[-1]
     assert (audit.target_id, audit.actor_id, audit.request_id) == (
@@ -605,7 +603,7 @@ async def test_a_requeue_of_an_item_that_is_not_failed_is_refused(
     await managers.work.complete(claimed[0], claimed[1])
     with pytest.raises(WorkNotFailed):  # done
         await managers.work_operator.requeue(operator(), ctx.org_id, item_id)
-    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    events = await managers.change_events.get_change_events(ctx, after_seq=0, limit=10)
     assert [e.kind for e in events].count(REQUEUED_KIND) == 1
 
 
@@ -633,7 +631,7 @@ async def test_a_retry_that_still_has_attempts_is_not_a_dead_letter(
     work_ctx, claimed_item = claimed
     requeued = await managers.work.fail(work_ctx, claimed_item, "again")
     assert requeued.status is WorkStatus.QUEUED
-    assert await managers.events.get_events(ctx, after_seq=0, limit=10) == []
+    assert await managers.change_events.get_change_events(ctx, after_seq=0, limit=10) == []
 
 
 async def test_purge_items_takes_done_and_failed_items_past_the_retention(
@@ -842,7 +840,7 @@ async def test_purge_tenant_takes_the_caps_of_a_tenant_past_its_retention_alone(
     assert await work.read_tenant_cap(bob.org_id, "bulk") is not None, "the other tenant's stay"
 
 
-async def test_every_write_after_the_enqueue_is_the_platforms(
+async def test_every_write_after_the_enqueue_is_the_systems(
     managers: Managers, storage: StorageMemoryImpl, ctx: TenantContext
 ) -> None:
     """`created_by` is the person who asked for the work and `updated_by` is the

@@ -22,14 +22,14 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from tadas.om.base import EMPTY_UUID, new_id
-from tadas.om.events.storage.tables.events import Events
+from tadas.om.change_events.storage.tables.change_events import ChangeEvents
 from tadas.om.exceptions import Unavailable
 from tadas.om.media.storage.tables.files import Files
 from tadas.om.storage.impl.pg_base import LoginSessions, PgStorageBase
 from tadas.om.storage.impl.postgres import login_sessions
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings, RolePool
-from tadas.om.tenancy.storage.tables.platform_sizes import PlatformSizes
+from tadas.om.tenancy.storage.tables.system_sizes import SystemSizes
 from tadas.om.work.storage.tables.work_items import WorkItems
 
 pytestmark = pytest.mark.integration
@@ -99,9 +99,9 @@ async def test_a_checkout_past_the_pool_waits_its_bound_and_fails(
 
 A_TABLE_OF: dict[DatabaseRole, type[Any]] = {
     DatabaseRole.CORE: Files,
-    DatabaseRole.ACTIVITY: Events,
+    DatabaseRole.ACTIVITY: ChangeEvents,
     DatabaseRole.QUEUE: WorkItems,
-    DatabaseRole.ADMIN: PlatformSizes,
+    DatabaseRole.ADMIN: SystemSizes,
 }
 """A table of each role, which is what routes a session to that role's pool.
 The worker's claim is the queue role under the system login, and the outbox

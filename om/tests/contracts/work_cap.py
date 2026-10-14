@@ -20,6 +20,7 @@ from tadas.om.root import Managers
 from tadas.om.tenancy.rules import operator_permissions_of
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
+
 from contracts.work_storage import make_item
 
 LEASE = timedelta(seconds=30)

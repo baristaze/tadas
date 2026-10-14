@@ -1,6 +1,6 @@
 ---
 name: ops-watch
-description: "Watch one environment of the platform live from a sub-agent: a log tail, the alarms as they fire, and the error and latency signals, batched per interval and capped, with a read-only credential. Run it in a sub-agent the invoking session spawns, because it polls for the whole window, at most 30 batches, and reports when the window ends, the 30th batch closes, or an alarm fires. It applies the first responder rule: outside production an alarm raised by the team's own traffic may be suppressed with the reason recorded; in production an alarm is never suppressed. Never writes."
+description: "Watch one environment of the system live from a sub-agent: a log tail, the alarms as they fire, and the error and latency signals, batched per interval and capped, with a read-only credential. Run it in a sub-agent the invoking session spawns, because it polls for the whole window, at most 30 batches, and reports when the window ends, the 30th batch closes, or an alarm fires. It applies the first responder rule: outside production an alarm raised by the team's own traffic may be suppressed with the reason recorded; in production an alarm is never suppressed. Never writes."
 allowed-tools: Read, Grep, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run tadas-ops size:*), Bash(sleep:*)
 ---
 
@@ -9,10 +9,11 @@ allowed-tools: Read, Grep, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Ba
 A live tail with a cap. The skill polls the logs of one environment
 once per interval, reads the alarms every interval, and reports in
 batches. It is written to be run by a sub-agent: the invoking session
-spawns one with this skill's text, the arguments, and the preamble by
-its path from the repository root,
-`.agents/skills/_shared/ops-preamble.md`, since the sub-agent has the
-text without this skill's folder. The session reads the report when
+spawns one with this skill's text, the arguments, and two paths from
+the repository root, the preamble
+`.agents/skills/_shared/ops-preamble.md` and the signals folder
+`.agents/skills/_shared/signals/`, since the sub-agent has the text
+without this skill's folder. The session reads the report when
 the agent returns. A session that runs it inline waits for the whole
 window.
 
@@ -82,6 +83,14 @@ tracker is reported as "not read", never as "no errors".
 
 ## Procedure
 
+Before step 1, read every file in `../_shared/signals/`, a path from
+this skill's folder; a sub-agent reads
+`.agents/skills/_shared/signals/` from the repository root. Its
+`README.md` says what each heading holds, and each other file is one
+namespace or one process, the scaffold's and a copy's alike: a copy
+adds `<ns>.md` there for each namespace of its own. Step 3 reads their
+Log lines and Search, and step 4 their Alarms.
+
 A batch makes at most 20 tool calls. Its main path is six: the wait,
 the credential check, one log read per process (two, `api` and
 `maintenance`), the alarms, and one `get-metric-data` call with a
@@ -92,9 +101,10 @@ in one command. Locally there is no credential check, and the
 Prometheus queries of step 4 run as one command, as do those of
 step 5. A retry counts as a call. A read that would be the 21st call
 is not made: the batch stops there, writes that read as not read, and
-the watch goes on to the next batch. The first credential check and
-the reads of step 2 come before the first batch, and are not counted
-in it; the first batch still makes its own check after its wait.
+the watch goes on to the next batch. The first credential check, the
+signals files, and the reads of step 2 come before the first batch,
+and are not counted in it; the first batch still makes its own check
+after its wait.
 
 1. Verify the credential as Role and credential states. A chained
    session lasts an hour at most, so every interval reads the profile
@@ -105,7 +115,7 @@ in it; the first batch still makes its own check after its wait.
    `[start + k * interval, start + (k + 1) * interval)`, with `k` from
    0 to at most 29, read once that interval has closed, and no batch
    is read twice.
-2. Read the platform's size once:
+2. Read the system's size once:
 
    ```bash
    uv run tadas-ops size --env <env>
@@ -158,7 +168,9 @@ in it; the first batch still makes its own check after its wait.
    from the repository root (add `-f deployment/local/docker-compose.full.yml`
    when the application runs in containers), together with the lines
    of the interval from the file a host process was started with;
-   `scripts/dev.sh` writes no file, it logs to its terminal.
+   `scripts/dev.sh` writes no file, it logs to its terminal. A line a
+   signals file's Log lines names, or its Search matches, is read as
+   that file says, and the finding it names is a finding of the batch.
 4. Each interval, read the alarms. Cloud:
 
    ```bash
@@ -166,7 +178,8 @@ in it; the first batch still makes its own check after its wait.
      --state-value ALARM --profile tadas-<env>-investigate
    ```
 
-   Local: the ten alarm conditions of `ops-investigate` as queries against
+   Local: the alarm conditions of `ops-investigate`'s step 3, every
+   signals file's Alarms among them, as queries against
    `$TADAS_PROMETHEUS_URL/api/v1/query`. An alarm that was already in
    `ALARM` in the last batch is not reported again; a transition
    (`OK` to `ALARM`, `ALARM` to `OK`) is.
@@ -272,7 +285,7 @@ in it; the first batch still makes its own check after its wait.
 # Watch: <env>, <start> to <end>, every <interval>
 
 **Credential.** <profile and the Arn it resolved to, or local>
-**Size.** <tenants> tenants, <users> users, <n> events in the last day, counted <age> ago
+**Size.** <tenants> tenants, <users> users, <n> change events in the last day, counted <age> ago
 **Ended.** <window passed | 30th batch, <start> to <end> not watched | escalated on <alarm> at <time> | credential ended at <time>>
 
 ## Alarms

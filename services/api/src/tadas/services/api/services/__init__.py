@@ -5,7 +5,7 @@ translates the request, calls one manager, and projects the result."""
 from abc import ABC, abstractmethod
 
 from tadas.services.api.services.admin import AdminServiceInterface
-from tadas.services.api.services.events import EventsServiceInterface
+from tadas.services.api.services.change_events import ChangeEventsServiceInterface
 from tadas.services.api.services.flags import FlagsServiceInterface
 from tadas.services.api.services.leases import LeasesServiceInterface
 from tadas.services.api.services.media import MediaServiceInterface
@@ -15,7 +15,7 @@ from tadas.services.api.services.webhooks import WebhooksServiceInterface
 
 __all__ = [
     "AdminServiceInterface",
-    "EventsServiceInterface",
+    "ChangeEventsServiceInterface",
     "FlagsServiceInterface",
     "LeasesServiceInterface",
     "MediaServiceInterface",
@@ -24,20 +24,17 @@ __all__ = [
     "TenancyServiceInterface",
     "WebhooksServiceInterface",
 ]
+__all__ += [
+    # A copy adds its entries below this line.
+]
 
 
 class ServicesInterface(ABC):
     @abstractmethod
-    def get_tenancy_service(self) -> TenancyServiceInterface: ...
-
-    @abstractmethod
     def get_admin_service(self) -> AdminServiceInterface: ...
 
     @abstractmethod
-    def get_events_service(self) -> EventsServiceInterface: ...
-
-    @abstractmethod
-    def get_media_service(self) -> MediaServiceInterface: ...
+    def get_change_events_service(self) -> ChangeEventsServiceInterface: ...
 
     @abstractmethod
     def get_flags_service(self) -> FlagsServiceInterface: ...
@@ -46,7 +43,15 @@ class ServicesInterface(ABC):
     def get_lease_service(self) -> LeasesServiceInterface: ...
 
     @abstractmethod
+    def get_media_service(self) -> MediaServiceInterface: ...
+
+    @abstractmethod
     def get_realtime_service(self) -> RealtimeServiceInterface: ...
 
     @abstractmethod
+    def get_tenancy_service(self) -> TenancyServiceInterface: ...
+
+    @abstractmethod
     def get_webhooks_service(self) -> WebhooksServiceInterface: ...
+
+    # A copy adds its entries below this line.

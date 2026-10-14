@@ -21,6 +21,7 @@ from tadas.infra.observability import (
 from tadas.infra.trust import install_trust_store
 from tadas.om.context import RequestContext
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
+from tadas.om.root import KINDS, ORCHESTRATION_KINDS
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.accounts import DeleteAccountHandlerImpl, DeleteOrgHandlerImpl
 from tadas.workers.maintenance.container import (
@@ -49,7 +50,7 @@ IDENTITY = "identity"
 """The identity provider, by the name its deliveries are queued under."""
 
 IDENTITY_CREDENTIAL = "TADAS_WORKOS_API_KEY"
-"""The secret the worker's calls to it are made with: the platform's own, by
+"""The secret the worker's calls to it are made with: the system's own, by
 its name."""
 
 
@@ -89,59 +90,77 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         work=managers.work,
         outbox=managers.outbox,
         # Per tenant, what only a tenant deleted past its retention has: every
-        # row of it goes. Any other tenant costs these nothing.
+        # row of it goes. Any other tenant costs these nothing. Each runs in
+        # every tenant the pass visits, whatever ran before it, so their
+        # order says nothing.
         purges={
+            "change_events": managers.change_events.purge_tenant,
+            "leases": managers.leases.purge_tenant,
             # Every file's object, then its row.
             "media": managers.media.purge_tenant,
-            "tenancy": managers.tenancy.purge_tenant,
-            "events": managers.events.purge_tenant,
             "orchestrations": managers.orchestrations.purge_tenant,
-            "leases": managers.leases.purge_tenant,
+            "tenancy": managers.tenancy.purge_tenant,
             "work": managers.work.purge_tenant,
+            # A copy adds its entries below this line.
         },
         # Once a pass, across every tenant: each namespace's rows past their
-        # retention.
+        # retention. Each runs whatever ran before it, so their order says
+        # nothing.
         across={
-            # A deleted file's object, then its row; an abandoned upload's too.
-            "media": unstaged(managers.media.purge_across_tenants),
-            "tenancy": unstaged(managers.tenancy.purge_across_tenants),
+            # The trim: each tenant's floor moves with its change events.
+            "change_events": unstaged(managers.change_events.purge_across_tenants),
             "idempotency": unstaged(managers.idempotency.purge_across_tenants),
-            # The trim: each tenant's floor moves with its events.
-            "events": unstaged(managers.events.purge_across_tenants),
-            "orchestrations": unstaged(managers.orchestrations.purge_across_tenants),
-            "leases": unstaged(managers.leases.purge_across_tenants),
             # Not a purge: the leases past their expiry and the skew margin
             # end, the requests past their wait expire, and each free
             # resource is offered to its line, in every org with one due.
             "lease_sweep": managers.leases.sweep,
+            "leases": unstaged(managers.leases.purge_across_tenants),
+            # A deleted file's object, then its row; an abandoned upload's too.
+            "media": unstaged(managers.media.purge_across_tenants),
+            "orchestrations": unstaged(managers.orchestrations.purge_across_tenants),
+            "tenancy": unstaged(managers.tenancy.purge_across_tenants),
+            # A copy adds its entries below this line.
         },
-        # The media purge's batch is its own: a whole one says there may be
-        # more. So is the lease sweep's: the leases and requests one org's
-        # pass ends.
-        across_batches={"media": MEDIA_PURGE_BATCH, "lease_sweep": LEASE_SWEEP_BATCH},
+        # The lease sweep's batch is its own: the leases and requests one
+        # org's pass ends. So is the media purge's: a whole one says there
+        # may be more.
+        across_batches={
+            "lease_sweep": LEASE_SWEEP_BATCH,
+            "media": MEDIA_PURGE_BATCH,
+            # A copy adds its entries below this line.
+        },
         # Per tenant, and only in the tenants one read across tenants names as
         # due: the standing chores. The scaffold keeps no record per period,
         # so it runs none. A copy that keeps one wires here the chore that
         # opens the next period (its orchestration, started with its `period`)
         # and the read of the tenants where it is due (ADR 0089).
-        chores={},
+        chores={
+            # A copy adds its entries below this line.
+        },
         chore_tenants=None,
-        # The platform's size, counted across tenants once an interval and
+        # The system's size, counted across tenants once an interval and
         # kept as the tally the operator plane reads instead of counting.
         tally=managers.tenancy_operator.tally_size,
+        # By the kind's name: one handler for each kind the root registers.
+        kinds=KINDS,
         handlers={
-            WorkKind.NOOP: NoopHandlerImpl(),
-            WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
-                managers.orchestrations,
-                {OrchestrationKind.NOOP: managers.orchestrations.step_noop},
-            ),
-            WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(managers.orchestrations),
             WorkKind.DELETE_ACCOUNT: DeleteAccountHandlerImpl(
                 managers.tenancy, container.identity_provider, identity_calls
             ),
             WorkKind.DELETE_ORG: DeleteOrgHandlerImpl(
                 managers.tenancy, container.identity_provider, identity_calls
             ),
+            WorkKind.NOOP: NoopHandlerImpl(),
+            WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
+                managers.orchestrations,
+                ORCHESTRATION_KINDS,
+                {
+                    OrchestrationKind.NOOP: managers.orchestrations.step_noop,
+                    # A copy adds its entries below this line.
+                },
+            ),
+            WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(managers.orchestrations),
+            # A copy adds its entries below this line.
         },
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
@@ -155,7 +174,10 @@ def build_consumer(container: WorkerContainer) -> DeliveryConsumer:
     return DeliveryConsumer(
         queues=container.infra.get_queues(),
         tenancy=container.managers.tenancy,
-        providers={"identity": IdentityDeliveriesImpl(container.managers.events)},
+        providers={
+            "identity": IdentityDeliveriesImpl(container.managers.change_events),
+            # A copy adds its entries below this line.
+        },
         options=DeliveryOptions(worker_id=container.settings.worker_id),
     )
 

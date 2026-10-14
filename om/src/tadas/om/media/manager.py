@@ -5,7 +5,7 @@ the purpose and the subject, and it knows nothing of what the subject is."""
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from tadas.om.context import TenantContext
+from tadas.om.context import TenantContext, stageless
 from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.media.types.page import FilePage
 from tadas.om.media.types.transfer import DownloadLink, UploadForm
@@ -98,8 +98,9 @@ class MediaManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @stageless
     async def purge_across_tenants(self) -> int:
-        """Platform-internal: the sweep, across tenants, once a pass, one batch
+        """System-internal: the sweep, across tenants, once a pass, one batch
         at a time: removes the objects of files deleted past the retention
         and of uploads abandoned past the pending window, whatever their
         tenant, then their rows. Returns how many rows went. It takes no

@@ -12,7 +12,7 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity import IdentityProviderInterface
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
-from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.base import OmBase, new_id, utcnow
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationKind
@@ -21,7 +21,7 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
-from tadas.om.work.types.work_item import WorkItem, WorkKind
+from tadas.om.work.types.work_item import KindName, WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.handler import NoopHandlerImpl
 from tadas.workers.maintenance.loop import LoopOptions
@@ -128,8 +128,8 @@ async def start_noop(container: WorkerContainer, ctx: TenantContext, steps: int)
 def make_item(
     ctx: TenantContext,
     *,
-    kind: WorkKind = WorkKind.NOOP,
-    payload: Platform | None = None,
+    kind: KindName = WorkKind.NOOP,
+    payload: OmBase | None = None,
     target_id: UUID | None = None,
     traceparent: str | None = None,
 ) -> WorkItem:

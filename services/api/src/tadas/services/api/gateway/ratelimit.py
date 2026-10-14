@@ -27,9 +27,9 @@ from starlette.requests import HTTPConnection
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import EMPTY_UUID, Platform
+from tadas.om.base import EMPTY_UUID, OmBase
 from tadas.om.context import CredentialScope, IdentityContext, TenantContext
-from tadas.om.exceptions import NotAuthenticated, PlatformException
+from tadas.om.exceptions import NotAuthenticated, OmException
 from tadas.services.api.gateway.admission import READ_METHODS
 from tadas.services.api.gateway.resolve import container_of
 
@@ -37,7 +37,7 @@ FAILED_AUTHENTICATIONS = "auth-failed"
 """The key prefix of the failed-authentication count, beside the route names."""
 
 
-class RateLimited(PlatformException):
+class RateLimited(OmException):
     http_status = 429
     code = "rate_limited"
 
@@ -46,12 +46,12 @@ class RateLimited(PlatformException):
         self.retry_after = retry_after
 
 
-class RateLimit(Platform):
+class RateLimit(OmBase):
     limit: int
     window: timedelta
 
 
-class RateLimitOptions(Platform):
+class RateLimitOptions(OmBase):
     """Every budget, built from settings at boot and held on the container."""
 
     login: RateLimit

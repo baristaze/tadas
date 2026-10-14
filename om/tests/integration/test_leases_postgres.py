@@ -13,18 +13,6 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.lease_job import (
-    StartsAJob,
-    a_job_that_misses_its_window_lets_the_lease_lapse,
-    a_job_that_waited_past_its_window_starts_inside_the_margin,
-    a_resource_with_as_many_labels_as_a_real_one_is_matched,
-    the_jobs_worker_keeps_the_lease_and_no_one_else_does,
-)
-from contracts.lease_resource import (
-    an_owners_update_grants_the_requests_its_labels_now_match,
-    an_update_that_takes_a_resource_out_of_service_lands_in_the_owners_commit,
-    the_history_lists_each_lease_with_its_request_and_no_tenant_reads_another,
-)
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
@@ -37,21 +25,25 @@ from tadas.om.context import (
     TenantContext,
     build_context,
 )
-from tadas.om.leases.hooks import ResourceKindInterface
-from tadas.om.leases.impl.kinds import NoopResourceKindImpl, OrchestrationWaiterImpl
+from tadas.om.leases.hooks import LeasableResourceKindInterface
+from tadas.om.leases.impl.kinds import NoopLeasableResourceKindImpl, OrchestrationWaiterImpl
 from tadas.om.leases.impl.manager import LeasesManagerImpl, LeasesOptions
 from tadas.om.leases.storage.impl.postgres import update_statement
-from tadas.om.leases.storage.tables.resources import Resources
+from tadas.om.leases.storage.tables.leasable_resources import LeasableResources
+from tadas.om.leases.types.leasable_resource import (
+    LeasableResource,
+    LeasableResourceKind,
+    LeasableResourceUpdate,
+)
 from tadas.om.leases.types.lease import Lease, LeaseStatus
 from tadas.om.leases.types.request import LeaseRequest, RequestStatus, WaiterKind
-from tadas.om.leases.types.resource import Resource, ResourceKind, ResourceUpdate
 from tadas.om.orchestrations.rules import advanced
 from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
     OrchestrationKind,
     OrchestrationStatus,
+    OrchestrationStep,
     ParkReason,
-    Step,
 )
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.pg_base import LoginSessions, PgStorageBase
@@ -59,6 +51,19 @@ from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tenancy.rules import ROLE_PERMISSIONS
 from tadas.om.work.types.work_item import WakeParkedPayload, WorkKind
+
+from contracts.leasable_resource import (
+    an_owners_update_grants_the_requests_its_labels_now_match,
+    an_update_that_takes_a_resource_out_of_service_lands_in_the_owners_commit,
+    the_history_lists_each_lease_with_its_request_and_no_tenant_reads_another,
+)
+from contracts.lease_job import (
+    StartsAJob,
+    a_job_that_misses_its_window_lets_the_lease_lapse,
+    a_job_that_waited_past_its_window_starts_inside_the_margin,
+    a_resource_with_as_many_labels_as_a_real_one_is_matched,
+    the_jobs_worker_keeps_the_lease_and_no_one_else_does,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -87,13 +92,13 @@ class Owner(PgStorageBase):
     async def update(
         self,
         ctx: TenantContext,
-        resource: Resource,
-        change: ResourceUpdate,
+        resource: LeasableResource,
+        change: LeasableResourceUpdate,
         at: datetime,
         *,
         commits: bool,
     ) -> None:
-        async with self._session_for(Resources, org_id=ctx.org_id) as session:
+        async with self._session_for(LeasableResources, org_id=ctx.org_id) as session:
             await session.execute(
                 update_statement(
                     ctx.org_id, resource.kind, resource.ref_id, change, at, ctx.user_id
@@ -114,7 +119,7 @@ class World:
         self,
         storage: StoragePostgresImpl,
         tmp_path: Path,
-        kind: ResourceKindInterface | None = None,
+        kind: LeasableResourceKindInterface | None = None,
         sessions: LoginSessions | None = None,
     ) -> None:
         self.storage = storage
@@ -122,7 +127,7 @@ class World:
         self.managers: Managers = build_managers(storage, InfraLocalImpl(tmp_path))
         self.now = utcnow()
         self.margin = MARGIN
-        self.kind = kind or NoopResourceKindImpl()
+        self.kind = kind or NoopLeasableResourceKindImpl()
         self.leases = self.leases_of(sweep_orgs=100_000)
         self.slug = f"ajax-{new_id().hex[-8:]}"
 
@@ -132,7 +137,7 @@ class World:
             self.managers.tenancy,
             self.managers.outbox,
             LeasesOptions(margin=MARGIN, sweep_orgs=sweep_orgs),
-            kinds={ResourceKind.NOOP: self.kind},
+            kinds={LeasableResourceKind.NOOP: self.kind},
             waiters={
                 WaiterKind.ORCHESTRATION: OrchestrationWaiterImpl(self.managers.orchestrations)
             },
@@ -168,20 +173,20 @@ class World:
             org_id=creator.org_id,
             role=Role.MEMBER,
             permissions=ROLE_PERMISSIONS[Role.MEMBER],
-            credential_kind=CredentialKind.SESSION_TOKEN,
+            credential_kind=CredentialKind.AUTH_SESSION_TOKEN,
         )
 
-    async def dock(self, ctx: TenantContext) -> Resource:
+    async def dock(self, ctx: TenantContext) -> LeasableResource:
         now = utcnow()
         return await self.leases.register(
             ctx,
-            Resource(
+            LeasableResource(
                 id=new_id(),
                 created_at=now,
                 updated_at=now,
                 created_by=ctx.user_id,
                 updated_by=ctx.user_id,
-                kind=ResourceKind.NOOP,
+                kind=LeasableResourceKind.NOOP,
                 ref_id=new_id(),
             ),
         )
@@ -191,7 +196,12 @@ class World:
         return self.now
 
     async def land_update(
-        self, ctx: TenantContext, resource: Resource, change: ResourceUpdate, *, commits: bool
+        self,
+        ctx: TenantContext,
+        resource: LeasableResource,
+        change: LeasableResourceUpdate,
+        *,
+        commits: bool,
     ) -> None:
         assert self.owner_storage is not None, "a world with the owner's sessions"
         await self.owner_storage.update(ctx, resource, change, self.now, commits=commits)
@@ -261,7 +271,7 @@ async def test_the_history_lists_each_lease_with_its_request_and_no_tenant_reads
 
 
 def an_ask(
-    resource: Resource,
+    resource: LeasableResource,
     *,
     term_seconds: int = 60,
     wait_seconds: int = 3600,
@@ -275,8 +285,8 @@ def an_ask(
         created_by=new_id(),
         updated_by=new_id(),
         idempotency_key=new_id(),
-        kind=ResourceKind.NOOP,
-        resource_id=resource.id,
+        kind=LeasableResourceKind.NOOP,
+        leasable_resource_id=resource.id,
         waiter_kind=None if waiter is None else WaiterKind.ORCHESTRATION,
         waiter_id=waiter,
         term_seconds=term_seconds,
@@ -297,7 +307,7 @@ async def test_a_lapsed_lease_holds_until_the_margin_passes_then_the_line_moves_
 
     world.later(timedelta(seconds=60) + MARGIN - timedelta(seconds=1))
     await world.leases.sweep(world.rctx())
-    still = await world.leases.get_resource(owner, dock.id)
+    still = await world.leases.get_leasable_resource(owner, dock.id)
     assert (still.lease_id, still.token) == (held.lease.id, 1)
     assert (await world.leases.get_request(bob, waits.request.id)).lease is None
 
@@ -307,7 +317,7 @@ async def test_a_lapsed_lease_holds_until_the_margin_passes_then_the_line_moves_
     assert lapsed.status is LeaseStatus.EXPIRED
     granted = await world.leases.get_request(bob, waits.request.id)
     assert granted.lease is not None and granted.lease.token == 2
-    anchor = await world.leases.get_resource(owner, dock.id)
+    anchor = await world.leases.get_leasable_resource(owner, dock.id)
     assert (anchor.lease_id, anchor.token) == (granted.lease.id, 2)
 
 
@@ -362,15 +372,18 @@ async def test_a_parked_record_is_woken_with_its_lease_when_the_resource_frees(
     )
     parked_at = advanced(
         record, utcnow(), owner.user_id, cursor=record.cursor, total=None,
-        park=ParkReason.RESOURCE,
+        park=ParkReason.LEASABLE_RESOURCE,
     )  # fmt: skip
     ask = an_ask(dock, waiter=record.id)
     waits = await world.leases.ask(
-        owner, ask, Step(record=parked_at, expected_version=record.version)
+        owner, ask, OrchestrationStep(record=parked_at, expected_version=record.version)
     )
     assert waits.lease is None
     parked = await world.managers.orchestrations.get(owner, record.id)
-    assert (parked.status, parked.park_reason) == (OrchestrationStatus.PARKED, ParkReason.RESOURCE)
+    assert (parked.status, parked.park_reason) == (
+        OrchestrationStatus.PARKED,
+        ParkReason.LEASABLE_RESOURCE,
+    )
 
     await world.leases.release(ann, held.lease.id)
     # The grant landed the record's wake in its own commit, and the relay
@@ -380,7 +393,7 @@ async def test_a_parked_record_is_woken_with_its_lease_when_the_resource_frees(
         for org_id, _, payload in await world.drain(WorkKind.WAKE_PARKED)
     ]
     ours = [payload for org_id, payload in wakes if org_id == owner.org_id]
-    assert [(p.reason, p.record_id) for p in ours] == [(ParkReason.RESOURCE, record.id)]
+    assert [(p.reason, p.record_id) for p in ours] == [(ParkReason.LEASABLE_RESOURCE, record.id)]
     assert await world.managers.orchestrations.wake(owner, ours[0].reason, ours[0].record_id) == 1
     woken = await world.managers.orchestrations.get(owner, record.id)
     assert woken.status is OrchestrationStatus.RUNNING
@@ -414,11 +427,11 @@ async def test_a_parked_record_whose_request_expires_is_woken_and_reads_its_end(
     )
     parked_at = advanced(
         record, utcnow(), owner.user_id, cursor=record.cursor, total=None,
-        park=ParkReason.RESOURCE,
+        park=ParkReason.LEASABLE_RESOURCE,
     )  # fmt: skip
     ask = an_ask(dock, wait_seconds=60, waiter=record.id)
     waits = await world.leases.ask(
-        owner, ask, Step(record=parked_at, expected_version=record.version)
+        owner, ask, OrchestrationStep(record=parked_at, expected_version=record.version)
     )
     assert waits.lease is None
 
@@ -431,7 +444,7 @@ async def test_a_parked_record_whose_request_expires_is_woken_and_reads_its_end(
         for org_id, _, payload in await world.drain(WorkKind.WAKE_PARKED)
     ]
     ours = [payload for org_id, payload in wakes if org_id == owner.org_id]
-    assert [(p.reason, p.record_id) for p in ours] == [(ParkReason.RESOURCE, record.id)]
+    assert [(p.reason, p.record_id) for p in ours] == [(ParkReason.LEASABLE_RESOURCE, record.id)]
     assert await world.managers.orchestrations.wake(owner, ours[0].reason, ours[0].record_id) == 1
     assert (await world.managers.orchestrations.get(owner, record.id)).status is (
         OrchestrationStatus.RUNNING
