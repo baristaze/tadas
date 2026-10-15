@@ -5,7 +5,7 @@ from tadas.integrations.identity import IdentityProviderInterface
 from tadas.integrations.payments import PaymentsInterface
 from tadas.om.context import RequestContext
 from tadas.services.api.services.webhooks import SignedDelivery, WebhooksServiceInterface
-from tadas.services.api.types.webhooks import DeliveryReceivedView
+from tadas.services.api.types.common import DeliveryReceivedView
 
 
 class WebhooksServiceImpl(WebhooksServiceInterface):

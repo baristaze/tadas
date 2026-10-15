@@ -16,7 +16,7 @@ from decimal import MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_CEILING, ROUND_FLOOR, Co
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from tadas.om.base import Platform
+from tadas.om.base import OmBase
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -132,7 +132,7 @@ def is_short(rank: Decimal) -> bool:
     return rank_scale(rank) <= RANK_SCALE_SHORT
 
 
-class Run(Platform):
+class Run(OmBase):
     """The tasks a respace gives new ranks, top first, and the ranks around
     them that stay: `low` above the first, `high` below the last, None at an
     end of the list."""
@@ -305,7 +305,7 @@ class ImportFileRefused(ValidationFailed):
         self.reason = reason
 
 
-class ImportRow(Platform):
+class ImportRow(OmBase):
     """One data row, as the file holds it; every field a string."""
 
     number: int  # the first data row is 1
@@ -315,7 +315,7 @@ class ImportRow(Platform):
     assignee_email: str = ""
 
 
-class ImportedTask(Platform):
+class ImportedTask(OmBase):
     """A row that makes a task: its fields checked and typed."""
 
     number: int

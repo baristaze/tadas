@@ -12,8 +12,8 @@ maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
 Its base is the guideline's scaffold,
-[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.60.0/scaffold/acme_root)
-at v0.60.0, rendered as Tadas. The `scaffold` branch keeps each render,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.61.0/scaffold/acme_root)
+at v0.61.0, rendered as Tadas. The `scaffold` branch keeps each render,
 and the main branch merges it, so every difference from the scaffold is
 Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
 a later release by a merge.
@@ -58,20 +58,11 @@ make reset    # wipe the data and the containers, then `make up`
 make urls     # print the URLs and the sign-ins again
 ```
 
-| What | URL | Sign-in |
-|------|-----|---------|
-| Portal | <http://localhost:55173> | `/login/dev` as `owner@example.test` or `bob@example.test` (Acme), or `admin@admin.test` (Fabrikam, and admin of Acme). `/login` needs `TADAS_WORKOS_API_KEY`. |
-| API | <http://127.0.0.1:8000/docs> | none |
-| pgweb | <http://localhost:58081> | none |
-| Valkey Admin | <http://localhost:58080> | none; host `valkey`, port `6379` |
-| ElasticMQ UI | <http://localhost:53000> | none |
-| Grafana | <http://localhost:53001> | none |
-| Prometheus | <http://localhost:59090> | none |
-| Jaeger | <http://localhost:56686> | none |
-| GlitchTip | <http://localhost:58000> | `admin@example.test` / `tadas-local` |
-| MinIO console | <http://localhost:59001> | `tadas` / `tadas-minio-local` |
-
-Every host port is a knob in `.env.example`; set it in `.env` when a
+`make up` ends by printing every local URL and the seeded sign-ins,
+and `make urls` prints them again. The portal's `/login/dev` signs in
+a seeded person by address alone; `/login` goes through WorkOS once
+`TADAS_WORKOS_API_KEY` is set. [The local stack](deployment/local/README.md#ports)
+has every port, each a knob in `.env.example`: set it in `.env` when a
 port is taken.
 
 ## Set up and check
@@ -86,12 +77,15 @@ make migrate-check     # every role's ORM metadata against the migrated schema
 make test-integration  # the storage contracts over Postgres
 ```
 
-`scripts/dev.sh` runs the API, the worker, and the portal on the host
-with hot reload. A variable exported in the shell wins over `.env`, so
-a second checkout points all eight database URLs at a database of
-its own: the four shared `TADAS_DATABASE_*` URLs and the four
-`TADAS_DATABASE_URL_<ROLE>`, since a role's own URL wins. [deployment/local/README.md](deployment/local/README.md)
-works on one service at a time.
+`make help` lists every target and what it does.
+
+`scripts/dev.sh` runs the processes on the host with hot reload. A
+variable exported in the shell wins over `.env`, so a second checkout
+points all eight database URLs at a database of its own: the four
+shared `TADAS_DATABASE_*` URLs and the four `TADAS_DATABASE_URL_<ROLE>`,
+since a role's own URL wins.
+[deployment/local/README.md](deployment/local/README.md) works on one
+service at a time.
 
 ## Deploy and operate
 
@@ -110,16 +104,23 @@ follows by hand.
 ## Layout
 
 - [om/](om/README.md): the object model: namespaces, storage, migrations.
-- [infra/](infra/README.md): cache, buckets, topics, queues, secrets, flags, outages, observability.
+- [infra/](infra/README.md): the capabilities the system asks for and
+  never implements itself, each with its twin.
 - [integrations/](integrations/README.md): Slack, WorkOS, and Stripe, each an interface, a client, and a twin, and the webhook check.
-- [services/api/](services/api/README.md): the API, its gateway, and the realtime socket.
-- [workers/maintenance/](workers/maintenance/README.md): the work queue's worker and the sweep.
-- `apps/`: the [portal](apps/portal/README.md), the [CLI](apps/cli/README.md), and the
-  [company site](apps/site/README.md).
-- `clients/`: [typescript/](clients/typescript/README.md), the one client every browser
-  app imports, and [python/](clients/python/README.md), the one Python client.
+- `services/`, `workers/`, and `apps/`: one folder per service, worker,
+  and client app, each with its README. The API is
+  [services/api/](services/api/README.md), the work queue's worker
+  [workers/maintenance/](workers/maintenance/README.md), and the shell
+  every screen sits in [apps/portal/](apps/portal/README.md).
+- `clients/`: [openapi/](clients/openapi/), each namespace's committed API
+  document; [typescript/](clients/typescript/README.md), the one client every
+  browser app imports; and [python/](clients/python/README.md), the one Python
+  client.
 - [deployment/](deployment/README.md): compose, images, and Terraform.
 - [ops/](ops/README.md): the operators' package, skills, and stress scenarios.
-- `docs/adr/`: the decisions; [specs/architecture.md](specs/architecture.md) pins the
-  guideline and lists the deviations.
-- [llms.txt](llms.txt): the knowledge map.
+- `docs/`: [adr/](docs/adr/README.md), the decisions, and
+  [runbooks/](docs/runbooks/README.md);
+  [specs/architecture.md](specs/architecture.md) pins the guideline and
+  lists the deviations.
+- [llms.txt](llms.txt): the knowledge map, each document by the reader
+  it serves.

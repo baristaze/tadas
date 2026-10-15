@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FileView, IssuedDownloadView, IssuedUploadView } from "@tadas/client";
+import type { media } from "@tadas/client";
 import { downloadAttachment, StoreRefused, uploadAttachment, type DownloadEffects, type UploadEffects } from "./transfer";
 
-const FILE: FileView = {
+const FILE: media.FileView = {
   id: "f1",
   name: "plan.pdf",
   extension: "pdf",
@@ -18,7 +18,7 @@ const FILE: FileView = {
 
 const picked = { name: "plan.pdf", type: "application/pdf", size: 5, bytes: new Blob(["%PDF!"]) };
 
-function uploads(form: IssuedUploadView, storeStatus = 204) {
+function uploads(form: media.IssuedUploadView, storeStatus = 204) {
   const calls: string[] = [];
   const posted: FormData[] = [];
   const effects: UploadEffects = {
@@ -47,7 +47,7 @@ function uploads(form: IssuedUploadView, storeStatus = 204) {
   return { effects, calls, posted };
 }
 
-const signed: IssuedUploadView = {
+const signed: media.IssuedUploadView = {
   url: "https://store.example.test/bucket",
   fields: [
     { name: "key", value: "org/media/task_attachment/f1" },
@@ -92,7 +92,7 @@ describe("uploadAttachment", () => {
   });
 });
 
-function downloads(link: IssuedDownloadView, storeStatus = 200) {
+function downloads(link: media.IssuedDownloadView, storeStatus = 200) {
   const saved: [Blob, string][] = [];
   const effects: DownloadEffects = {
     issueDownload: vi.fn(async () => link),

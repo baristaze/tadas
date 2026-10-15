@@ -11,8 +11,6 @@ from typing import Any
 import aioboto3
 import httpx
 import pytest
-from contracts.doubles import Members, context
-from contracts.factories import make_org
 
 from tadas.infra.buckets import Buckets
 from tadas.infra.buckets.s3 import BucketsS3Impl
@@ -20,8 +18,8 @@ from tadas.infra.flags.defaults import FlagsDefaultsImpl
 from tadas.infra.impl.settings import InfraSettings
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.change_events.storage.impl.postgres import ChangeEventStoragePostgresImpl
 from tadas.om.context import Role, TenantContext
-from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.exceptions import NotFound, ValidationFailed
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.media.storage.impl.postgres import MediaStoragePostgresImpl
@@ -29,6 +27,9 @@ from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import LoginSessions
+
+from contracts.doubles import Members, context
+from contracts.factories import make_org
 
 pytestmark = pytest.mark.integration
 
@@ -89,7 +90,9 @@ def manager(
 ) -> tuple[MediaManagerImpl, MediaStoragePostgresImpl]:
     storage = MediaStoragePostgresImpl(sessions)
     relay = OutboxRelayImpl(
-        OutboxStoragePostgresImpl(sessions), EventStoragePostgresImpl(sessions), TopicsMemoryImpl()
+        OutboxStoragePostgresImpl(sessions),
+        ChangeEventStoragePostgresImpl(sessions),
+        TopicsMemoryImpl(),
     )
     members = Members()  # pyright: ignore[reportAbstractUsage] (a partial double)
     flags = FlagsDefaultsImpl()

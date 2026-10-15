@@ -10,15 +10,14 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
-from tadas.om.leases.types.lease import Lease
-from tadas.om.leases.types.resource import (
+from tadas.om.base import FrozenMapping, Identifiable, OmBase, SnakeName, Trackable
+from tadas.om.leases.types.leasable_resource import (
     MAX_LABELS,
     MAX_TERM_SECONDS,
     Label,
-    Resource,
-    ResourceKind,
+    LeasableResource,
 )
+from tadas.om.leases.types.lease import Lease
 
 
 class RequestStatus(StrEnum):
@@ -44,8 +43,10 @@ class EndReason(StrEnum):
 
 
 class WaiterKind(StrEnum):
-    """What waits on a request, so a grant wakes it. A product adds its own,
-    each with a `WaiterInterface`."""
+    """The names of the mechanism's own kinds of waiter: what waits on a
+    request, so a grant wakes it. A kind of waiter is registered at the root
+    by its name with its `WaiterInterface`; a copy names its own in its own
+    namespace's module, never here."""
 
     ORCHESTRATION = "orchestration"  # a long-running record parked on `resource`
 
@@ -63,15 +64,16 @@ class LeaseRequest(Identifiable, Trackable):
 
     # The ask's own key: an ask asked again by it answers this request.
     idempotency_key: UUID
-    kind: ResourceKind
+    kind: SnakeName  # a kind the root registers hooks for
     # One resource, or a selector: the labels a resource of the kind offers.
-    resource_id: UUID | None = None
+    leasable_resource_id: UUID | None = None
     labels: tuple[Label, ...] | None = Field(default=None, max_length=MAX_LABELS)
-    # The dump of ASK_PAYLOADS[kind]: what the grant starts, in the kind's shape.
+    # The dump of its kind's ask (`LeasableResourceKindInterface.ASK`): what
+    # the grant starts, in the kind's shape.
     payload: FrozenMapping = Field(default_factory=dict, validate_default=True)
     # What waits on it, by a registered kind and an id; none for a caller
     # that follows its request itself.
-    waiter_kind: WaiterKind | None = None
+    waiter_kind: SnakeName | None = None
     waiter_id: UUID | None = None
     term_seconds: int = Field(default=60, ge=1, le=MAX_TERM_SECONDS)
     # For a grant that starts a job: the window the job has to start in, from
@@ -88,24 +90,18 @@ class LeaseRequest(Identifiable, Trackable):
 
     @model_validator(mode="after")
     def _names_one_target(self) -> Self:
-        if (self.resource_id is None) == (self.labels is None):
+        if (self.leasable_resource_id is None) == (self.labels is None):
             raise ValueError("a request names one resource or a selector's labels, not both")
         if (self.waiter_kind is None) != (self.waiter_id is None):
             raise ValueError("a waiter is a kind and an id together")
         return self
 
 
-class NoopAsk(Platform):
+class NoopAsk(OmBase):
     """The `noop` kind's ask carries nothing."""
 
 
-ASK_PAYLOADS: dict[ResourceKind, type[Platform]] = {
-    ResourceKind.NOOP: NoopAsk,
-}
-"""The shape of what each kind's ask carries; the ask validates it."""
-
-
-class Standing(Platform):
+class Standing(OmBase):
     """Where a request stands: its lease once granted, or, while it waits, its
     place (1 is next in some line it stands in) and an estimate of its wait,
     replayed from the measured holds of the resources in front of it."""
@@ -116,7 +112,7 @@ class Standing(Platform):
     estimate_seconds: float | None = None
 
 
-class Place(Platform):
+class Place(OmBase):
     """A waiting request's place and estimate, as its `Standing` answers
     them."""
 
@@ -125,17 +121,17 @@ class Place(Platform):
     estimate_seconds: float | None = None
 
 
-class Line(Platform):
-    """A resource and the requests in its line, first first, with each one's
-    place and estimate in the same order, replayed from the one read the
-    line makes."""
+class WaitLine(OmBase):
+    """A leasable resource and the requests in its wait line, first first,
+    with each one's place and estimate in the same order, replayed from the
+    one read the wait line makes."""
 
-    resource: Resource
+    leasable_resource: LeasableResource
     requests: tuple[LeaseRequest, ...]
     places: tuple[Place, ...] = ()
 
 
-class LeaseEntry(Platform):
+class LeaseEntry(OmBase):
     """One lease of a history, with the request it answered: who asked, for
     what, and with which payload. None when the purge took the request
     first, which only a lease renewed past the retention outlives."""
@@ -144,7 +140,7 @@ class LeaseEntry(Platform):
     request: LeaseRequest | None = None
 
 
-class HistoryMark(Platform):
+class HistoryMark(OmBase):
     """Where a page of a history ended: its last lease's grant and id. The
     next page holds the leases that sort before it, newest first, so a page
     stays where it is however many leases are granted after it."""
@@ -157,7 +153,7 @@ class HistoryMark(Platform):
         return cls(created_at=lease.created_at, lease_id=lease.id)
 
 
-class LeasePage(Platform):
+class LeasePage(OmBase):
     """One page of a history, and whether another follows. The manager asks
     storage for one entry more than the page and keeps it out, so `has_more`
     is a fact about the rows."""

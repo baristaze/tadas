@@ -13,14 +13,11 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from contracts.event_storage import make_event
-from contracts.factories import make_identity
-from contracts.task_storage import make_task
 from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.base import new_id
-from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
+from tadas.om.change_events.storage.impl.postgres import ChangeEventStoragePostgresImpl
 from tadas.om.exceptions import UniqueKeyTaken
 from tadas.om.storage.impl.pg_base import LoginSessions
 from tadas.om.storage.logins import MIGRATION_LOGIN, RUNTIME_LOGIN, SYSTEM_LOGIN
@@ -41,6 +38,10 @@ from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
+
+from contracts.change_event_storage import make_change_event
+from contracts.factories import make_identity
+from contracts.task_storage import make_task
 
 pytestmark = pytest.mark.integration
 
@@ -191,19 +192,19 @@ async def test_a_stamp_writes_another_checkouts_heads_and_back(
 
 
 async def seed_two_tenants(pg_sessions: LoginSessions) -> None:
-    events = EventStoragePostgresImpl(pg_sessions)
+    events = ChangeEventStoragePostgresImpl(pg_sessions)
     for org in (new_id(), new_id()):
-        await events.append_events(org, [make_event(org)])
+        await events.append_change_events(org, [make_change_event(org)])
 
 
 def forced(connection: Connection) -> bool:
     return connection.exec_driver_sql(
-        "SELECT relforcerowsecurity FROM pg_class WHERE oid = 'activity.events'::regclass"
+        "SELECT relforcerowsecurity FROM pg_class WHERE oid = 'activity.change_events'::regclass"
     ).scalar_one()
 
 
-COUNT = "SELECT count(*) FROM activity.events"
-UPDATE = "UPDATE activity.events SET kind = kind"
+COUNT = "SELECT count(*) FROM activity.change_events"
+UPDATE = "UPDATE activity.change_events SET kind = kind"
 
 
 async def test_a_backfill_under_the_fence_touches_every_tenant(
@@ -226,7 +227,7 @@ async def test_a_backfill_under_the_fence_touches_every_tenant(
             await connection.rollback()
 
             def fenced(sync: Connection) -> tuple[int, bool]:
-                touched = backfill(sync, DatabaseRole.ACTIVITY, "events", COUNT, UPDATE)
+                touched = backfill(sync, DatabaseRole.ACTIVITY, "change_events", COUNT, UPDATE)
                 return touched, forced(sync)
 
             assert await connection.run_sync(fenced) == (2, True)
@@ -243,12 +244,14 @@ async def test_a_backfill_that_misses_rows_fails_and_keeps_the_fence(
     try:
         async with engine.connect() as connection:
             partial = (
-                "UPDATE activity.events SET kind = kind WHERE seq = 1"
-                " AND org_id = (SELECT org_id FROM activity.events ORDER BY org_id LIMIT 1)"
+                "UPDATE activity.change_events SET kind = kind WHERE seq = 1"
+                " AND org_id = (SELECT org_id FROM activity.change_events ORDER BY org_id LIMIT 1)"
             )
             with pytest.raises(RuntimeError, match="touched 1 rows of 2"):
                 await connection.run_sync(
-                    lambda sync: backfill(sync, DatabaseRole.ACTIVITY, "events", COUNT, partial)
+                    lambda sync: backfill(
+                        sync, DatabaseRole.ACTIVITY, "change_events", COUNT, partial
+                    )
                 )
             await connection.rollback()
             assert await connection.run_sync(forced) is True

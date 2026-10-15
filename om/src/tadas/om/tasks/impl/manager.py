@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
+from tadas.om.base import PROVENANCE_FIELDS, OmBase, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import limits_of, refuse_past
 from tadas.om.billing.types.plan import Lever, Plan
@@ -22,6 +22,7 @@ from tadas.om.media.types.file import FilePurpose
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, versioned_row
 from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.types.work import SlackPostEvent
 from tadas.om.tasks.attachments import TasksAttachmentsManagerInterface
 from tadas.om.tasks.cleanup import TasksCleanupManagerInterface
 from tadas.om.tasks.impl.shared import everyone, reminder_rows, room_left, slack_rows
@@ -48,7 +49,6 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.work.types.work_item import SlackPostEvent
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ alone (tasks.rules.top_rank, rank_after), so the read stays one row however
 long the open list grows, and the write is the placed task's one row."""
 
 
-class TasksOptions(Platform):
+class TasksOptions(OmBase):
     max_limit: int = 200
     retention: timedelta = timedelta(days=30)  # a deleted task is purged after this
     purge_batch: int = 1000  # deleted tasks one purge takes at most
@@ -195,7 +195,7 @@ class TasksManagerImpl(TasksManagerInterface):
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
         rank = await self._rank_for_one_more(ctx, exclude=task.id)
-        # The platform stamps the provenance and the clock, as enqueue does:
+        # The system stamps the provenance and the clock, as enqueue does:
         # a caller cannot backdate a task or create one already deleted.
         now = utcnow()
         created = task.model_copy(
@@ -412,7 +412,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 bulk.skip(changed.id, SkipReason.CHANGED)
                 if bulk.room is not None:
                     bulk.room += 1  # the room it held goes to the next batch
-        # The batch's events take one run of numbers under one hold of the cursor.
+        # The batch's change events take one run of numbers under one hold of the cursor.
         await self._relay_all(ctx, landed_rows)
 
     def _plan_bound(self, bulk: _BulkChange) -> PlanBound:
@@ -667,7 +667,7 @@ class TasksManagerImpl(TasksManagerInterface):
     ) -> None:
         """The core row and the rows that announce it land in one storage call,
         conditioned on the version the caller read; the relay then appends the
-        event and pushes at once, and the sweep catches what a crash left
+        change event and pushes at once, and the sweep catches what a crash left
         behind. Every push is also a record, so a client that missed the push
         replays by seq. A row carries the version the write set and never a
         field's value, so the relay and the stream hold nothing a person's

@@ -3,7 +3,7 @@
 // the top of the done list.
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { TaskScope, TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { Button, Card, LinkButton, Muted } from "../../design/kit";
 import { tokens } from "../../design/tokens";
@@ -11,7 +11,7 @@ import { placeTask } from "../../queries/taskCache";
 import { useArchivedTasks, useRestoreTask } from "../../queries/tasks";
 import { notify } from "../../store/notices";
 
-export function ArchivedTasks({ scope, canWrite }: { scope: TaskScope; canWrite: boolean }) {
+export function ArchivedTasks({ scope, canWrite }: { scope: tasks.TaskScope; canWrite: boolean }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const archived = useArchivedTasks(scope, open);
@@ -19,7 +19,7 @@ export function ArchivedTasks({ scope, canWrite }: { scope: TaskScope; canWrite:
 
   // The answer leaves the archive and takes its place in the done list; a
   // refusal reads the archive again.
-  const restoreOne = async (task: TaskView) => {
+  const restoreOne = async (task: tasks.TaskView) => {
     try {
       placeTask(queryClient, await restore.mutateAsync({ id: task.id, version: task.version }));
     } catch (caught) {

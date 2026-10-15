@@ -21,20 +21,20 @@ from tadas.om.orchestrations.rules import ROW_ERRORS_KEPT
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
+    OrchestrationStep,
     ParkReason,
-    Step,
-    TaskCleanupInput,
 )
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import IMPORT_BATCH, IMPORT_MAX_ROWS
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope
+from tadas.om.tasks.types.work import TaskCleanupInput
 from tadas.om.work.types.work_item import WorkKind, WorkStatus
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -104,13 +104,13 @@ class World:
             last = page.items[-1]
             after = OpenTaskCursor(rank=last.rank, id=last.id)
 
-    async def queued(self, ctx: TenantContext, kind: WorkKind) -> int:
+    async def queued(self, ctx: TenantContext, kind: str) -> int:
         """The work items of a kind waiting in the org's queue."""
         items = self.storage.get_work_storage()._items  # type: ignore[attr-defined]
         return sum(
             1
             for org_id, item in items.values()
-            if org_id == ctx.org_id and item.kind is kind and item.status is WorkStatus.QUEUED
+            if org_id == ctx.org_id and item.kind == kind and item.status is WorkStatus.QUEUED
         )
 
 
@@ -287,7 +287,7 @@ async def test_a_cancel_names_an_import_and_never_another_kinds_record(world: Wo
             updated_at=now,
             created_by=ctx.user_id,
             updated_by=ctx.user_id,
-            kind=OrchestrationKind.TASK_CLEANUP,
+            kind=TasksOrchestrationKind.TASK_CLEANUP,
             input=TaskCleanupInput(older_than_days=90, before=now).model_dump(mode="json"),
             period=now.date().isoformat(),
         ),
@@ -366,13 +366,13 @@ async def test_a_step_that_dies_before_its_commit_starts_again_at_the_cursor(
             self,
             org_id: UUID,
             tasks: Sequence[tuple[Task, tuple[OutboxRow, ...]]],
-            step: Step,
-            step_rows: tuple[OutboxRow, ...],
+            step: OrchestrationStep,
+            orchestration_step_rows: tuple[OutboxRow, ...],
         ) -> tuple[bool, ...]:
             DiesOnce.calls += 1
             if DiesOnce.calls == 2:
                 raise ConnectionResetError("the connection went away")
-            return await super().create_tasks_in_step(org_id, tasks, step, step_rows)
+            return await super().create_tasks_in_step(org_id, tasks, step, orchestration_step_rows)
 
     storage = StorageMemoryImpl()
     storage._tasks = DiesOnce(storage._outbox, storage._orchestrations)  # type: ignore[attr-defined]

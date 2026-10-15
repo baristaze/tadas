@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
-from tadas.om.base import Identifiable, Platform, SoftDeletable, Trackable
+from tadas.om.base import Identifiable, OmBase, SoftDeletable, Trackable
 
 
 class TaskStatus(StrEnum):
@@ -60,7 +60,7 @@ class Task(Identifiable, Trackable, SoftDeletable):
     archived_at: datetime | None = None
 
 
-class DueReminder(Platform):
+class DueReminder(OmBase):
     """The reminder a task waits for: the due date it is for, and the moment
     it goes out."""
 

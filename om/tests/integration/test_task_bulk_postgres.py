@@ -9,7 +9,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from contracts.outbox_storage import claim_all
 from unit.test_task_import import World
 
 from tadas.om.base import new_id, utcnow
@@ -21,6 +20,8 @@ from tadas.om.tasks.rules import BULK_BATCH
 from tadas.om.tasks.types.bulk import BulkAction, SkippedTask, SkipReason
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+
+from contracts.outbox_storage import claim_all
 
 pytestmark = pytest.mark.integration
 
@@ -130,7 +131,7 @@ async def test_a_reopen_by_ids_lands_in_order_skips_a_moved_task_and_announces_e
         return await write(*args)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(task_storage, "update_tasks_if_current", edited_first)
-    head = await storage.get_event_storage().read_head(ctx.org_id)
+    head = await storage.get_change_event_storage().read_head(ctx.org_id)
     named = [t.id for t in reversed(finished)]
 
     outcome = await tasks.change_tasks(ctx, BulkAction.REOPEN, named)
@@ -142,7 +143,7 @@ async def test_a_reopen_by_ids_lands_in_order_skips_a_moved_task_and_announces_e
     assert stored.status is TaskStatus.DONE and stored.title == "renamed"
     announced = [
         (e.kind, e.target_id)
-        for e in await storage.get_event_storage().read_after(ctx.org_id, head, 100)
+        for e in await storage.get_change_event_storage().read_after(ctx.org_id, head, 100)
         if e.target_id != moved.id
     ]
     assert announced == [("tasks.task.updated", i) for i in outcome.changed]

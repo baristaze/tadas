@@ -2,11 +2,12 @@
 identity, and refused by a process that holds no key or another one."""
 
 import pytest
-from contracts.second_factor import TOTP_KEY
 
 from tadas.om.base import new_id
 from tadas.om.exceptions import Unavailable
 from tadas.om.tenancy.impl.totp import TotpSealer, new_key, new_totp_secret
+
+from contracts.second_factor import TOTP_KEY
 
 
 def test_a_sealed_secret_opens_for_its_identity_under_its_key_only() -> None:

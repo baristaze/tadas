@@ -1,6 +1,6 @@
 # ADR 0058: A socket asks again, and its pong answers from the bus
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -9,13 +9,13 @@ it trusts the context it got until the bus carries a revocation that
 names it, or the credential expires.
 
 The bus is at most once: a failed publish, or a subscriber whose
-connection dropped, loses the message for good. A revoked session's
-socket would then stay open until the session's absolute expiry, up to
+connection dropped, loses the message for good. A revoked auth session's
+socket would then stay open until the auth session's absolute expiry, up to
 30 days, and an API key's until the key's, up to 90. A change of role
 would never reach an open socket.
 
 CTX-27 (TenantContext, Stages) puts a pull behind every trust decision a
-push carries: every socket rechecks its session and its membership
+push carries: every socket rechecks its auth session and its membership
 every `realtime_recheck_seconds`, a setting of the realtime service,
 five minutes by default, and closes when either has ended or the role
 changed.
@@ -31,7 +31,7 @@ every hint.
 **A socket rechecks its credential on an interval.** Every
 `TADAS_REALTIME_RECHECK_SECONDS` (300 by default) the handler asks the
 realtime service again, and the service calls the same `resume` the
-redemption called: the session, or the API key, and the principal
+redemption called: the auth session, or the API key, and the principal
 behind it. The setting, `realtime_recheck_seconds`, sits beside the
 realtime service's other bounds, as Stages names it.
 
@@ -44,8 +44,8 @@ check together. No two checks are more than one interval apart, so a
 revocation the bus lost keeps its socket open for one interval at most.
 
 **The recheck asks and does not use.** `resume` takes
-`record_use=False` for it, and records no use of the session. An open
-socket never keeps an idle session alive: a tab left open is signed out
+`record_use=False` for it, and records no use of the auth session. An open
+socket never keeps an idle auth session alive: a tab left open is signed out
 at the idle lifetime, as a tab left closed is.
 
 **A change of rights closes the socket to reconnect.** The bus message
@@ -77,7 +77,7 @@ not with the tenants.
 The client treats a head above its cursor as a gap and replays, so the
 head must never hide a gap for long.
 
-- It is never above the truth: a `seq` is published after its event
+- It is never above the truth: a `seq` is published after its change event
   committed.
 - It is never below what this client got from this process. The
   socket's hints and the head come off the same subscription. A hint the
@@ -115,24 +115,4 @@ changed for that long: it exits and asks for a sign-in, as any command
 would.
 
 A socket opened under an API key is checked as the key's every request
-is: the key, the principal behind it, and the plan's lever on keys. The
-plan comes from the billing account read with the principal
-(`read_key_principal`), so the check costs no read of its own: the
-recheck stays at 2 transactions and 6 round trips. After a downgrade to
-a plan without keys, the recheck refuses the key with
-`plan_limit_reached`, and the socket closes with 4401, as a revoked
-key's does. The key is kept, and works again on a plan with keys.
-
-The bus is the fast path here too. A plan change writes
-`billing.account.updated`, which every process hears. It carries no
-plan, so it closes nothing itself: it wakes, at once, the recheck of
-every socket an API key of that org opened, and the recheck reads the
-plan. A session's socket is not woken. When the bus loses the message,
-or a paid plan runs out at its period's end with no message at all,
-the recheck interval bounds the socket as it bounds a lost revocation.
-
-| Per API key socket | |
-|---|---|
-| Recheck reads | `read_api_key`, `read_key_principal` |
-| Recheck cost | 2 transactions, 6 round trips |
-| Worst case after a downgrade | at once on the bus; one interval (5 minutes) without it |
+is: the key, and the principal behind it.

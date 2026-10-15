@@ -1,6 +1,6 @@
 # ADR 0045: Retention purges run once a pass across tenants
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -34,53 +34,42 @@ with its values
 
 **The ring keeps only the tenant-shaped work.** The purge of a tenant
 deleted longer ago than the retention stays per tenant: it deletes rows
-that carry no retention of their own, such as open tasks, the billing
-account, and the event cursor. A living tenant's purge reads nothing.
-The mark of a tenant purged stays per tenant too. The standing chores
-run in the tenants one read across tenants names, before the ring
-([ADR 0070](0070-the-sweep-reads-only-the-tenants-with-a-chore-due.md)).
+that carry no retention of their own. A living tenant's purge reads
+nothing. The mark of a tenant purged stays per tenant too.
 
 Namespace by namespace:
 
-- **Tasks** go across tenants, with one tenant-shaped part. The read of
-  deleted tasks is one statement a pass, on `(deleted_at)`. A deleted
-  task's attachments are still detached first, under its tenant's
-  service context, because that write lands an outbox row with its
-  actor. Only a tenant with such a task pays for it. The context is the
-  one the pass minted, deleted tenants included, from
-  `sweep_context`. A tenant marked purged has none; its files went with
-  it, so its tasks go as they are.
 - **Media**: the object of a file deleted past the retention, or of an
   upload never confirmed, is deleted by the tenant and the key the read
   returns, then the rows go in one statement. The batch is a hundred,
   since each row costs a request to the store.
 - **Tenancy**: in one transaction, ended users with their
   memberships, ended memberships, revoked and expired keys, expired
-  sessions (the system scope's sign-ins among them), expired tickets,
+  auth sessions (the system scope's sign-ins among them), expired tickets,
   and closed invitations, then the sign-in delays.
-- **Idempotency**, **billing**, **Slack**, and **orchestrations**: a
-  statement per table. Slack's three tables share one transaction.
-- **Events**: the trim, in one statement. The `limit` events produced
+- **Idempotency** and **orchestrations**: a statement per table.
+- **Change events**: the trim, in one statement. The `limit` change events produced
   longest ago, read on `(produced_at)`, name the tenants and each one's
   share of the batch. Each tenant's cursor row is locked as an append
   locks it, but a row an append holds is skipped, not waited on. Each
   tenant's run is the stretch of its window below its first young
-  event. The events of each run go, and each floor moves to its run's
+  change event. The change events of each run go, and each floor moves to its run's
   top, in the same statement
-  ([ADR 0040](0040-the-event-stream-has-a-floor.md)).
+  ([ADR 0040](0040-the-change-event-stream-has-a-floor.md)).
 - **Outbox** and **work**: the done outbox rows and the settled work
   items, after every namespace's purge.
 
 ## Consequences
 
 A living tenant costs a pass no purge at all. Each purge across tenants
-costs a pass a few milliseconds when idle.
+costs a pass a few milliseconds when idle. What a pass spends per
+tenant is its visit, and that bounds the tenants one pass reaches.
 
 The indexes follow the reads. Each purge across tenants has an index
 that leads with its retention column, and each tenant keeps an index
 that `org_id` leads, for the purge of a tenant past its retention.
 
-The trim's batch is picked by age. An old event that sits above a young
+The trim's batch is picked by age. An old change event that sits above a young
 one, because the relay numbered it late, holds a share of the batch
 without a run, at most for the relay's delay.
 

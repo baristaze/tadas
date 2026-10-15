@@ -6,19 +6,16 @@ from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import NotFound
 from tadas.om.orchestrations import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import advanced
-from tadas.om.orchestrations.steps import step_rows
-from tadas.om.orchestrations.types.orchestration import (
-    Orchestration,
-    OrchestrationKind,
-    Step,
-    TaskCleanupInput,
-)
+from tadas.om.orchestrations.steps import orchestration_step_rows
+from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationStep
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row
 from tadas.om.tasks.cleanup import TasksCleanupManagerInterface
 from tadas.om.tasks.impl.manager import TasksOptions
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import CLEANUP_BATCH, archive_cutoff, cleanup_part, cleanup_period
 from tadas.om.tasks.storage import TasksStorageInterface
+from tadas.om.tasks.types.work import TaskCleanupInput
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +53,7 @@ class TasksCleanupManagerImpl(TasksCleanupManagerInterface):
             updated_at=now,
             created_by=ctx.user_id,
             updated_by=ctx.user_id,
-            kind=OrchestrationKind.TASK_CLEANUP,
+            kind=TasksOrchestrationKind.TASK_CLEANUP,
             input=TaskCleanupInput(
                 older_than_days=self._options.archive_after.days, before=before
             ).model_dump(mode="json"),
@@ -80,14 +77,14 @@ class TasksCleanupManagerImpl(TasksCleanupManagerInterface):
         candidates = [
             (task_id, (outbox_row(ctx, "tasks.task.archived", task_id, {}),)) for task_id in ids
         ]
-        rows_after = step_rows(ctx, after)
+        rows_after = orchestration_step_rows(ctx, after)
         archived = await self._storage.update_archived_in_step(
             ctx.org_id,
             candidates,
             before,
             now,
             ctx.user_id,
-            Step(record=after, expected_version=record.version),
+            OrchestrationStep(record=after, expected_version=record.version),
             rows_after,
         )
         landed_rows = [

@@ -1,6 +1,6 @@
 # ADR 0053: The scope rides in the message that begins
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -51,8 +51,6 @@ file pins the version, and a unit test fails when it moves.
 **Reads of one namespace on one role share a transaction, in a storage
 method of their own.** `read_page` reads the stream's page, its floor,
 and its head. `count_orgs_and_users` counts both in one statement.
-`count_open_and_read_places` reads the count a plan's bound is held to
-and the top place.
 
 **Reads of several namespaces keep a transaction each.** STO-02 lets no
 transaction outlive a storage call and no manager wrap several storage
@@ -63,18 +61,7 @@ is the unit of work STO-02 names as the violation.
 ## Consequences
 
 Every transaction costs two round trips before its work, not three, and
-a read of one statement costs three. Across the database-call harness,
-the flows it runs cost 11,504 round trips where the scope as a statement
-of its own costs 14,734 (22 % fewer), with the same 3,230 transactions.
-
-| Flow | Round trips, a statement of its own → with `BEGIN` | Transactions |
-|---|---|---|
-| A plain authenticated read (`GET /v1/tasks/{id}`) | 14 → 11 | 3 → 3 |
-| `POST /v1/tasks` | 35 → 27 | 8 → 8 |
-| `POST /v1/tasks` on Free | 40 → 31 | 9 → 9 |
-| `GET /v1/billing` | 26 → 20 | 6 → 6 |
-| `GET /v1/admin/size` | 24 → 18 | 6 → 6 |
-| `GET /v1/events` | 15 → 12 | 3 → 3 |
+a read of one statement costs three.
 
 The scope's statement is not prepared, so it takes no place in a
 connection's statement cache.
@@ -86,7 +73,3 @@ invalidated as a whole.
 `set_scope` stays for the one case a transaction moves to a second
 tenant: the scope is set again as a statement of its own, with bind
 parameters.
-
-A create reads the plan, the top place, and the Slack installation in
-three transactions, and `GET /v1/billing` makes four reads. Folding
-them is a decision about STO-02, not about the funnel.

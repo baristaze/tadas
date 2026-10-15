@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TaskPageView, TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import {
   belongsIn,
   compareDone,
@@ -19,7 +19,7 @@ import {
 const ME = "me";
 const OTHER = "other";
 
-const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
+const task = (id: string, overrides: Partial<tasks.TaskView> = {}): tasks.TaskView => ({
   id,
   title: `task ${id}`,
   notes: "",
@@ -38,13 +38,13 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
 });
 
 // An open task at a rank.
-const open = (id: string, rank: number | string, overrides: Partial<TaskView> = {}) =>
+const open = (id: string, rank: number | string, overrides: Partial<tasks.TaskView> = {}) =>
   task(id, { rank: String(rank), ...overrides });
-const done = (id: string, minute: number, overrides: Partial<TaskView> = {}) =>
+const done = (id: string, minute: number, overrides: Partial<tasks.TaskView> = {}) =>
   task(id, { status: "done", updated_at: `2026-09-20T10:${String(minute).padStart(2, "0")}:00Z`, ...overrides });
 
-const page = (items: TaskView[], next_cursor: string | null = null): TaskPageView => ({ items, next_cursor });
-const pages = (...list: TaskPageView[]): TaskPages => ({ pages: list, pageParams: list.map((_, i) => (i ? `c${i}` : null)) });
+const page = (items: tasks.TaskView[], next_cursor: string | null = null): tasks.TaskPageView => ({ items, next_cursor });
+const pages = (...list: tasks.TaskPageView[]): TaskPages => ({ pages: list, pageParams: list.map((_, i) => (i ? `c${i}` : null)) });
 const ids = (data: TaskPages | undefined) => (data ? flatten(data).map((t) => t.id) : undefined);
 
 const team: PlacementRules = { scope: "team", meId: ME, limits: { open: 200, done: 10 } };

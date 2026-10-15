@@ -1,19 +1,16 @@
 from datetime import timedelta
 from uuid import UUID
 
-from tadas.om.billing import BillingOperatorManagerInterface
-from tadas.om.billing.types.billing import Billing
 from tadas.om.context import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy import TenancyOperatorManagerInterface
-from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.auth_session import AuthSession
 from tadas.om.work import WorkOperatorManagerInterface
 from tadas.services.api.services.admin import AdminServiceInterface
-from tadas.services.api.services.impl.tasks import decode_cursor as decode_task_cursor
-from tadas.services.api.services.impl.tasks import encode_cursor as encode_task_cursor
 from tadas.services.api.services.impl.tenancy import decode_cursor, encode_cursor
-from tadas.services.api.types.admin import (
+from tadas.services.api.types.change_events import OperatorChangeEventView
+from tadas.services.api.types.common import clamp_limit
+from tadas.services.api.types.tenancy import (
     AddMemberRequest,
     ConfirmTotpRequest,
     CreateOrgRequest,
@@ -23,32 +20,25 @@ from tadas.services.api.types.admin import (
     OperatorTokenPageView,
     OperatorTokenView,
     OperatorView,
-    OperatorWorkItemView,
-    PlatformSizeView,
-    SetTenantCapRequest,
-    TenantCapView,
+    OrgPageView,
+    OrgView,
+    SystemSizeView,
     TotpConfirmedView,
+    UserPageView,
+    UserView,
 )
-from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
-from tadas.services.api.types.common import clamp_limit
-from tadas.services.api.types.events import OperatorEventView
-from tadas.services.api.types.tasks import TaskPageView, TaskView
-from tadas.services.api.types.tenancy import OrgPageView, OrgView, UserPageView, UserView
+from tadas.services.api.types.work import OperatorWorkItemView, SetTenantCapRequest, TenantCapView
 
 
 class AdminServiceImpl(AdminServiceInterface):
     """The cursors an operator's read of a tenant hands out are the ones the
-    tenant's own lists mint, so a page of a tenant's members or tasks is read
-    the same way from either plane."""
+    tenant's own lists mint, so a page of a tenant's members is read the same
+    way from either plane."""
 
     def __init__(
-        self,
-        tenancy: TenancyOperatorManagerInterface,
-        billing: BillingOperatorManagerInterface,
-        work: WorkOperatorManagerInterface,
+        self, tenancy: TenancyOperatorManagerInterface, work: WorkOperatorManagerInterface
     ) -> None:
         self._tenancy = tenancy
-        self._billing = billing
         self._work = work
 
     async def get_orgs(self, admin: OperatorContext, cursor: str | None, limit: int) -> OrgPageView:
@@ -103,8 +93,8 @@ class AdminServiceImpl(AdminServiceInterface):
     async def revoke_token(self, admin: OperatorContext, token_id: UUID) -> OperatorTokenView:
         return token_view(await self._tenancy.revoke_operator_token(admin, token_id))
 
-    async def size(self, admin: OperatorContext) -> PlatformSizeView:
-        return PlatformSizeView.model_validate(await self._tenancy.size(admin))
+    async def size(self, admin: OperatorContext) -> SystemSizeView:
+        return SystemSizeView.model_validate(await self._tenancy.size(admin))
 
     async def create_org(
         self, admin: OperatorContext, body: CreateOrgRequest, attempt: Attempt
@@ -141,38 +131,14 @@ class AdminServiceImpl(AdminServiceInterface):
         )
         return UserView.model_validate(user)
 
-    async def get_tasks(
-        self,
-        admin: OperatorContext,
-        org_id: UUID,
-        status: TaskStatus,
-        cursor: str | None,
-        limit: int,
-    ) -> TaskPageView:
-        limit = clamp_limit(limit)
-        mark = decode_task_cursor(status, cursor) if cursor else None
-        page = await self._tenancy.get_tasks(admin, org_id, status, mark, limit)
-        return TaskPageView(
-            items=[TaskView.model_validate(t) for t in page.items],
-            next_cursor=encode_task_cursor(status, page.items[-1]) if page.has_more else None,
-        )
-
-    async def get_events(
+    async def get_change_events(
         self, admin: OperatorContext, org_id: UUID, after_seq: int, limit: int
-    ) -> list[OperatorEventView]:
-        events = await self._tenancy.get_events(admin, org_id, after_seq, clamp_limit(limit))
-        return [OperatorEventView.model_validate(e) for e in events]
+    ) -> list[OperatorChangeEventView]:
+        events = await self._tenancy.get_change_events(admin, org_id, after_seq, clamp_limit(limit))
+        return [OperatorChangeEventView.model_validate(e) for e in events]
 
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> OrgView:
         return OrgView.model_validate(await self._tenancy.delete_org(admin, org_id))
-
-    async def get_org_billing(self, admin: OperatorContext, org_id: UUID) -> OperatorBillingView:
-        return operator_billing(await self._billing.get_billing(admin, org_id))
-
-    async def comp_plan(
-        self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
-    ) -> OperatorBillingView:
-        return operator_billing(await self._billing.comp_plan(admin, org_id, body.plan))
 
     async def requeue_work(
         self, admin: OperatorContext, org_id: UUID, item_id: UUID
@@ -196,7 +162,7 @@ class AdminServiceImpl(AdminServiceInterface):
         return TenantCapView.model_validate(await self._work.clear_tenant_cap(admin, org_id, lane))
 
 
-def token_view(token: Session) -> OperatorTokenView:
+def token_view(token: AuthSession) -> OperatorTokenView:
     """A row of kind `operator_token` as the wire reads it: its one permission
     under the name the mint takes it by, and never its digest."""
     assert token.operator_role is not None, "an operator token names its permission"
@@ -206,14 +172,4 @@ def token_view(token: Session) -> OperatorTokenView:
         created_at=token.created_at,
         expires_at=token.expires_at,
         revoked_at=token.revoked_at,
-    )
-
-
-def operator_billing(billing: Billing) -> OperatorBillingView:
-    return OperatorBillingView(
-        plan=billing.plan,
-        paid_plan=billing.paid_plan,
-        comped_plan=billing.comped_plan,
-        status=billing.account.status if billing.account else None,
-        ends_at=billing.ends_at,
     )

@@ -16,10 +16,13 @@ from worker_support import fast_options
 from tadas.infra.cache import CacheScope
 from tadas.om.base import utcnow
 from tadas.om.context import TenantContext
+from tadas.om.root import KINDS
+from tadas.om.slack.kinds import SlackKind
+from tadas.om.tasks.kinds import TasksKind
 from tadas.om.tasks.rules import earliest_reminder_time
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
-from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
+from tadas.om.work.types.work_item import WorkItem, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.loop import WorkerLoop
 from tadas.workers.maintenance.reminders import TaskReminderHandlerImpl
@@ -36,7 +39,7 @@ def yesterday() -> date:
 
 
 async def reminded_kinds(container: WorkerContainer, ctx: TenantContext) -> list[str]:
-    events = await container.managers.events.get_events(ctx, 0, 100)
+    events = await container.managers.change_events.get_change_events(ctx, 0, 100)
     return [event.kind for event in events if event.kind == "tasks.task.reminded"]
 
 
@@ -44,7 +47,7 @@ async def run_due(container: WorkerContainer) -> list[WorkItem]:
     """Claims every reminder that is due and runs it, as the loop would."""
     handler = TaskReminderHandlerImpl(container.managers.tasks)
     ran: list[WorkItem] = []
-    while (claimed := await claim(container, WorkKind.TASK_REMINDER)) is not None:
+    while (claimed := await claim(container, TasksKind.TASK_REMINDER)) is not None:
         ctx, item = claimed
         await handler.handle(ctx, item)
         await container.managers.work.complete(ctx, item)
@@ -59,14 +62,14 @@ async def test_a_due_date_schedules_one_reminder_for_the_first_morning_of_it(
     ann = await owner_of(container, "acme")
     due = today() + timedelta(days=3)
     task = await container.managers.tasks.create_task(ann, make_task(ann, due_on=due))
-    [item] = await queued(container, ann, WorkKind.TASK_REMINDER, task.id)
+    [item] = await queued(container, ann, TasksKind.TASK_REMINDER, task.id)
     first_morning = datetime(due.year, due.month, due.day, 9, tzinfo=UTC) - timedelta(hours=14)
     assert item.available_at == first_morning == earliest_reminder_time(due)
     assert datetime.fromisoformat(item.payload["not_before"]) == first_morning
     assert item.created_by == ann.user_id, "the person who set the due date asked for it"
-    assert await claim(container, WorkKind.TASK_REMINDER) is None, "not before its time"
+    assert await claim(container, TasksKind.TASK_REMINDER) is None, "not before its time"
     plain = await container.managers.tasks.create_task(ann, make_task(ann, "no due date"))
-    assert await queued(container, ann, WorkKind.TASK_REMINDER, plain.id) == []
+    assert await queued(container, ann, TasksKind.TASK_REMINDER, plain.id) == []
 
 
 @pytest.mark.parametrize(
@@ -120,7 +123,7 @@ async def test_before_the_persons_morning_the_item_parks_until_then(tmp_path: Pa
     ann = await owner_of(container, "acme")
     due = today() + timedelta(days=2)
     task = await container.managers.tasks.create_task(ann, make_task(ann, due_on=due))
-    [item] = await queued(container, ann, WorkKind.TASK_REMINDER, task.id)
+    [item] = await queued(container, ann, TasksKind.TASK_REMINDER, task.id)
     with pytest.raises(WorkParked) as parked:
         await TaskReminderHandlerImpl(container.managers.tasks).handle(ann, item)
     left = datetime(due.year, due.month, due.day, 9, tzinfo=UTC) - utcnow()
@@ -151,7 +154,7 @@ async def test_moving_the_due_date_leaves_the_first_reminder_stale(tmp_path: Pat
     first = yesterday() - timedelta(days=1)
     task = await tasks.create_task(ann, make_task(ann, due_on=first))
     await tasks.update_task(ann, task.model_copy(update={"due_on": yesterday()}), task.version)
-    assert len(await queued(container, ann, WorkKind.TASK_REMINDER, task.id)) == 2
+    assert len(await queued(container, ann, TasksKind.TASK_REMINDER, task.id)) == 2
     assert len(await run_due(container)) == 2
     assert await reminded_kinds(container, ann) == ["tasks.task.reminded"], "the moved one alone"
     # The one write names the date it read, so the first date's cannot land.
@@ -192,7 +195,7 @@ async def test_a_reassigned_task_asks_again_for_the_new_persons_morning(tmp_path
     task = await tasks.create_task(ann, make_task(ann, due_on=yesterday()))
     handed = task.model_copy(update={"assignee_id": bob.user_id})
     await tasks.update_task(ann, handed, task.version)
-    assert len(await queued(container, ann, WorkKind.TASK_REMINDER, task.id)) == 2
+    assert len(await queued(container, ann, TasksKind.TASK_REMINDER, task.id)) == 2
     await run_due(container)
     assert await reminded_kinds(container, ann) == ["tasks.task.reminded"], "one of the two lands"
 
@@ -219,7 +222,7 @@ async def test_a_reminder_asks_for_the_slack_post_when_a_channel_is_bound(
     await connect(container, twin, ann)
     task = await container.managers.tasks.create_task(ann, make_task(ann, due_on=yesterday()))
     await run_due(container)
-    posts = await queued(container, ann, WorkKind.SLACK_POST, task.id)
+    posts = await queued(container, ann, SlackKind.SLACK_POST, task.id)
     assert [item.payload["event"] for item in posts] == ["created", "reminded"]
 
 
@@ -238,13 +241,14 @@ async def test_the_loop_hands_a_parked_item_back_without_spending_an_attempt(
         work=container.managers.work,
         outbox=container.managers.outbox,
         purges={},
-        handlers={WorkKind.TASK_REMINDER: Parking()},
+        kinds=KINDS,
+        handlers={TasksKind.TASK_REMINDER: Parking()},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
         options=fast_options(),
     )
     running = asyncio.create_task(loop.run())
-    [item] = await queued(container, ann, WorkKind.TASK_REMINDER, task.id)
+    [item] = await queued(container, ann, TasksKind.TASK_REMINDER, task.id)
     storage = container.storage.get_work_storage()
     stored: WorkItem | None = None
     for _ in range(200):

@@ -1,11 +1,11 @@
 """The slack swimlane: the Slack app an org installs into its workspace, the
 bot token that install holds, the channel it posts to, and the record of what
-the platform posted there."""
+the system posted there."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from tadas.om.context import RequestContext, TenantContext
+from tadas.om.context import RequestContext, TenantContext, stageless, transition
 from tadas.om.slack.types.installation import (
     SlackInstallation,
     SlackInstallStart,
@@ -29,10 +29,11 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def finish_install(
         self, rctx: RequestContext, state: str, code: str, redirect_uri: str
     ) -> SlackInstallation:
-        """Platform-internal, on the request stage, like a webhook's lookup: the
+        """System-internal, on the request stage, like a webhook's lookup: the
         state names the org, since Slack's redirect carries no credential. The
         state is redeemed in one conditional write, so it works once; the code
         is traded for the workspace's bot token, which is kept as the org's
@@ -57,10 +58,11 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def installation_for_team(
         self, rctx: RequestContext, team_id: str
     ) -> tuple[TenantContext, SlackInstallation] | None:
-        """Platform-internal, on the request stage: the org a call from Slack
+        """System-internal, on the request stage: the org a call from Slack
         is for, found by its workspace, with the service context of that org
         attributed to the member who installed the app. None when no org
         holds the workspace."""
@@ -113,8 +115,9 @@ class SlackManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @stageless
     async def purge_across_tenants(self) -> int:
-        """Platform-internal: the sweep, across tenants, once a pass, in one
+        """System-internal: the sweep, across tenants, once a pass, in one
         transaction: deleted installations, spent states, and post records
         past the retention, a batch of each at most, whatever their tenant;
         returns how many rows went. It takes no context, because it runs for

@@ -1,10 +1,11 @@
 import pytest
-from contracts.slack_storage import SlackStorageContract
 
 from tadas.om.slack.storage import SlackStorageInterface
 from tadas.om.slack.storage.impl.postgres import SlackStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole
+
+from contracts.slack_storage import SlackStorageContract
 
 pytestmark = pytest.mark.integration
 

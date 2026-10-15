@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import type { Plan } from "@tadas/client";
+import type { billing } from "@tadas/client";
 import {
   useBilling,
   useCancelPlan,
@@ -70,7 +70,7 @@ export function useBillingVm() {
     actions: billing.data ? billingActions(billing.data) : null,
     failure,
     busy: checkout.isPending || portal.isPending || cancelPlan.isPending || resumePlan.isPending,
-    choose: (plan: Plan) => void run(() => checkout.mutateAsync(plan), "The checkout did not start.", true),
+    choose: (plan: billing.Plan) => void run(() => checkout.mutateAsync(plan), "The checkout did not start.", true),
     manage: () => void run(() => portal.mutateAsync(), "The billing page did not open.", true),
     confirmingCancel,
     askCancel: () => setConfirmingCancel(true),

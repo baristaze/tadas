@@ -6,13 +6,13 @@ from tadas.om.context import Permission, TenantContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row
 from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.types.work import SlackPostEvent
 from tadas.om.tasks.impl.shared import slack_rows
 from tadas.om.tasks.reminders import TasksRemindersManagerInterface
 from tadas.om.tasks.rules import reminder_person, reminder_time
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.task import DueReminder, Task, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.work.types.work_item import SlackPostEvent
 
 
 class TasksRemindersManagerImpl(TasksRemindersManagerInterface):

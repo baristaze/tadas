@@ -2,7 +2,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { LONG_PRESS_MS, TaskItem } from "./TaskItem";
 import { taskRow } from "./tasksModel";
 
@@ -17,13 +17,13 @@ const root = createRoot(container);
 afterEach(async () => { await act(async () => root.render(null)); });
 
 it("keeps an unsaved draft and its original version through a realtime refresh", async () => {
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t1", title: "Original", notes: "", status: "open", assignee_id: null,
     rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const onSave = vi.fn();
-  const render = (current: TaskView, editing = true) => act(async () => {
+  const render = (current: tasks.TaskView, editing = true) => act(async () => {
     root.render(createElement(TaskItem, {
       task: current, row: taskRow(current, new Map(), "u1"), leaving: false,
       listMountedAt: Date.now(), canWrite: true, editing, saving: false,
@@ -51,7 +51,7 @@ it("keeps an unsaved draft and its original version through a realtime refresh",
 });
 
 it("holds the Save button while the save it started is in flight", async () => {
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t2", title: "Original", notes: "", status: "open", assignee_id: null,
     rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
@@ -72,7 +72,7 @@ it("holds the Save button while the save it started is in flight", async () => {
 });
 
 it("leads with the drag handle, keeps one line, and names the creator without a marker", async () => {
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t3", title: "Migrate DB", notes: "", status: "open", assignee_id: "u1",
     rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
@@ -105,7 +105,7 @@ it("leads with the drag handle, keeps one line, and names the creator without a 
 });
 
 it("lets someone who cannot write open a task's files, read-only, with no edit form", async () => {
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t1", title: "Read only", notes: "", status: "open", assignee_id: null,
     rank: "0", version: 1, created_by: "u1", deleted_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
@@ -129,14 +129,14 @@ it("shows the due date on the row and sends a set, changed, or cleared one from 
   const today = new Date();
   const two = (n: number) => String(n).padStart(2, "0");
   const todayIso = `${today.getFullYear()}-${two(today.getMonth() + 1)}-${two(today.getDate())}`;
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t4", title: "Call the bank", notes: "", status: "open", assignee_id: null,
     rank: "0", version: 5, created_by: "u1", deleted_at: null,
     due_on: todayIso, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const onSave = vi.fn();
-  const render = (current: TaskView, editing: boolean) => act(async () => {
+  const render = (current: tasks.TaskView, editing: boolean) => act(async () => {
     root.render(createElement(TaskItem, {
       task: current, row: taskRow(current, new Map(), "u1"), leaving: false,
       listMountedAt: Date.now(), canWrite: true, editing, saving: false,
@@ -174,7 +174,7 @@ it("shows the due date on the row and sends a set, changed, or cleared one from 
 });
 
 it("sets a due date on a task that had none", async () => {
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t5", title: "Plan", notes: "", status: "open", assignee_id: null,
     rank: "0", version: 2, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
@@ -202,7 +202,7 @@ it("sets a due date on a task that had none", async () => {
 });
 
 describe("a row one selects in", () => {
-  const task: TaskView = {
+  const task: tasks.TaskView = {
     id: "t9", title: "Pick me", notes: "", status: "open", assignee_id: null,
     rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",

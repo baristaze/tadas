@@ -1,7 +1,7 @@
 // Pure: the rows the list renders, drag placements, and the order a drag
 // shows before the server answers.
 import type { InfiniteData } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskView, UserView } from "@tadas/client";
+import type { tasks, tenancy } from "@tadas/client";
 import { dueBadge, type DueBadge } from "./dueModel";
 
 /** How long a task takes to fade out of one group and into the other. */
@@ -21,7 +21,7 @@ export interface TaskRow {
   due: DueBadge | null;
 }
 
-export function canWrite(me: MeView | undefined): boolean {
+export function canWrite(me: tenancy.MeView | undefined): boolean {
   return me?.permissions.includes("write") ?? false;
 }
 
@@ -34,14 +34,14 @@ export function canAdd(title: string): boolean {
  * before any name is shown, so an id it lacks is one that left. */
 export const FORMER_MEMBER = "Former member";
 
-export function nameOf(userId: string, users: ReadonlyMap<string, UserView>, meId: string | null): string {
+export function nameOf(userId: string, users: ReadonlyMap<string, tenancy.UserView>, meId: string | null): string {
   if (userId === meId) return "you";
   return users.get(userId)?.display_name ?? FORMER_MEMBER;
 }
 
 export function taskRow(
-  task: TaskView,
-  users: ReadonlyMap<string, UserView>,
+  task: tasks.TaskView,
+  users: ReadonlyMap<string, tenancy.UserView>,
   meId: string | null,
   now: Date = new Date(),
 ): TaskRow {
@@ -57,18 +57,18 @@ export function taskRow(
   };
 }
 
-export function flattenPages(data: InfiniteData<TaskPageView> | undefined): TaskView[] {
+export function flattenPages(data: InfiniteData<tasks.TaskPageView> | undefined): tasks.TaskView[] {
   return data?.pages.flatMap((page) => page.items) ?? [];
 }
 
 /** Where a dragged open task lands: the new order, and the `after_id` the
  * move call takes (null for the top). Null when the drop changes nothing. */
 export function placement(
-  open: TaskView[],
+  open: tasks.TaskView[],
   movedId: string,
   targetId: string,
   side: DropSide,
-): { order: TaskView[]; afterId: string | null } | null {
+): { order: tasks.TaskView[]; afterId: string | null } | null {
   const moved = open.find((task) => task.id === movedId);
   if (!moved || movedId === targetId) return null;
   const without = open.filter((task) => task.id !== movedId);
@@ -86,22 +86,22 @@ export function placement(
 /** The whole order asked for, on the first page; the pages after it are
  * emptied, since the order spans every page that was loaded. */
 export function pagesWithOrder(
-  data: InfiniteData<TaskPageView> | undefined,
-  order: TaskView[],
-): InfiniteData<TaskPageView> | undefined {
+  data: InfiniteData<tasks.TaskPageView> | undefined,
+  order: tasks.TaskView[],
+): InfiniteData<tasks.TaskPageView> | undefined {
   if (!data || data.pages.length === 0) return data;
   const [first, ...rest] = data.pages;
   return { ...data, pages: [{ ...first!, items: order }, ...rest.map((page) => ({ ...page, items: [] }))] };
 }
 
 export interface Leaving {
-  task: TaskView;
+  task: tasks.TaskView;
   index: number;
 }
 
 /** The open list as rendered: a task fading out keeps its place for the whole
  * motion, whatever the server's list already says. */
-export function withLeaving(open: TaskView[], leaving: Leaving[]): TaskView[] {
+export function withLeaving(open: tasks.TaskView[], leaving: Leaving[]): tasks.TaskView[] {
   const leavingIds = new Set(leaving.map((l) => l.task.id));
   const rows = open.filter((task) => !leavingIds.has(task.id));
   for (const { task, index } of [...leaving].sort((a, b) => a.index - b.index)) {

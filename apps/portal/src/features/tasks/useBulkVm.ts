@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BulkTasksRequest, TaskScope, TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { placeTask, refreshTaskLists } from "../../queries/taskCache";
 import { ON_TOP } from "../../queries/taskPlacement";
@@ -45,9 +45,9 @@ export function useBulkVm({
   done,
   canWrite,
 }: {
-  scope: TaskScope;
-  open: TaskView[];
-  done: TaskView[];
+  scope: tasks.TaskScope;
+  open: tasks.TaskView[];
+  done: tasks.TaskView[];
   canWrite: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -112,13 +112,13 @@ export function useBulkVm({
   // the selection goes, and the lists are read again once the server has
   // answered, since the answer names ids and not rows. The toast says what
   // changed and offers the other action over exactly those tasks.
-  const run = async (request: BulkTasksRequest, moving: TaskView[], undoable: boolean) => {
+  const run = async (request: tasks.BulkTasksRequest, moving: tasks.TaskView[], undoable: boolean) => {
     if (running.current) return;
     running.current = true;
     setBusy(true);
     const now = new Date().toISOString();
     for (const task of moving) {
-      const moved: TaskView =
+      const moved: tasks.TaskView =
         request.action === "complete"
           ? { ...task, status: "done", updated_at: now }
           : { ...task, status: "open", rank: ON_TOP, archived_at: null };

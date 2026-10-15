@@ -4,7 +4,6 @@ with the rest a tasks manager composes."""
 
 from uuid import UUID
 
-from contracts.factories import make_org, make_user
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import EMPTY_UUID, new_id
 from tadas.om.context import (
@@ -23,12 +22,15 @@ from tadas.om.orchestrations.impl.manager import OrchestrationsManagerImpl, Orch
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.root import ORCHESTRATION_KINDS
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallation
 from tadas.om.tenancy import TenancyManagerInterface, TenancyMembersManagerInterface
 from tadas.om.tenancy.rules import permissions_of
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.user import User
+
+from contracts.factories import make_org, make_user
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
@@ -95,7 +97,7 @@ def context(role: Role, org: Org | None = None, members: Members | None = None) 
         org_id=(org or make_org()).id,
         role=role,
         permissions=permissions_of(role),
-        credential_kind=CredentialKind.SESSION_TOKEN,
+        credential_kind=CredentialKind.AUTH_SESSION_TOKEN,
     )
 
 
@@ -121,7 +123,9 @@ def orchestrations_of(
 ) -> OrchestrationsManagerImpl:
     """The orchestrations manager a tasks manager composes, over the records
     the tasks storage lands its steps in."""
-    return OrchestrationsManagerImpl(storage, members, relay, OrchestrationsOptions())
+    return OrchestrationsManagerImpl(
+        storage, members, relay, OrchestrationsOptions(), ORCHESTRATION_KINDS
+    )
 
 
 class NoSlack(SlackManagerInterface):

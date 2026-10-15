@@ -42,16 +42,11 @@ from tadas.apps.cli.model import (
     short_id,
     task_table,
 )
-from tadas.client.client import UNSET, ApiClient, ApiError, Unset
+from tadas.client.client import ApiClient
 from tadas.client.realtime import ChannelRefused
-from tadas.client.types import (
-    IssuedLoginView,
-    IssuedSessionView,
-    TaskScope,
-    TaskStatus,
-    TaskView,
-    UserView,
-)
+from tadas.client.transport import UNSET, ApiError, Unset
+from tadas.client.types.tasks import TaskScope, TaskStatus, TaskView
+from tadas.client.types.tenancy import IssuedAuthSessionView, IssuedLoginView, UserView
 
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
@@ -293,7 +288,7 @@ def login(
     kept."""
     api_url = config.api_url(api)
     # Read before the sign-in: keeping the new session overwrites the file.
-    replaced = config.load_session()
+    replaced = config.load_auth_session()
 
     async def go() -> None:
         async with build_client(api_url, None) as client:
@@ -306,7 +301,7 @@ def login(
             except LookupError as slugs:
                 # The API signed the person in; what is missing is the flag.
                 _fail(f"choose an org with --org: {slugs}", EXIT_USAGE)
-            session = await client.exchange_session(issued.token, chosen.org.id)
+            session = await client.exchange_auth_session(issued.token, chosen.org.id)
             path = keep(api_url, session)
             typer.echo(
                 f"signed in as {session.user.display_name} at {session.org.name}"
@@ -318,7 +313,7 @@ def login(
     _run(go())
 
 
-async def end_replaced(replaced: config.Session) -> None:
+async def end_replaced(replaced: config.AuthSession) -> None:
     """Ends the session a login replaced, at the API that issued it and with
     its own token, as `logout` does. Best effort: the new session is kept
     whatever the API answers, and a session it could not end lapses when it
@@ -341,16 +336,16 @@ async def end_replaced(replaced: config.Session) -> None:
     typer.echo("the session kept before is ended")
 
 
-def keep(api_url: str, session: IssuedSessionView) -> Path:
-    """The one session the CLI holds, in the file the next command reads."""
-    return config.save_session(
-        config.Session(
+def keep(api_url: str, auth_session: IssuedAuthSessionView) -> Path:
+    """The one auth session the CLI holds, in the file the next command reads."""
+    return config.save_auth_session(
+        config.AuthSession(
             api_url=api_url,
-            token=session.token,
-            email=session.user.email,
-            display_name=session.user.display_name,
-            org_slug=session.org.slug,
-            org_name=session.org.name,
+            token=auth_session.token,
+            email=auth_session.user.email,
+            display_name=auth_session.user.display_name,
+            org_slug=auth_session.org.slug,
+            org_name=auth_session.org.name,
         )
     )
 
@@ -378,7 +373,7 @@ def switch(
     the same write, so the CLI never holds two. `TADAS_TOKEN` is the
     environment's credential, not the CLI's to end, so only the kept session
     switches."""
-    session = config.load_session()
+    session = config.load_auth_session()
     if session is None:
         _fail("no kept session to switch; run `tadas login`", EXIT_NOT_SIGNED_IN)
     client = setting(lambda: build_client(session.api_url, session.token))
@@ -389,7 +384,7 @@ def switch(
                 chosen = choose_org(await client.every_membership(), org)
             except LookupError as slugs:
                 _fail(f"no org {org!r} to switch to; yours are: {slugs}", EXIT_USAGE)
-            switched = await client.switch_session(chosen.org.id)
+            switched = await client.switch_auth_session(chosen.org.id)
             keep(session.api_url, switched)
             typer.echo(
                 f"switched to {switched.org.name} as {switched.user.display_name}"
@@ -403,7 +398,7 @@ def switch(
 def logout(api: Api = None) -> None:
     """Revoke the session `login` kept and forget it. `TADAS_TOKEN` is the
     environment's credential, not the CLI's to revoke, and is left alone."""
-    session = config.load_session()
+    session = config.load_auth_session()
     if session is None:
         hint = "; TADAS_TOKEN is the environment's, unset it" if setting(config.token) else ""
         typer.echo(f"no session to forget{hint}")
@@ -441,7 +436,7 @@ def logout(api: Api = None) -> None:
         try:
             outcome = asyncio.run(revoke())
         finally:
-            config.clear_session()
+            config.clear_auth_session()
     except ApiError as error:
         _fail(f"session forgotten, not revoked; the API refused: {error}", EXIT_REFUSED)
     except httpx.TransportError as error:

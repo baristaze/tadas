@@ -1,5 +1,5 @@
 // Pure: which imports the tasks page shows, and how each is said.
-import type { BillingView, ImportView, Plan, PlanLimit } from "@tadas/client";
+import type { billing, tasks, PlanLimit } from "@tadas/client";
 
 /** How long before the page opened an import may have ended and still show. */
 export const ENDED_SHOWN_MS = 15 * 60 * 1000;
@@ -9,10 +9,10 @@ export const ENDED_SHOWN_MS = 15 * 60 * 1000;
  * the page opened (`openedAt`) is not news. A second import stacks beside
  * the first, so none a person started leaves the page while it is open. */
 export function shownImports(
-  items: readonly ImportView[],
+  items: readonly tasks.ImportView[],
   dismissed: ReadonlySet<string>,
   openedAt: number,
-): ImportView[] {
+): tasks.ImportView[] {
   return items
     .filter((view) => {
       if (view.finished_at === null) return true;
@@ -36,7 +36,7 @@ export interface ImportCard {
   percent: number | null;
 }
 
-export function importCard(view: ImportView): ImportCard {
+export function importCard(view: tasks.ImportView): ImportCard {
   return {
     id: view.id,
     headline: headline(view),
@@ -50,11 +50,11 @@ export function importCard(view: ImportView): ImportCard {
   };
 }
 
-export function isRunning(view: ImportView): boolean {
+export function isRunning(view: tasks.ImportView): boolean {
   return view.status === "running";
 }
 
-export function isParkedOnThePlan(view: ImportView): boolean {
+export function isParkedOnThePlan(view: tasks.ImportView): boolean {
   return view.status === "parked" && view.park_reason === "plan_limit";
 }
 
@@ -63,7 +63,7 @@ function rows(count: number): string {
 }
 
 /** How far an import is: created N of M, skipped K. */
-export function progressLine(view: ImportView): string {
+export function progressLine(view: tasks.ImportView): string {
   const total = view.total === null ? "" : ` of ${view.total}`;
   const skipped = view.skipped > 0 ? `, skipped ${rows(view.skipped)}` : "";
   return `Created ${view.created}${total}${skipped}`;
@@ -79,7 +79,7 @@ const FAILURES: Readonly<Record<string, string>> = {
 };
 
 /** The one sentence at the head of the import's card. */
-export function headline(view: ImportView): string {
+export function headline(view: tasks.ImportView): string {
   switch (view.status) {
     case "running":
       return view.total === null ? "Importing tasks…" : `Importing tasks: ${progressLine(view).toLowerCase()}.`;
@@ -101,17 +101,17 @@ export function headline(view: ImportView): string {
 }
 
 /** The rows the import skipped, as lines: `Row 3: no title`. */
-export function skippedLines(view: ImportView): string[] {
+export function skippedLines(view: tasks.ImportView): string[] {
   const named = view.row_errors.map((e) => `Row ${e.row}: ${e.reason}`);
   const more = view.skipped - named.length;
   return more > 0 ? [...named, `and ${rows(more)} more`] : named;
 }
 
-const ORDER: readonly Plan[] = ["free", "pro", "team", "max"];
+const ORDER: readonly billing.Plan[] = ["free", "pro", "team", "max"];
 
 /** The bound an import parked on, in the shape the upgrade dialog reads: the
  * org's plan, its active tasks, and the first plan above it with more. */
-export function activeTasksLimit(billing: BillingView): PlanLimit {
+export function activeTasksLimit(billing: billing.BillingView): PlanLimit {
   const bound = billing.limits.active_tasks;
   const above = billing.plans
     .filter((offer) => ORDER.indexOf(offer.plan) > ORDER.indexOf(billing.plan))

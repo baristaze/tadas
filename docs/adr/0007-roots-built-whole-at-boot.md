@@ -1,6 +1,6 @@
 # ADR 0007: Roots are built whole at boot, once per process
 
-**Status**: accepted (2026-09-18)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -57,9 +57,3 @@ not a connection, so building them all costs nothing.
 dependency changes, and compare with the table above. A constructor
 above a millisecond, or one that opens a connection, is a finding. The
 import floor moves only when a dependency is added or dropped.
-
-## Evidence
-
-![make benchmark-boot](media/0007-benchmark-boot.png)
-
-![the roots build once, for any number of requests](media/0007-built-once.png)

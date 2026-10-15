@@ -3,18 +3,18 @@
 // move names the version of the task as held, the server's answer takes the
 // optimistic row's place, and a refusal (someone else changed the list first)
 // is said and the list reloaded from the server.
-import { ApiError, type TaskView } from "@tadas/client";
+import { ApiError, type tasks } from "@tadas/client";
 import { placement, type DropSide } from "./tasksModel";
 
 export const STALE_MESSAGE = "Someone changed this list first; it was reloaded.";
 
 export interface ReorderEffects {
   /** The move call: the task, what it lands after, and the version it was read at. */
-  move: (id: string, afterId: string | null, version: number) => Promise<TaskView>;
+  move: (id: string, afterId: string | null, version: number) => Promise<tasks.TaskView>;
   /** Shows the order the drop asked for while the server answers. */
-  showOrder: (order: TaskView[]) => void;
+  showOrder: (order: tasks.TaskView[]) => void;
   /** Puts the row the server wrote in place of the optimistic one. */
-  showMoved: (moved: TaskView) => void;
+  showMoved: (moved: tasks.TaskView) => void;
   /** Reloads the list from the server, after a refusal. */
   refetch: () => void;
   /** Says what went wrong in one line. */
@@ -29,7 +29,7 @@ export function isStale(cause: unknown): boolean {
 }
 
 export async function reorder(
-  open: TaskView[],
+  open: tasks.TaskView[],
   movedId: string,
   targetId: string,
   side: DropSide,

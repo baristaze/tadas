@@ -1,5 +1,4 @@
 import pytest
-from contracts.task_storage import TaskStorageContract
 
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.storage.impl.postgres import OrchestrationsStoragePostgresImpl
@@ -7,6 +6,8 @@ from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
+
+from contracts.task_storage import TaskStorageContract
 
 pytestmark = pytest.mark.integration
 

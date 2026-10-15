@@ -24,7 +24,7 @@ from tadas.infra.observability import failure_level
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
 from tadas.om.context import TenantContext
-from tadas.om.exceptions import PlatformException
+from tadas.om.exceptions import OmException
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.auth import CLOSE_UNAUTHENTICATED, Ctx, Principal
 from tadas.services.api.gateway.resolve import RealtimeService, container_of
@@ -32,7 +32,6 @@ from tadas.services.api.realtime.envelopes import (
     ClientCommand,
     ErrorEnvelope,
     HelloEnvelope,
-    IssuedTicketView,
     PongEnvelope,
     SubscribedEnvelope,
     UnsubscribedEnvelope,
@@ -40,9 +39,10 @@ from tadas.services.api.realtime.envelopes import (
 from tadas.services.api.realtime.send_buffer import SendBuffer
 from tadas.services.api.realtime.timeouts import IDLE_TIMEOUT_SECONDS
 from tadas.services.api.services.realtime import RIGHTS_CHANGED, RealtimeServiceInterface
+from tadas.services.api.types.change_events import IssuedTicketView
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/realtime", tags=["realtime"])
+router = APIRouter(prefix="/realtime", tags=["change_events"])
 
 CREDENTIAL_EXPIRED = "credential_expired"
 """The close reason when the credential behind the ticket reached its expiry."""
@@ -141,7 +141,7 @@ async def serve_commands(
                 if topic not in subscriptions:
                     try:
                         subscriptions[topic] = realtime.subscribe(ctx, topic, buffer.offer)
-                    except PlatformException as error:
+                    except OmException as error:
                         buffer.offer(ErrorEnvelope(code=error.code, message=error.message))
                         continue
                 buffer.offer(SubscribedEnvelope(topic=topic.value))

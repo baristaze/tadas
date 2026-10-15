@@ -5,7 +5,6 @@ lever makes."""
 from datetime import timedelta
 
 import pytest
-from contracts.billing_storage import make_account
 
 from tadas.om.base import utcnow
 from tadas.om.billing.impl.manager import billing_of
@@ -23,6 +22,8 @@ from tadas.om.billing.rules import (
 from tadas.om.billing.types.account import BillingAccount, SubscriptionStatus, status_of
 from tadas.om.billing.types.plan import Lever, Plan
 from tadas.om.exceptions import PlanLimitReached
+
+from contracts.billing_storage import make_account
 
 
 def paying(

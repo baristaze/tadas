@@ -7,6 +7,11 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.context import tenantless
+from tadas.om.leases.types.leasable_resource import (
+    LeasableResource,
+    LeasableResourceUpdate,
+)
 from tadas.om.leases.types.lease import Grant, Lease, LeaseStatus
 from tadas.om.leases.types.request import (
     EndReason,
@@ -14,14 +19,12 @@ from tadas.om.leases.types.request import (
     LeaseEntry,
     LeaseRequest,
     RequestStatus,
-    WaiterKind,
 )
-from tadas.om.leases.types.resource import Resource, ResourceKind, ResourceUpdate
-from tadas.om.orchestrations.types.orchestration import Step
+from tadas.om.orchestrations.types.orchestration import OrchestrationStep
 from tadas.om.outbox.types.row import OutboxRow
 
 
-class ResourceLandingInterface(ABC):
+class LeasableResourceLandingInterface(ABC):
     """What another namespace's memory storage needs to register, update, or
     retire a resource in the commit of its own row, the twin of the
     statements the Postgres impls share
@@ -29,7 +32,7 @@ class ResourceLandingInterface(ABC):
     and `retire_statement`)."""
 
     @abstractmethod
-    def land_resource(self, org_id: UUID, resource: Resource) -> None:
+    def land_leasable_resource(self, org_id: UUID, resource: LeasableResource) -> None:
         """Registers the resource, unless its kind and row have one already."""
         ...
 
@@ -37,9 +40,9 @@ class ResourceLandingInterface(ABC):
     def land_update(
         self,
         org_id: UUID,
-        kind: ResourceKind,
+        kind: str,
         ref_id: UUID,
-        change: ResourceUpdate,
+        change: LeasableResourceUpdate,
         at: datetime,
         actor: UUID,
     ) -> None:
@@ -51,7 +54,7 @@ class ResourceLandingInterface(ABC):
 
     @abstractmethod
     def land_retirement(
-        self, org_id: UUID, kind: ResourceKind, ref_id: UUID, at: datetime, actor: UUID
+        self, org_id: UUID, kind: str, ref_id: UUID, at: datetime, actor: UUID
     ) -> None:
         """Retires the kind's resource for the row. The requests that name it
         wait on until the manager takes them out of line (`read_stranded`),
@@ -60,11 +63,11 @@ class ResourceLandingInterface(ABC):
 
 
 class LeasesStorageInterface(ABC):
-    # Resources.
+    # LeasableResources.
 
     @abstractmethod
-    async def create_resource(
-        self, org_id: UUID, resource: Resource, outbox_rows: tuple[OutboxRow, ...]
+    async def create_leasable_resource(
+        self, org_id: UUID, resource: LeasableResource, outbox_rows: tuple[OutboxRow, ...]
     ) -> bool:
         """The registration, with its rows in one commit; False, with nothing
         landed, when the id is written already or the org has a resource of
@@ -72,20 +75,24 @@ class LeasesStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_resource(self, org_id: UUID, resource_id: UUID) -> Resource | None: ...
+    async def read_leasable_resource(
+        self, org_id: UUID, leasable_resource_id: UUID
+    ) -> LeasableResource | None: ...
 
     @abstractmethod
-    async def read_resource_by_ref(
-        self, org_id: UUID, kind: ResourceKind, ref_id: UUID
-    ) -> Resource | None: ...
+    async def read_leasable_resource_by_ref(
+        self, org_id: UUID, kind: str, ref_id: UUID
+    ) -> LeasableResource | None: ...
 
     @abstractmethod
-    async def read_resources(self, org_id: UUID, kind: ResourceKind, limit: int) -> list[Resource]:
+    async def read_leasable_resources(
+        self, org_id: UUID, kind: str, limit: int
+    ) -> list[LeasableResource]:
         """The org's live resources of a kind, by id."""
         ...
 
     @abstractmethod
-    async def read_free(self, org_id: UUID, limit: int) -> list[Resource]:
+    async def read_free(self, org_id: UUID, limit: int) -> list[LeasableResource]:
         """The org's live, available resources no lease holds, by id."""
         ...
 
@@ -93,40 +100,40 @@ class LeasesStorageInterface(ABC):
     async def write_availability(
         self,
         org_id: UUID,
-        resource_id: UUID,
+        leasable_resource_id: UUID,
         available: bool,
         at: datetime,
         actor: UUID,
         outbox_rows: tuple[OutboxRow, ...],
-    ) -> Resource | None:
+    ) -> LeasableResource | None:
         """Sets whether a live resource may be granted; None when there is no
         live resource by the id."""
         ...
 
     @abstractmethod
-    async def update_resource(
+    async def update_leasable_resource(
         self,
         org_id: UUID,
-        resource_id: UUID,
-        change: ResourceUpdate,
+        leasable_resource_id: UUID,
+        change: LeasableResourceUpdate,
         at: datetime,
         actor: UUID,
         outbox_rows: tuple[OutboxRow, ...],
-    ) -> Resource | None:
+    ) -> LeasableResource | None:
         """The owner's update of a live resource, under the anchor's lock, with
         its rows in one commit; its lease and its anchor stay as they are.
         None when there is no live resource by the id."""
         ...
 
     @abstractmethod
-    async def retire_resource(
+    async def retire_leasable_resource(
         self,
         org_id: UUID,
-        resource_id: UUID,
+        leasable_resource_id: UUID,
         at: datetime,
         actor: UUID,
         outbox_rows: tuple[OutboxRow, ...],
-    ) -> Resource | None:
+    ) -> LeasableResource | None:
         """Retires a live resource. Its lease runs on until it ends, and is
         never renewed; the requests that name it wait on until the manager
         takes them out of line (`read_stranded`). None when there is no live
@@ -149,9 +156,7 @@ class LeasesStorageInterface(ABC):
     async def read_request(self, org_id: UUID, request_id: UUID) -> LeaseRequest | None: ...
 
     @abstractmethod
-    async def read_waiting(
-        self, org_id: UUID, kind: ResourceKind, limit: int
-    ) -> list[LeaseRequest]:
+    async def read_waiting(self, org_id: UUID, kind: str, limit: int) -> list[LeaseRequest]:
         """The org's waiting requests of a kind in rank order: by rank, then id."""
         ...
 
@@ -195,9 +200,13 @@ class LeasesStorageInterface(ABC):
 
     @abstractmethod
     async def park_waiting(
-        self, org_id: UUID, request_id: UUID, step: Step, outbox_rows: tuple[OutboxRow, ...]
+        self,
+        org_id: UUID,
+        request_id: UUID,
+        step: OrchestrationStep,
+        outbox_rows: tuple[OutboxRow, ...],
     ) -> LeaseRequest | None:
-        """Lands the waiter's park (`Step`, with the record's rows) only while
+        """Lands the waiter's park (`OrchestrationStep`, with the record's rows) only while
         the request still waits,
         under its row's lock, which the grant takes too: a grant that came
         first leaves the record running, and one that comes after finds it
@@ -207,7 +216,7 @@ class LeasesStorageInterface(ABC):
 
     @abstractmethod
     async def cancel_waiting_of(
-        self, org_id: UUID, waiter_kind: WaiterKind, waiter_id: UUID, at: datetime, actor: UUID
+        self, org_id: UUID, waiter_kind: str, waiter_id: UUID, at: datetime, actor: UUID
     ) -> int:
         """Takes every waiting request of one waiter out of line as
         `waiter_gone`; returns how many."""
@@ -233,7 +242,7 @@ class LeasesStorageInterface(ABC):
 
     @abstractmethod
     async def read_leases(
-        self, org_id: UUID, resource_id: UUID | None, after: HistoryMark | None, limit: int
+        self, org_id: UUID, leasable_resource_id: UUID | None, after: HistoryMark | None, limit: int
     ) -> list[LeaseEntry]:
         """The org's leases, or one resource's, newest first (by their grant,
         then their id), whatever their status, each with the request it
@@ -292,6 +301,7 @@ class LeasesStorageInterface(ABC):
     # The sweep.
 
     @abstractmethod
+    @tenantless
     async def read_due_orgs(
         self, now: datetime, lapsed_before: datetime, limit: int, after: UUID | None = None
     ) -> list[UUID]:
@@ -304,6 +314,7 @@ class LeasesStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def purge_settled(self, before: datetime, limit: int) -> int:
         """Cross-tenant, for the sweep, in the system scope: at most `limit`
         each of the leases that ended, the requests that settled, and the

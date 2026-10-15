@@ -30,10 +30,11 @@ from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import NotFound
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallationStatus
+from tadas.om.slack.types.work import SlackPostEvent, SlackPostPayload
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.task import Task
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
-from tadas.om.work.types.work_item import SlackPostEvent, SlackPostPayload, WorkItem
+from tadas.om.work.types.work_item import WorkItem
 
 log = logging.getLogger(__name__)
 

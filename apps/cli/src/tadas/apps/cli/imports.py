@@ -16,7 +16,7 @@ from tadas.apps.cli.model import SHORT_ID, short_id
 from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import Channel, State
-from tadas.client.types import ImportView
+from tadas.client.types.tasks import ImportView
 
 ENTITY = "orchestration"
 """The entity an import's pushes name: `orchestrations.orchestration.updated`."""

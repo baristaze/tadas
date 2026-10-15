@@ -24,7 +24,7 @@ base is the one beside it on staging. Production runs the tip of
 
 - **CI's `release-before` job runs the proof on every pull request.**
   `scripts/release_before.sh` migrates the compose stack, each role on
-  its own instance (ADR 1001), to the branch's head. Then it runs the
+  its own instance (ADR 0083), to the branch's head. Then it runs the
   integration suite of the merge base, and of the tip of
   `origin/release` when that branch exists and differs, against that
   schema. `make release-before` runs the same locally.

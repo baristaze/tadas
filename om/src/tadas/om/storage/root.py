@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 
 from tadas.om.billing.storage import BillingStorageInterface
-from tadas.om.events.storage import EventStorageInterface
+from tadas.om.change_events.storage import ChangeEventStorageInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.leases.storage import LeasesStorageInterface
 from tadas.om.media.storage import MediaStorageInterface
@@ -16,26 +16,40 @@ from tadas.om.work.storage import WorkStorageInterface
 
 
 class StorageInterface(ABC):
+    """One getter per namespace's storage, sorted by namespace, and the two
+    calls on the root as a whole."""
+
+    @abstractmethod
+    async def healthcheck(self) -> bool: ...
+
+    @abstractmethod
+    async def close(self) -> None: ...
+
+    @abstractmethod
+    def get_change_event_storage(self) -> ChangeEventStorageInterface: ...
+
+    @abstractmethod
+    def get_idempotency_storage(self) -> IdempotencyStorageInterface: ...
+
+    @abstractmethod
+    def get_lease_storage(self) -> LeasesStorageInterface: ...
+
+    @abstractmethod
+    def get_media_storage(self) -> MediaStorageInterface: ...
+
+    @abstractmethod
+    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface: ...
+
+    @abstractmethod
+    def get_outbox_storage(self) -> OutboxStorageInterface: ...
+
     @abstractmethod
     def get_tenancy_storage(self) -> TenancyStorageInterface: ...
 
     @abstractmethod
     def get_work_storage(self) -> WorkStorageInterface: ...
 
-    @abstractmethod
-    def get_tasks_storage(self) -> TasksStorageInterface: ...
-
-    @abstractmethod
-    def get_media_storage(self) -> MediaStorageInterface: ...
-
-    @abstractmethod
-    def get_idempotency_storage(self) -> IdempotencyStorageInterface: ...
-
-    @abstractmethod
-    def get_event_storage(self) -> EventStorageInterface: ...
-
-    @abstractmethod
-    def get_outbox_storage(self) -> OutboxStorageInterface: ...
+    # A copy adds its entries below this line.
 
     @abstractmethod
     def get_billing_storage(self) -> BillingStorageInterface: ...
@@ -44,13 +58,4 @@ class StorageInterface(ABC):
     def get_slack_storage(self) -> SlackStorageInterface: ...
 
     @abstractmethod
-    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface: ...
-
-    @abstractmethod
-    def get_lease_storage(self) -> LeasesStorageInterface: ...
-
-    @abstractmethod
-    async def healthcheck(self) -> bool: ...
-
-    @abstractmethod
-    async def close(self) -> None: ...
+    def get_tasks_storage(self) -> TasksStorageInterface: ...

@@ -10,6 +10,7 @@ from datetime import timedelta
 from fastapi import APIRouter, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from tadas.infra.observability import metrics_exposition
 from tadas.services.api.container import AppContainer, boot
@@ -18,7 +19,7 @@ from tadas.services.api.gateway.edge import EdgeClientMiddleware
 from tadas.services.api.gateway.errors import register_error_handlers
 from tadas.services.api.gateway.observability import RequestIdMiddleware
 from tadas.services.api.gateway.relay import RelayAfterAnswerMiddleware
-from tadas.services.api.routers import all_routers, webhooks
+from tadas.services.api.routers import all_routers, tags, webhooks
 from tadas.services.api.settings import ApiSettings
 
 API_PREFIX = "/v1"
@@ -45,6 +46,11 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         docs_url="/docs" if docs else None,
         redoc_url="/redoc" if docs else None,
         openapi_url="/openapi.json" if docs else None,
+        # A route's tag is its namespace, and its operation id is its
+        # function's name; `openapi.py` refuses one that a namespace's
+        # document would hold twice.
+        openapi_tags=tags(),
+        generate_unique_id_function=operation_id,
     )
     app.state.container = container
 
@@ -136,3 +142,8 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         return Response(content=body, media_type=content_type)
 
     return app
+
+
+def operation_id(route: APIRoute) -> str:
+    """A route's operation id: its function's name."""
+    return route.name

@@ -7,12 +7,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from contracts.work_cap import (
-    a_burst_drains_as_fast_as_the_worker_runs_at_a_cap_of_two,
-    a_second_item_is_passed_over_at_a_cap_of_one,
-    a_tenants_own_cap_holds_in_place_of_the_lanes,
-    a_tenants_own_cap_holds_on_a_lane_with_no_cap,
-)
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id
@@ -20,6 +14,13 @@ from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings
+
+from contracts.work_cap import (
+    a_burst_drains_as_fast_as_the_worker_runs_at_a_cap_of_two,
+    a_second_item_is_passed_over_at_a_cap_of_one,
+    a_tenants_own_cap_holds_in_place_of_the_lanes,
+    a_tenants_own_cap_holds_on_a_lane_with_no_cap,
+)
 
 pytestmark = pytest.mark.integration
 

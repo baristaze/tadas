@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from tadas.om.base import Platform
+from tadas.om.base import OmBase
 
 
 class Plan(StrEnum):
@@ -23,7 +23,7 @@ class Lever(StrEnum):
     STORAGE = "storage"
 
 
-class PlanLimits(Platform):
+class PlanLimits(OmBase):
     members: int | None
     """Active memberships the org holds at once; None is no bound."""
     api_keys: bool
@@ -34,7 +34,7 @@ class PlanLimits(Platform):
     """What the org's files may hold together."""
 
 
-class PlanPrice(Platform):
+class PlanPrice(OmBase):
     """A plan's monthly price, the shape the processor's price has: a flat
     amount that covers up to `included_seats` seats, and a price per seat for
     every seat once the count is past them (a volume tier: the whole count is

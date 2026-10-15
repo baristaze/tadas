@@ -17,23 +17,21 @@ A person may also cancel a running or a parked record: it settles
 from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
-from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
+from tadas.om.base import FrozenMapping, Identifiable, OmBase, SnakeName, Trackable
 
 
 class OrchestrationKind(StrEnum):
-    """A product adds its kinds here, each with its input shape
-    (`ORCHESTRATION_INPUTS`) and the step the worker runs for it. A kind a
-    person starts says what a second start does while one is open: it
-    answers the open record, it is refused, or it starts beside it."""
+    """The names of the mechanism's own kinds. A kind is registered by its
+    name with its input shape (`orchestrations.kinds`), and the worker keys
+    its step by the same name; a copy names its kinds in its own
+    namespace's `kinds.py`, never here."""
 
-    # Tasks made from the rows of a CSV file the org uploaded. A second
-    # import starts beside the open one (ADR 1002).
-    TASK_IMPORT = "task_import"
-    TASK_CLEANUP = "task_cleanup"  # done tasks past an age archived; one record per org per day
+    # Steps through its input's count, and changes nothing else. A second
+    # start starts beside the open one.
+    NOOP = "noop"
 
 
 class OrchestrationStatus(StrEnum):
@@ -54,7 +52,8 @@ class ParkReason(StrEnum):
     """Why a record waits, and so what wakes it."""
 
     PLAN_LIMIT = "plan_limit"  # the plan's bound: a plan that rises, or a person, wakes it
-    RESOURCE = "resource"  # in line for a resource; the grant, or the request's end, wakes it
+    # In line for a leasable resource; the grant, or the request's end, wakes it.
+    LEASABLE_RESOURCE = "leasable_resource"
 
 
 class FailReason(StrEnum):
@@ -68,7 +67,7 @@ class FailReason(StrEnum):
     DEFECT = "defect"  # a step still failed on its work item's last attempt
 
 
-class RowError(Platform):
+class RowError(OmBase):
     """One input row a step skipped: its number, counting the first data row
     as 1, and why."""
 
@@ -92,8 +91,8 @@ class Orchestration(Identifiable, Trackable):
     )
     """Every field but the kind, the input, and the period is the steps'."""
 
-    kind: OrchestrationKind
-    # The dump of ORCHESTRATION_INPUTS[kind]: what the record works on.
+    kind: SnakeName  # a kind the registry holds (`orchestrations.kinds`)
+    # The dump of its kind's input shape: what the record works on.
     input: FrozenMapping = Field(default_factory=dict, validate_default=True)
     # The period a record kept per period is for (a day, `2026-09-25`); the
     # org, the kind, and the period are its unique key. None for a record
@@ -118,34 +117,18 @@ class Orchestration(Identifiable, Trackable):
     version: int = 1
 
 
-class OrchestrationPage(Platform):
+class OrchestrationPage(OmBase):
     items: tuple[Orchestration, ...]
     has_more: bool
 
 
-class TaskImportInput(Platform):
-    """The CSV file the import reads, uploaded through the media namespace."""
+class NoopInput(OmBase):
+    """How many steps the record takes before it succeeds."""
 
-    file_id: UUID
-
-
-class TaskCleanupInput(Platform):
-    """Done tasks last changed before `before` are archived. The cutoff is
-    fixed when the day's record opens (`older_than_days` before then), so
-    every step of one record asks the same question."""
-
-    older_than_days: int
-    before: datetime
+    steps: int = Field(default=1, ge=1, le=100)
 
 
-ORCHESTRATION_INPUTS: dict[OrchestrationKind, type[Platform]] = {
-    OrchestrationKind.TASK_IMPORT: TaskImportInput,
-    OrchestrationKind.TASK_CLEANUP: TaskCleanupInput,
-}
-"""The input shape of every kind; the start validates a record's input against it."""
-
-
-class Step(Platform):
+class OrchestrationStep(OmBase):
     """A step's companion write: the record as the step leaves it, landed in
     the same commit as the step's effect (the rows of the namespace it
     changes) and conditioned on the version the step read. The record's `applied` grows,

@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 
 from tadas.om.context import TenantContext
-from tadas.services.api.types.flags import FlagsView
+from tadas.services.api.types.tenancy import FlagsView
 
 
 class FlagsServiceInterface(ABC):

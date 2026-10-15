@@ -4,7 +4,6 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
-from contracts.task_storage import make_task
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.tasks.rules import (
@@ -35,6 +34,8 @@ from tadas.om.tasks.rules import (
 from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
+
+from contracts.task_storage import make_task
 
 
 def mine(user_id: UUID) -> TaskFilter:

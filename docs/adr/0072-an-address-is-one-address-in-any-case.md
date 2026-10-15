@@ -1,6 +1,6 @@
 # ADR 0072: An address is one address in any case
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -11,8 +11,7 @@ address and links a person the seeding or an operator made; the operator
 allowlist's grant, disable, and grant token; adding a member by address,
 from the seeding or the operator plane; the local sign-in; and an
 invitation: the pending one per address, the refusal of a member, and
-the lookup a member's sign-in makes. Slack knows a person by the address
-on their Slack profile.
+the lookup a member's sign-in makes.
 
 Matched as typed, `Dee@example.test` and `dee@example.test` would be two
 addresses, and could be two people.
@@ -32,8 +31,7 @@ identity's address. An invitation keeps the folded address and sends it
 to the provider so. The digest (`rules.email_digest`) folds before it
 hashes, so every lookup of an identity, and the sign-in delay keyed on
 the digest, reads one row for every spelling. The invitation lookups
-fold the address they are given. The import of tasks from a file
-matches an assignee by the same rule.
+fold the address they are given.
 
 **The database folds the same way.** `core.identities.email_digest` is
 a generated column over `lower(email COLLATE pg_unicode_fast)`. The

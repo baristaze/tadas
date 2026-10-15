@@ -15,7 +15,7 @@ from tadas.om.work.rules import (
 )
 from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.types.tenant_cap import TenantCap
-from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
+from tadas.om.work.types.work_item import WorkItem, WorkStatus
 
 
 class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
@@ -62,7 +62,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
     async def claim_next(
         self,
         lane: str,
-        kinds: Sequence[WorkKind],
+        kinds: Sequence[str],
         worker_id: str,
         lease: timedelta,
         tenant_cap: int | None = None,
@@ -112,7 +112,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                     "lease_expires_at": now + lease,
                     "attempts": attempts_after_claim(item.attempts),
                     "updated_at": now,
-                    "updated_by": EMPTY_UUID,  # the claim is the platform's write
+                    "updated_by": EMPTY_UUID,  # the claim is the system's write
                 }
             )
             self._items[item.id] = (org_id, claimed)

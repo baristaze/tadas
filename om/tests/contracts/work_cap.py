@@ -6,7 +6,6 @@ the same way in either."""
 from datetime import timedelta
 from uuid import UUID
 
-from contracts.work_storage import make_item
 from tadas.om.base import new_id
 from tadas.om.context import (
     AppContext,
@@ -21,6 +20,8 @@ from tadas.om.root import Managers
 from tadas.om.tenancy.rules import operator_permissions_of
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
+
+from contracts.work_storage import make_item
 
 LEASE = timedelta(seconds=30)
 WORKER = AppContext(type=AppType.WORKER, version="worker@test")

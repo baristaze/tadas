@@ -20,10 +20,11 @@ from uuid import UUID
 import httpx
 
 from tadas.apps.cli.model import describe, is_mine
-from tadas.client.client import ApiClient, ApiError
+from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import Channel, State
-from tadas.client.types import TaskScope, TaskStatus, TaskView
+from tadas.client.transport import ApiError
+from tadas.client.types.tasks import TaskScope, TaskStatus, TaskView
 
 Changes = AsyncIterable[EntityChanged]
 ReadState = Callable[[], Awaitable[None]]

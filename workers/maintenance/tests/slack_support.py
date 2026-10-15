@@ -23,7 +23,7 @@ from tadas.om.root import build_tenancy
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
 from tadas.om.tenancy.impl.manager import TenancyOptions
-from tadas.om.work.types.work_item import WorkItem, WorkKind
+from tadas.om.work.types.work_item import KindName, WorkItem
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import SlackInboundHandler
 
@@ -98,21 +98,21 @@ def make_task(ctx: TenantContext, title: str = "Water the plants", **fields: obj
 
 
 async def queued(
-    container: WorkerContainer, ctx: TenantContext, kind: WorkKind, target_id: UUID | None = None
+    container: WorkerContainer, ctx: TenantContext, kind: KindName, target_id: UUID | None = None
 ) -> list[WorkItem]:
     """The items of a kind the tenant's writes queued, oldest first, read off
     the memory queue without claiming anything."""
     storage = container.storage.get_work_storage()
     found: list[WorkItem] = []
     for _, (org_id, item) in sorted(storage._items.items()):  # type: ignore[attr-defined]
-        if org_id == ctx.org_id and item.kind is kind:
+        if org_id == ctx.org_id and item.kind == kind:
             if target_id is None or item.target_id == target_id:
                 found.append(item)
     return found
 
 
 async def claim(
-    container: WorkerContainer, kind: WorkKind
+    container: WorkerContainer, kind: KindName
 ) -> tuple[TenantContext, WorkItem] | None:
     return await container.managers.work.claim(request(), "default", [kind], "test", LEASE)
 

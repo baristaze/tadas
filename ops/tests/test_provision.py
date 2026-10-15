@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from tadas.client.client import ApiError
+from tadas.client.transport import ApiError
 from tadas.ops.environments import Environment
 from tadas.ops.profiles import Profile
 from tadas.ops.traffic import (

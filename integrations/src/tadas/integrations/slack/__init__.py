@@ -1,4 +1,4 @@
-"""Slack: the one interface the platform reaches Slack through, and the errors
+"""Slack: the one interface the system reaches Slack through, and the errors
 a caller decides on.
 
 Tadas is a distributed Slack app. Each org installs it into its own
@@ -56,7 +56,7 @@ together."""
 UNUSABLE_CHANNEL_ERRORS = frozenset({"channel_not_found", "not_in_channel", "is_archived"})
 """Slack's answers that no retry changes: the channel is gone, archived, or
 the app is not in it; a private channel the app is not in answers
-`channel_not_found`. A person fixes each, and the platform stops posting
+`channel_not_found`. A person fixes each, and the system stops posting
 until the bot joins the channel again or another channel is bound."""
 
 REVOKED_TOKEN_ERRORS = frozenset(
@@ -184,7 +184,7 @@ class SlackInterface(ABC):
     @abstractmethod
     async def revoke(self, token: str, *, deadline: datetime | None = None) -> None:
         """Revokes one token (`auth.revoke`) and leaves the app installed: for
-        a token an install handed over that the platform will not keep."""
+        a token an install handed over that the system will not keep."""
         ...
 
     @abstractmethod

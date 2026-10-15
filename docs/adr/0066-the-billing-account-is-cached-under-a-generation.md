@@ -60,7 +60,7 @@ principal's statement and decides with `entitlements_of`.
 
 **The handler's read on `POST /v1/tasks` goes through the cache.** The
 other way is to carry the account the principal read along to the
-handler. That helps an api key only, since a session's principal does
+handler. That helps an api key only, since an auth session's principal does
 not join the account, and it puts the account on the context every
 manager takes. The cache removes the handler's read for both
 credentials, with no new parameter.
@@ -73,7 +73,7 @@ run's own:
 
 | Call | Without the cache | With it |
 |------|--------|-------|
-| `POST /v1/tasks`, session, cache warm | 25 trips, 8 transactions | 22, 7 |
+| `POST /v1/tasks`, auth session, cache warm | 25 trips, 8 transactions | 22, 7 |
 | `POST /v1/tasks`, api key, cache warm | 25, 8 | 22, 7 |
 | `POST /v1/tasks`, the first after a write | 25, 8 | 25, 8 |
 | `GET /v1/billing`, cache warm | 18, 6 | 15, 5 |

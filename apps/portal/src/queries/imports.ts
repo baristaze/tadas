@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { AddFileRequest, FileView, ImportPageView, ImportView, StartImportRequest } from "@tadas/client";
+import type { media, tasks } from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 
@@ -12,7 +12,7 @@ export function useRecentImports(enabled = true) {
   return useQuery({
     queryKey: keys.imports.recent,
     enabled,
-    queryFn: ({ signal }) => api.get<ImportPageView>(`/v1/tasks/imports?limit=${RECENT_IMPORTS}`, { signal }),
+    queryFn: ({ signal }) => api.get<tasks.ImportPageView>(`/v1/tasks/imports?limit=${RECENT_IMPORTS}`, { signal }),
   });
 }
 
@@ -20,21 +20,21 @@ export function useRecentImports(enabled = true) {
  * `features/imports/importFlow.ts` takes these as its effects, beside the
  * media calls that move the bytes. */
 export const importCalls = {
-  startFile: (body: AddFileRequest) =>
-    api.post<FileView>("/v1/tasks/imports/files", body, { idempotencyKey: crypto.randomUUID() }),
-  start: (body: StartImportRequest) =>
-    api.post<ImportView>("/v1/tasks/imports", body, { idempotencyKey: crypto.randomUUID() }),
+  startFile: (body: media.AddFileRequest) =>
+    api.post<media.FileView>("/v1/tasks/imports/files", body, { idempotencyKey: crypto.randomUUID() }),
+  start: (body: tasks.StartImportRequest) =>
+    api.post<tasks.ImportView>("/v1/tasks/imports", body, { idempotencyKey: crypto.randomUUID() }),
 };
 
 export function useResumeImport() {
   return useMutation({
-    mutationFn: (id: string) => api.post<ImportView>(`/v1/tasks/imports/${id}/resume`),
+    mutationFn: (id: string) => api.post<tasks.ImportView>(`/v1/tasks/imports/${id}/resume`),
   });
 }
 
 /** Ends a running or a parked import; the tasks it made stay. */
 export function useCancelImport() {
   return useMutation({
-    mutationFn: (id: string) => api.post<ImportView>(`/v1/tasks/imports/${id}/cancel`),
+    mutationFn: (id: string) => api.post<tasks.ImportView>(`/v1/tasks/imports/${id}/cancel`),
   });
 }

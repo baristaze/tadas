@@ -56,7 +56,7 @@ the line exactly at the cost of a statement every create pays, and a
 plan's bound does not need that.
 
 **Seeding is not bound by seats, and grants its own team a plan.** The
-seed's `add_member` is the platform arranging a laptop, not a tenant
+seed's `add_member` is the system arranging a laptop, not a tenant
 adding someone. `bootstrap --plan team` grants the seeded Acme Team
 through `grant_seeded_plan`, which takes only the internal, owner-held
 context a seeding transition produces, so no route reaches it; the
@@ -92,7 +92,7 @@ the queue beside its claim loop, and the delivery's mark lands in the
 account's commit, so a second copy changes nothing.
 
 **The key and the signing secret are process credentials.** They are the
-platform's, not a tenant's, so they are not read through
+system's, not a tenant's, so they are not read through
 `SecretsInterface`, whose names carry a tenant; they reach the API and the
 worker at start, like the error tracker's DSN, from
 `<prefix>stripe_runtime_key` and `<prefix>stripe_webhook_secret`, which

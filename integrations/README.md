@@ -21,7 +21,7 @@ an org's side of it:
 - the check of an inbound delivery (`verify_delivery`).
 
 The provider hands Tadas an issuer, a subject, and a verified email.
-Everything else (the identity row, its sessions, its memberships) is
+Everything else (the identity row, its auth sessions, its memberships) is
 Tadas's own; [the tenancy namespace](../om/src/tadas/om/tenancy/README.md)
 says how a sign-in becomes a person.
 

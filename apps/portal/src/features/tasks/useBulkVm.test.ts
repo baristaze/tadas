@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { BulkTasksView, TaskScope, TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { useNoticesStore } from "../../store/notices";
 import { useUpgradeStore } from "../../store/upgrade";
 import { useBulkVm, type BulkVm } from "./useBulkVm";
@@ -40,7 +40,7 @@ const net = vi.hoisted(() => {
 vi.mock("../../app/api", () => ({ api: { get: net.get, post: net.post } }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
-const taskOf = (id: string, status: "open" | "done" = "open"): TaskView => ({
+const taskOf = (id: string, status: "open" | "done" = "open"): tasks.TaskView => ({
   id,
   title: id,
   notes: "",
@@ -62,7 +62,7 @@ const done = ["d1", "d2"].map((id) => taskOf(id, "done"));
 const held: { vm?: BulkVm } = {};
 const vm = () => held.vm!;
 
-function Probe(props: { scope: TaskScope; open: TaskView[]; done: TaskView[]; canWrite: boolean }) {
+function Probe(props: { scope: tasks.TaskScope; open: tasks.TaskView[]; done: tasks.TaskView[]; canWrite: boolean }) {
   const current = useBulkVm(props);
   useEffect(() => {
     held.vm = current;
@@ -83,7 +83,7 @@ const render = (props: Partial<Parameters<typeof Probe>[0]> = {}) =>
     );
   });
 const tick = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-const answer = (over: Partial<BulkTasksView>): BulkTasksView => ({
+const answer = (over: Partial<tasks.BulkTasksView>): tasks.BulkTasksView => ({
   action: "complete",
   changed: [],
   changed_count: 0,

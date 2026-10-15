@@ -1,6 +1,6 @@
 # ADR 0071: A migration waits briefly for a lock
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 

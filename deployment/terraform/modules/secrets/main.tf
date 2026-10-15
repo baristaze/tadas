@@ -1,4 +1,4 @@
-# Three kinds of secret live under one environment. The platform's own
+# Three kinds of secret live under one environment. The system's own
 # credentials (the four database URLs, the TOTP encryption key, the edge
 # secret, the Sentry DSN, the Slack app's two secrets, the payment
 # processor's two, the WorkOS application key and webhook secret) are

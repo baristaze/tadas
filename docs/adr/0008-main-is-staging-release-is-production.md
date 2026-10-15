@@ -1,6 +1,6 @@
 # ADR 0008: `main` is staging, `release` is production
 
-**Status**: accepted (2026-09-19)
+**Status**: accepted (2026-09-28)
 
 ## Context
 

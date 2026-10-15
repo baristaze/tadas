@@ -13,7 +13,7 @@ from tadas.integrations.payments.types import ProviderDelivery
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.billing import Billing, CheckoutStart, Entitlements
 from tadas.om.billing.types.plan import Plan
-from tadas.om.context import OperatorContext, RequestContext, TenantContext
+from tadas.om.context import OperatorContext, RequestContext, TenantContext, stageless, transition
 
 
 class EntitlementsInterface(ABC):
@@ -80,10 +80,11 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
+    @transition
     async def org_of_delivery(
         self, rctx: RequestContext, delivery: ProviderDelivery
     ) -> UUID | None:
-        """Platform-internal: the org a verified delivery is about, before any
+        """System-internal: the org a verified delivery is about, before any
         stage exists for it: the org the event names itself, else the one the
         customer's metadata names. A hint the delivery's own apply then holds
         to the customer the org's account names. None when no org is named."""
@@ -91,7 +92,7 @@ class BillingManagerInterface(EntitlementsInterface):
 
     @abstractmethod
     async def apply_delivery(self, ctx: TenantContext, delivery: ProviderDelivery) -> bool:
-        """Platform-internal: mirrors what a delivery is about, under the org's
+        """System-internal: mirrors what a delivery is about, under the org's
         service context. The subscription is read from the processor again and
         never from the delivery, so deliveries that arrive out of order
         converge on what the processor holds now. The delivery's mark lands in
@@ -108,7 +109,7 @@ class BillingManagerInterface(EntitlementsInterface):
 
     @abstractmethod
     async def close_account(self, ctx: TenantContext) -> Billing:
-        """Platform-internal, a step of `DELETE_ACCOUNT`: the org is going with
+        """System-internal, a step of `DELETE_ACCOUNT`: the org is going with
         its person, so its subscription is canceled now and its customer at
         the processor deleted; the processor keeps the invoices. The account
         then names neither, so a rerun calls nothing. An org that never
@@ -117,7 +118,7 @@ class BillingManagerInterface(EntitlementsInterface):
 
     @abstractmethod
     async def grant_seeded_plan(self, ctx: TenantContext, plan: Plan) -> Billing:
-        """Platform-internal: the local seed's grant, so the team a laptop is
+        """System-internal: the local seed's grant, so the team a laptop is
         seeded with is not on Free. It takes the context a seeding transition
         produced (`bootstrap`), an internal credential held by the org's
         owner; a tenant's own credential is never internal, so no route
@@ -125,8 +126,9 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
+    @stageless
     async def purge_across_tenants(self) -> int:
-        """Platform-internal: the sweep, across tenants, once a pass: the marks
+        """System-internal: the sweep, across tenants, once a pass: the marks
         of deliveries past the retention, a batch at most, whatever their
         tenant; returns how many. It takes no context, because it runs for
         no tenant and no principal."""

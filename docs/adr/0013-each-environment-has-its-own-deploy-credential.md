@@ -1,6 +1,6 @@
 # ADR 0013: Each environment has its own deploy credential, and production has two
 
-**Status**: accepted (2026-09-20)
+**Status**: accepted (2026-09-28)
 
 ## Context
 

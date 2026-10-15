@@ -35,10 +35,10 @@ from tadas.integrations.slack.requests import inbound_event
 from tadas.integrations.slack.twin import SlackTwinImpl, bot_user_of
 from tadas.om.base import derived_id, utcnow
 from tadas.om.context import TenantContext
+from tadas.om.slack.kinds import SlackKind
 from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
-from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import (
     CONNECTED,
@@ -381,7 +381,7 @@ async def test_a_user_token_revoked_leaves_the_installation(tmp_path: Path) -> N
 async def post_what_is_queued(container: WorkerContainer, twin: SlackTwinImpl) -> None:
     """Runs every Slack post the org's writes queued, as the worker's loop does."""
     posting = SlackPostHandlerImpl(container.managers.tasks, container.managers.slack, twin)
-    while (claimed := await claim(container, WorkKind.SLACK_POST)) is not None:
+    while (claimed := await claim(container, SlackKind.SLACK_POST)) is not None:
         await posting.handle(*claimed)
         await container.managers.work.complete(*claimed)
 
@@ -401,9 +401,9 @@ async def test_the_bot_invited_back_mends_the_install_and_posts_resume(tmp_path:
     await tasks.create_task(ann, make_task(ann, "While it was out"))
     await post_what_is_queued(container, twin)
     assert await status_of(container, ann) == (SlackInstallationStatus.BROKEN, "not_in_channel")
-    before = len(await queued(container, ann, WorkKind.SLACK_POST))
+    before = len(await queued(container, ann, SlackKind.SLACK_POST))
     await tasks.create_task(ann, make_task(ann, "Still out"))
-    assert len(await queued(container, ann, WorkKind.SLACK_POST)) == before, "posting stopped"
+    assert len(await queued(container, ann, SlackKind.SLACK_POST)) == before, "posting stopped"
     joined = inbound_event(twin.invite_bot(TEAM, "C0TEAM"), utcnow(), 0)
     handler = inbound(container, twin)
     await handler.handle(joined)

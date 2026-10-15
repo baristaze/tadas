@@ -1,6 +1,6 @@
 # ADR 0028: Sign-in is the identity provider's, and the identity stays Tadas's
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -34,7 +34,7 @@ the tab kept
 reaches a browser.
 
 **The identity is Tadas's.** The provider answers an issuer, a subject,
-and a verified email. The identity row, its id, the sessions, the
+and a verified email. The identity row, its id, the auth sessions, the
 memberships, and the personal org are Tadas's own. The identity is found
 by the issuer and the subject; else by the verified email, and linked
 from then on (a person the seeding or the operator plane made); else
@@ -66,9 +66,7 @@ sends the email with the link. `core.invitations` holds the role the
 person gets, who asked, and where it stands. Accepting is a sign-in: the
 manager reads the invitation the provider recorded as accepted by that
 person, and lands the membership with its role and the accepted row in
-one commit. Inviting is one manager operation, `invite_member`, so a
-limit on an org's members is checked in one place, before anything is
-sent.
+one commit. Inviting is one manager operation, `invite_member`.
 
 **Single sign-on is a team org's, and its admin sets it up.** An owner
 or an admin opens WorkOS's admin portal from the org's settings
@@ -85,7 +83,7 @@ before anything is queued, and refuses a delivery that fails. It queues
 the delivery on `Queues.WEBHOOKS`, keyed by a UUID v5 over the event's
 id. The maintenance worker records each delivery that names an org as
 the audit entry `identity.event.received` in that org's stream, once
-per delivery ([ADR 0027](0027-a-task-slack-creates-takes-an-id-derived-from-the-delivery.md)).
+per delivery ([ADR 0027](0027-what-a-delivery-creates-takes-an-id-derived-from-it.md)).
 A delivery that names no org, or an org that is gone, is dropped. The
 route takes no credential and no rate limit: it has no credential and no
 path token to count. Its secret, `TADAS_WORKOS_WEBHOOK_SECRET`, is a
@@ -113,7 +111,7 @@ lists before an identity is known.
 
 A sign-in is as available as WorkOS is. When it cannot be reached, the
 API answers `503` and nobody new signs in. A person already signed in
-keeps their session.
+keeps their auth session.
 
 Account recovery is WorkOS's: its email code proves the address, so an
 operator resets nothing.

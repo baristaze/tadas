@@ -74,8 +74,9 @@ What a flow has on `w`, the `World`:
   window)`, to count a span by hand; `drain(w)` in the built-in flows is
   the example (a claim, its handler, and its settle as one count).
 
-The helpers `headers`, `login`, `session`, `make_tasks`, `drain`,
-and `worker_request` import from `dbcalls_flows`, and the API tests' own helpers from
+The helpers `headers`, `login`, `auth_session`, `personal_auth_session`,
+`make_tasks`, `drain`, and `worker_request` import from `dbcalls_flows`,
+and the API tests' own helpers from
 `api_support` (`services/api/tests/api_support.py`, on the path once
 `dbcalls_flows` is imported): `add_member`, `on_plan`, `seed_request`, and
 `enrol_operator(w.client, w.container, email, OperatorRole.READ)` for the

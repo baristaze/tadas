@@ -11,7 +11,6 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.valkey import CacheValkeyImpl
@@ -24,6 +23,7 @@ from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinIm
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions, cached_accounts
 from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
+from tadas.om.billing.kinds import BillingKind
 from tadas.om.billing.types.account import BillingAccount, SubscriptionStatus
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
@@ -53,6 +53,8 @@ from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
+from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
+
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 SUCCESS, CANCEL = "http://portal.test/billing?done", "http://portal.test/billing?cancelled"
 
@@ -62,7 +64,7 @@ def request() -> RequestContext:
 
 
 class World:
-    """One platform over the memory roots and the twin, with a clock the
+    """One system over the memory roots and the twin, with a clock the
     billing manager reads, so a period can pass."""
 
     def __init__(self, tmp_path: Path) -> None:
@@ -386,11 +388,11 @@ async def test_removing_a_member_of_a_max_org_asks_for_the_seat_count_in_its_com
     )
     await world.managers.tenancy.members.remove_member(ctx, bob.id)
     claimed = await world.storage.get_work_storage().claim_next(
-        "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
+        "default", [BillingKind.SYNC_SEATS], "w", timedelta(seconds=30)
     )
     assert claimed is not None
     org_id, item = claimed
-    assert (org_id, item.kind, item.target_id) == (ctx.org_id, WorkKind.SYNC_SEATS, ctx.org_id)
+    assert (org_id, item.kind, item.target_id) == (ctx.org_id, BillingKind.SYNC_SEATS, ctx.org_id)
 
 
 async def test_removing_a_member_of_a_team_org_asks_for_nothing(world: World) -> None:
@@ -402,7 +404,7 @@ async def test_removing_a_member_of_a_team_org_asks_for_nothing(world: World) ->
     await world.managers.tenancy.members.remove_member(ctx, bob.id)
     assert (
         await world.storage.get_work_storage().claim_next(
-            "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
+            "default", [BillingKind.SYNC_SEATS], "w", timedelta(seconds=30)
         )
         is None
     )
@@ -503,7 +505,7 @@ class Plane:
         self.operator = TenancyOperatorManagerImpl(
             storage.get_tenancy_storage(),
             storage.get_tasks_storage(),
-            storage.get_event_storage(),
+            storage.get_change_event_storage(),
             world.managers.outbox,
             TenancyOperatorOptions(totp_encryption_key=TOTP_KEY),
             self.clock,
@@ -602,7 +604,7 @@ async def test_an_operator_adding_a_member_past_the_seats_is_refused(
     # On a per-seat plan the add asks for the seat count in its commit; a
     # grant has no subscription, so the handler will find nothing to change.
     claimed = await world.storage.get_work_storage().claim_next(
-        "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
+        "default", [BillingKind.SYNC_SEATS], "w", timedelta(seconds=30)
     )
     assert claimed is not None and claimed[0] == org.id
 

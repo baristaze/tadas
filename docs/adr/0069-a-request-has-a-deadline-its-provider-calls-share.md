@@ -1,6 +1,6 @@
 # ADR 0069: A request has a deadline its provider calls share
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -12,13 +12,11 @@ between them:
 | Provider | Attempts | A call gives up after, at most |
 |----------|----------|--------------------------------|
 | WorkOS | 4 | 50.5 seconds, and longer when a 429 or a 5xx asks for a longer wait: the SDK sleeps a `Retry-After` with no cap |
-| Stripe | 3 | 31.5 seconds |
-| Slack | 1 | 10 seconds (21.5 when the connection drops first) |
 | AWS | 5 | 65 seconds |
 
 A request that makes several calls waits for each in turn: a sign-in
-through an org makes three WorkOS calls, an org's first invitation
-three, and a Slack uninstall two to Secrets Manager and one to Slack.
+through an org makes three WorkOS calls, and an org's first invitation
+three.
 
 Admission bounds how many requests are in flight, not how long one
 stays. Every other bound sits outside the process and is shorter than
@@ -46,11 +44,9 @@ allows one context variable, the request id for the logs (CTX-07), so
 the deadline is a field of `RequestContext`, and a manager hands it to
 each call as an argument. A call takes a deadline exactly when a
 request can make it: the identity provider's sign-ins, organizations,
-invitations, and admin portal link; the processor's customer, checkout,
-portal, and cancel; Slack's install exchange, uninstall, and revoke; and
-AWS's queue send, secret reads and writes, and object put, get, and
-head. A test scans the managers and the API's services for such a call
-without one.
+invitations, and admin portal link; and AWS's queue send, secret reads
+and writes, and object put, get, and head. A test scans the managers
+and the API's services for such a call without one.
 
 **Each client keeps to it** (`tadas.infra.deadline.bounded`):
 
@@ -66,19 +62,15 @@ without one.
   helps, and fewer of them leave a request of several calls unbounded.
   A thin transport under the process's own HTTP client keeps to the
   deadline.
-- Stripe, Slack, and AWS take their timeout per client, not per call, so
-  the cut at the deadline bounds the attempt in flight.
+- AWS takes its timeout per client, not per call, so the cut at the
+  deadline bounds the attempt in flight.
 
 **The refusal is the one a provider that does not answer already
-gets.** WorkOS raises `ProviderUnavailable`, and Stripe and AWS
+gets.** WorkOS raises `ProviderUnavailable` and AWS
 `BackendUnreachable`; both are `503 unavailable`, which the portal and
 the command line read as "try again". A sign-in through an org that
 runs out of time while it reads the org's invitations still signs the
-person in and joins nothing, as when WorkOS is down. Slack is
-`SlackFailed`, and the install's callback sends the browser to the
-settings page with `slack=failed`, which asks the person to add Tadas
-to Slack again. It does the same when the org's secrets did not take
-the token in time.
+person in and joins nothing, as when WorkOS is down.
 
 **The default is 20 seconds.** A healthy provider answers in well under
 a second, and the longest request, a sign-in through an org, makes
@@ -106,12 +98,7 @@ With every provider hanging, at the default timeouts:
 | `POST /v1/invitations` | WorkOS organization, its creation, the send; on a conflict the pending list | 151.5 s; 202 s | 20 s |
 | `POST /v1/invitations/{id}/resend`, `DELETE /v1/invitations/{id}` | WorkOS resend or revoke | 50.5 s | 20 s |
 | `POST /v1/orgs/current/sso-link` | WorkOS organization (the first link), the portal link | 151.5 s | 20 s |
-| `POST /v1/billing/checkout` | Stripe customer (the first), price, session | 94.5 s | 20 s |
-| `POST /v1/billing/portal` | Stripe configurations (the first per process), session | 63 s | 20 s |
-| `POST /v1/billing/cancel`, `/resume` | Stripe update | 31.5 s | 20 s |
-| `GET /webhooks/slack/oauth` | Slack exchange, Secrets Manager create (and put when it exists) | 140 s; 280 s when it replaces a workspace | 20 s |
-| `DELETE /v1/slack/installation` | Secrets Manager read, Slack uninstall, Secrets Manager delete | 140 s | 20 s |
-| `POST /webhooks/identity`, `/webhooks/stripe`, `/webhooks/slack/commands`, `/events` | SQS send (and the queue's address, the first per process) | 130 s | 20 s |
+| `POST /webhooks/identity` | SQS send (and the queue's address, the first per process) | 130 s | 20 s |
 | `PUT` and `GET /v1/media/files/{id}/content`, `POST .../confirm` | S3 put, get, or head | 65 s | 20 s |
 
 Without the deadline, every one is past the 30 seconds a client waits.
@@ -126,6 +113,5 @@ Without the deadline, every one is past the 30 seconds a client waits.
   nothing to wait for.
 - A worker's calls carry none. The worker still sleeps a WorkOS
   `Retry-After` with no cap while it renews its lease.
-- The webhook routes take the request stage, so the OpenAPI document
-  names their `x-app` and `x-app-version` headers, as the install's
-  callback already did.
+- The webhook route takes the request stage, so the OpenAPI document
+  names its `x-app` and `x-app-version` headers.

@@ -1,4 +1,4 @@
-import type { EventView, TaskView } from "@tadas/client";
+import type { change_events, tasks } from "@tadas/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@tadas/client";
 import { useConnectionStore } from "../store/connection";
@@ -14,9 +14,9 @@ import {
   type ReminderEffects,
 } from "./reminder";
 import { REMINDED_KIND } from "./router";
-import { eventEnvelope } from "./stream";
+import { changeEventEnvelope } from "./stream";
 
-const task = (title: string): TaskView => ({
+const task = (title: string): tasks.TaskView => ({
   id: "t1",
   title,
   notes: "",
@@ -129,7 +129,7 @@ describe("a reminder on the channel", () => {
   }
 
   const titles: Record<string, string> = { t1: "Call the bank", t2: "Water the plants" };
-  const reminded = (seq: number, taskId: string): EventView => ({
+  const reminded = (seq: number, taskId: string): change_events.ChangeEventView => ({
     seq,
     kind: REMINDED_KIND,
     target_id: taskId,
@@ -152,7 +152,7 @@ describe("a reminder on the channel", () => {
   });
 
   it("announces a live one once, and one missed while away once after the reconnect", async () => {
-    const stream: EventView[] = [];
+    const stream: change_events.ChangeEventView[] = [];
     const sockets: FakeSocket[] = [];
     const readTask = vi.fn<ReminderEffects["readTask"]>(async (id) => ({ ...task(titles[id]!), id }));
     const notify = vi.fn<ReminderEffects["notify"]>();
@@ -164,7 +164,7 @@ describe("a reminder on the channel", () => {
         sockets.push(socket);
         return socket;
       },
-      fetchEventsAfter: async (after) => stream.filter((e) => e.seq > after),
+      fetchChangeEventsAfter: async (after) => stream.filter((e) => e.seq > after),
       route: () => {},
       refreshAll: async () => undefined,
       connection: useConnectionStore,
@@ -178,7 +178,7 @@ describe("a reminder on the channel", () => {
     await flush();
 
     stream.push(reminded(6, "t1"));
-    sockets[0]!.receive(eventEnvelope(reminded(6, "t1")));
+    sockets[0]!.receive(changeEventEnvelope(reminded(6, "t1")));
     await flush();
     expect(shown()).toEqual(["Reminder: Call the bank"]);
 

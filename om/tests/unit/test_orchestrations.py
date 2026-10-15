@@ -32,7 +32,7 @@ from tadas.om.orchestrations.rules import (
     stagger,
     with_row_errors,
 )
-from tadas.om.orchestrations.steps import CREATED, UPDATED, step_rows
+from tadas.om.orchestrations.steps import CREATED, UPDATED, orchestration_step_rows
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
@@ -44,6 +44,7 @@ from tadas.om.orchestrations.types.orchestration import (
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import (
     ImportFileRefused,
     ImportRow,
@@ -74,7 +75,7 @@ def a_record(**fields: object) -> Orchestration:
             "updated_at": now,
             "created_by": actor,
             "updated_by": actor,
-            "kind": OrchestrationKind.TASK_IMPORT,
+            "kind": TasksOrchestrationKind.TASK_IMPORT,
             "input": {"file_id": str(new_id())},
             **fields,
         }
@@ -121,7 +122,7 @@ def test_a_bound_fails_the_record_and_names_why() -> None:
 
 def test_a_cancel_settles_the_record_keeping_what_it_made() -> None:
     record = a_record(
-        status=OrchestrationStatus.PARKED, park_reason=ParkReason.RESOURCE,
+        status=OrchestrationStatus.PARKED, park_reason=ParkReason.LEASABLE_RESOURCE,
         cursor=7, total=9, applied=6, skipped=1, row_errors=[{"row": 3, "reason": "malformed"}],
     )  # fmt: skip
     now = utcnow()
@@ -239,16 +240,45 @@ async def test_start_holds_the_input_to_its_kind_and_answers_a_retry_as_stored(
     assert await orchestrations.start(ctx, record) == started
 
 
+async def test_a_noop_step_moves_the_cursor_by_one_and_succeeds_at_its_count(
+    world: World,
+) -> None:
+    ctx = await world.org()
+    orchestrations = world.managers.orchestrations
+    record = await orchestrations.start(
+        ctx, a_record(kind=OrchestrationKind.NOOP, input={"steps": 2})
+    )
+    first = await orchestrations.step_noop(ctx, record)
+    assert (first.status, first.cursor, first.total) == (OrchestrationStatus.RUNNING, 1, 2)
+    assert first.version == record.version + 1 and first.finished_at is None
+    last = await orchestrations.step_noop(ctx, first)
+    assert (last.status, last.cursor) == (OrchestrationStatus.SUCCEEDED, 2)
+    assert last.finished_at is not None
+    assert await orchestrations.get(ctx, record.id) == last
+
+
+async def test_a_noop_step_is_conditioned_on_the_version_it_read(world: World) -> None:
+    ctx = await world.org()
+    orchestrations = world.managers.orchestrations
+    record = await orchestrations.start(ctx, a_record(kind=OrchestrationKind.NOOP, input={}))
+    stepped = await orchestrations.step_noop(ctx, record)
+    with pytest.raises(PreconditionFailed):
+        await orchestrations.step_noop(ctx, record)
+    assert await orchestrations.get(ctx, record.id) == stepped
+
+
 async def test_a_records_hint_names_the_version_its_write_left(world: World) -> None:
     """The push of a record's change names the version it wrote (ADR 0061),
     and a running record's write asks for its next step beside it."""
     ctx = await world.org()
     record = a_record(version=3)
-    hint, work = step_rows(ctx, record, created=True)
+    hint, work = orchestration_step_rows(ctx, record, created=True)
     assert (hint.kind, hint.target_id, hint.payload) == (CREATED, record.id, {"version": 3})
     assert work.kind == work_row_kind(WorkKind.ORCHESTRATION)
     settled = a_record(version=4, status=OrchestrationStatus.SUCCEEDED)
-    assert [(r.kind, r.payload) for r in step_rows(ctx, settled)] == [(UPDATED, {"version": 4})]
+    assert [(r.kind, r.payload) for r in orchestration_step_rows(ctx, settled)] == [
+        (UPDATED, {"version": 4})
+    ]
 
 
 async def test_wake_resumes_only_the_records_parked_for_the_reason(world: World) -> None:
@@ -297,7 +327,10 @@ async def test_the_parks_on_one_mark_land_one_wake_that_resumes_them_staggered(
             park=ParkReason.PLAN_LIMIT,
         )  # fmt: skip
         await storage.write_orchestration(
-            ctx.org_id, parked, record.version, step_rows(ctx, parked, wake_at=retry_at)
+            ctx.org_id,
+            parked,
+            record.version,
+            orchestration_step_rows(ctx, parked, wake_at=retry_at),
         )
         parks.append(parked)
     wake_rows = [r for r in written if r.kind == work_row_kind(WorkKind.WAKE_PARKED)]
@@ -326,9 +359,9 @@ async def test_the_parks_on_one_mark_land_one_wake_that_resumes_them_staggered(
     assert relayed_key(WorkKind.WAKE_PARKED, wake_rows[0], retry_at) == wake_rows[0].id
     # A park that names no time lands its hint alone, and a wake that names
     # none runs at once.
-    assert len(step_rows(ctx, parks[0])) == 1
+    assert len(orchestration_step_rows(ctx, parks[0])) == 1
     at_once = WakeParkedPayload(reason=ParkReason.PLAN_LIMIT)
-    assert not_before(WorkKind.WAKE_PARKED, at_once.model_dump(mode="json")) is None
+    assert not_before(WakeParkedPayload, at_once.model_dump(mode="json")) is None
 
 
 async def test_a_wake_resumes_every_record_parked_for_its_reason_a_batch_at_a_time(
@@ -435,7 +468,7 @@ def a_cleanup() -> Orchestration:
     """A day's cleanup with nothing old enough to archive: its first step is
     its last."""
     return a_record(
-        kind=OrchestrationKind.TASK_CLEANUP,
+        kind=TasksOrchestrationKind.TASK_CLEANUP,
         input={"older_than_days": 90, "before": (utcnow() - timedelta(days=90)).isoformat()},
     )
 
@@ -480,13 +513,13 @@ async def test_a_step_in_flight_lands_nothing_after_a_cancel(world: World) -> No
 async def test_no_wake_revives_a_cancelled_record(world: World) -> None:
     ctx = await world.org()
     orchestrations = world.managers.orchestrations
-    by_id = await parked_record(world, ctx, ParkReason.RESOURCE)
+    by_id = await parked_record(world, ctx, ParkReason.LEASABLE_RESOURCE)
     in_batch = await parked_record(world, ctx)
     ended = {
         record.id: await orchestrations.cancel(ctx, record.id, "gave up")
         for record in (by_id, in_batch)
     }
-    assert await orchestrations.wake(ctx, ParkReason.RESOURCE, by_id.id) == 0
+    assert await orchestrations.wake(ctx, ParkReason.LEASABLE_RESOURCE, by_id.id) == 0
     assert await orchestrations.wake(ctx, ParkReason.PLAN_LIMIT) == 0
     for record_id in ended:
         with pytest.raises(ValidationFailed):
@@ -504,7 +537,7 @@ async def test_a_cancel_takes_the_permission_a_resume_takes(world: World) -> Non
         org_id=ctx.org_id,
         role=Role.VIEWER,
         permissions=ROLE_PERMISSIONS[Role.VIEWER],
-        credential_kind=CredentialKind.SESSION_TOKEN,
+        credential_kind=CredentialKind.AUTH_SESSION_TOKEN,
     )
     with pytest.raises(NotAuthorized):
         await orchestrations.resume(viewer, parked.id)

@@ -14,18 +14,22 @@ from uuid import UUID
 
 import pytest
 
-from contracts.factories import make_user
-from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.user import User
 
+from contracts.factories import make_user
+from contracts.racing import race
+
 IDENTITY = "0195f1a2-7b3c-7d4e-8f00-00000000d1d1"
 """The identity a user row names: a payload carries ids, never a person's field."""
 
 NO_DELAY = timedelta(0)
+
+INTERFACE = OutboxStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset({"mark_done", "record_failure"})
 """Every method of `OutboxStorageInterface` that takes a tenant has a case in

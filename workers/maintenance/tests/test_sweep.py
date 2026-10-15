@@ -9,7 +9,7 @@ living tenant that costs the purges nothing, the chores run in the tenants
 one read across tenants finds with a chore due and in no other, a page of
 them a pass, a deleted tenant's every row gone, the tenant marked purged once
 nothing of it is left and left out after, the tenant's expiry read once per
-pass, the count of the platform's size once an interval, and the pass's
+pass, the count of the system's size once an interval, and the pass's
 duration and the four gauges of the queue and the outbox on its own line."""
 
 import json
@@ -45,19 +45,17 @@ from tadas.infra.observability import (
 )
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.types.plan import Plan
+from tadas.om.change_events.manager import audit_change_event
 from tadas.om.context import CredentialKind, RequestContext, Role, TenantContext, build_context
-from tadas.om.events.manager import audit_event
 from tadas.om.media.types.file import File
-from tadas.om.orchestrations.types.orchestration import (
-    Orchestration,
-    OrchestrationKind,
-    OrchestrationStatus,
-    TaskCleanupInput,
-)
+from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationStatus
 from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.root import KINDS
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import RANK_SCALE_BOUND
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.tasks.types.work import TaskCleanupInput
 from tadas.om.tenancy.rules import hash_token, permissions_of
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.org import Org
@@ -201,6 +199,7 @@ def sweeping(
         tally=tally,
         chores=chores,
         chore_tenants=chore_tenants,
+        kinds=KINDS,
         handlers={},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
@@ -277,7 +276,7 @@ def opening_the_period(container: WorkerContainer) -> ChoreStep:
                 updated_at=now,
                 created_by=ctx.user_id,
                 updated_by=ctx.user_id,
-                kind=OrchestrationKind.TASK_CLEANUP,
+                kind=TasksOrchestrationKind.TASK_CLEANUP,
                 input=TaskCleanupInput(older_than_days=30, before=now).model_dump(mode="json"),
                 period=PERIOD,
             ),
@@ -328,7 +327,7 @@ async def test_a_period_opens_only_in_the_tenants_the_read_names(tmp_path: Path)
     opened: dict[str, list[str | None]] = {}
     for slug, org_id in orgs.items():
         page = await container.managers.orchestrations.get_recent(
-            by_org[org_id], OrchestrationKind.TASK_CLEANUP, 10
+            by_org[org_id], TasksOrchestrationKind.TASK_CLEANUP, 10
         )
         opened[slug] = [record.period for record in page.items]
     assert opened == {"ajax": [], "beta": [PERIOD], "gamma": [PERIOD]}
@@ -537,8 +536,10 @@ async def rows_of(container: WorkerContainer, org_id: UUID) -> dict[str, int]:
     return {
         "users": len(await storage.get_tenancy_storage().read_users(org_id, None, limit=10)),
         "files": len(await storage.get_media_storage().read_every_file(org_id, None, 10)),
-        "records": len(await orchestrations.read_recent(org_id, OrchestrationKind.TASK_IMPORT, 10)),
-        "events": len(await storage.get_event_storage().read_after(org_id, 0, 100)),
+        "records": len(
+            await orchestrations.read_recent(org_id, TasksOrchestrationKind.TASK_IMPORT, 10)
+        ),
+        "change_events": len(await storage.get_change_event_storage().read_after(org_id, 0, 100)),
     }
 
 
@@ -566,10 +567,10 @@ async def test_a_deleted_tenant_is_marked_purged_once_nothing_is_left_and_skippe
         "users": 0,
         "files": 0,
         "records": 0,
-        "events": 0,
+        "change_events": 0,
     }
     assert not await buckets.exists(expired, Buckets.USER_FILE_UPLOADS, file.key)
-    assert await container.storage.get_event_storage().read_head(expired) == 0
+    assert await container.storage.get_change_event_storage().read_head(expired) == 0
 
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     marked = await tenancy.read_org(expired)
@@ -686,7 +687,7 @@ async def test_a_gauge_that_cannot_be_read_is_left_off_the_line_and_as_it_was(
 
 
 class Tally:
-    """The count of the platform's size: how many times it ran, and the
+    """The count of the system's size: how many times it ran, and the
     failures it raises first, one a call."""
 
     def __init__(self, failures: int = 0) -> None:
@@ -701,7 +702,7 @@ class Tally:
         return None
 
 
-async def test_the_platforms_size_is_counted_on_the_first_pass_then_once_an_interval(
+async def test_the_systems_size_is_counted_on_the_first_pass_then_once_an_interval(
     tmp_path: Path,
 ) -> None:
     """The first pass counts, whatever its budget, and the passes within the
@@ -742,20 +743,20 @@ async def test_a_failed_count_is_tried_again_on_the_next_pass_and_stops_no_other
 
 
 async def test_the_worker_keeps_the_tally_the_operator_plane_reads(tmp_path: Path) -> None:
-    """The loop the worker runs counts the platform's size into the tally
+    """The loop the worker runs counts the system's size into the tally
     row, and the next pass within the interval leaves it as it was."""
     container = build_container(tmp_path)
     await sign_in(container)
     storage = container.storage.get_tenancy_storage()
-    assert await storage.read_platform_size() is None
+    assert await storage.read_system_size() is None
     loop = build_loop(container)
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    tally = await storage.read_platform_size()
+    tally = await storage.read_system_size()
     assert tally is not None
     # The org and its owner's personal org, and the owner in each.
     assert (tally.tenants, tally.users) == (2, 2)
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    assert await storage.read_platform_size() == tally
+    assert await storage.read_system_size() == tally
 
 
 class Due:
@@ -1009,7 +1010,7 @@ async def test_each_purge_across_tenants_runs_once_a_pass_after_the_tenants(
     stages: set[UUID] = set()
 
     async def events(rctx: RequestContext) -> int:
-        calls.append("events")
+        calls.append("change_events")
         stages.add(rctx.request_id)
         return 0
 
@@ -1024,12 +1025,12 @@ async def test_each_purge_across_tenants_runs_once_a_pass_after_the_tenants(
         work,
         {"tenant": tenant},
         fast_options(sweep_budget=timedelta(0)),
-        across={"media": across_recording(calls, "media"), "events": events},
+        across={"media": across_recording(calls, "media"), "change_events": events},
     )
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    assert calls == ["tenant", "media", "events"], "one tenant, then each purge once"
+    assert calls == ["tenant", "media", "change_events"], "one tenant, then each purge once"
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    assert calls[3:] == ["tenant", "media", "events"]
+    assert calls[3:] == ["tenant", "media", "change_events"]
 
 
 async def test_a_full_purge_across_tenants_runs_again_while_the_budget_lasts(
@@ -1090,6 +1091,7 @@ async def test_a_purge_across_tenants_with_a_batch_of_its_own_is_full_at_it(
             "rows": across_recording(calls, "rows", (1, 0)),
         },
         across_batches={"media": 1},
+        kinds=KINDS,
         handlers={},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
@@ -1154,7 +1156,7 @@ async def test_a_living_tenant_costs_the_purges_nothing(
         storage.get_media_storage(),
         storage.get_tenancy_storage(),
         storage.get_idempotency_storage(),
-        storage.get_event_storage(),
+        storage.get_change_event_storage(),
         storage.get_billing_storage(),
         storage.get_slack_storage(),
         storage.get_orchestrations_storage(),
@@ -1181,7 +1183,7 @@ async def test_a_living_tenant_costs_the_purges_nothing(
     assert len(calls) == len(set(calls)), f"each purge once a pass: {calls}"
     assert sorted(calls) == [
         "BillingStorageMemoryImpl.purge_deliveries",
-        "EventStorageMemoryImpl.trim",
+        "ChangeEventStorageMemoryImpl.trim",
         "IdempotencyStorageMemoryImpl.purge_records",
         "MediaStorageMemoryImpl.purge_files_across_tenants",
         "MediaStorageMemoryImpl.read_purgeable",
@@ -1202,7 +1204,7 @@ CLOCKS = (
     "tadas.om.tenancy.impl.manager",
     "tadas.om.media.impl.manager",
     "tadas.om.idempotency.impl.manager",
-    "tadas.om.events.impl.manager",
+    "tadas.om.change_events.impl.manager",
     "tadas.om.work.impl.manager",
     "tadas.om.outbox.impl.relay",
 )
@@ -1274,8 +1276,10 @@ async def test_a_pass_purges_every_row_past_its_retention_and_keeps_what_lives(
     await work.complete(*claimed)
     queued = await work.enqueue(ann, make_item(ann))
 
-    events = container.storage.get_event_storage()
-    await events.append_events(org, [audit_event(ann, new_id(), "tenancy.test.noted", org, {})])
+    events = container.storage.get_change_event_storage()
+    await events.append_change_events(
+        org, [audit_change_event(ann, new_id(), "tenancy.test.noted", org, {})]
+    )
     head = await events.read_head(org)
 
     storage = container.storage
@@ -1295,7 +1299,7 @@ async def test_a_pass_purges_every_row_past_its_retention_and_keeps_what_lives(
             "removed user": await tenancy_rows.read_user(org, bob.id),
             "ended membership": next((m for _, m in memberships if m.user_id == bob.id), None),
             "revoked key": await tenancy_rows.read_api_key(org, revoked.api_key.id),
-            "expired session": await tenancy_rows.read_session(org, ann.credential_id),
+            "expired session": await tenancy_rows.read_auth_session(org, ann.credential_id),
             "ticket": next((t for _, t in tickets if t.ticket_hash == ticket_hash), None),
             "closed invitation": await tenancy_rows.read_invitation(org, invitation.id),
             "failed sign-ins": await tenancy_rows.read_sign_in_delay("a-digest"),
@@ -1415,7 +1419,7 @@ async def test_a_tenant_with_no_chore_due_costs_the_pass_no_read_of_its_tasks(
     visited = {tenant for _, tenant in calls[1:]}
     assert visited == {archivable.org_id, long.org_id}, "no read of the idle tenant's tasks"
     opened = await container.managers.orchestrations.get_recent(
-        archivable, OrchestrationKind.TASK_CLEANUP, 10
+        archivable, TasksOrchestrationKind.TASK_CLEANUP, 10
     )
     assert len(opened.items) == 1, "the day's cleanup is open"
     assert await storage.read_long_place(long.org_id) is None, "the long rank was respaced"

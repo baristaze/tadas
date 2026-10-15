@@ -1,9 +1,9 @@
-import type { TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@tadas/client";
 import { isStale, reorder, STALE_MESSAGE, type ReorderEffects } from "./reorder";
 
-const task = (id: string, version = 1): TaskView => ({
+const task = (id: string, version = 1): tasks.TaskView => ({
   id,
   title: `task ${id}`,
   notes: "",

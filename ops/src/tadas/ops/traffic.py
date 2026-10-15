@@ -60,10 +60,11 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from tadas.client.client import REQUEST_ID_HEADER, ApiClient, ApiError, trust_store
+from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import Channel, Connect, State
-from tadas.client.types import TaskStatus, TaskView
+from tadas.client.transport import REQUEST_ID_HEADER, ApiError, trust_store
+from tadas.client.types.tasks import TaskStatus, TaskView
 from tadas.ops.environments import Environment
 from tadas.ops.profiles import Profile
 from tadas.ops.report import Report, Sample, Sessions
@@ -385,7 +386,7 @@ class Session:
 
         await self.clock.think()
         assert self._start_seq is not None
-        events = await client.events_after(self._start_seq)
+        events = await client.change_events_after(self._start_seq)
         if not any(e.actor_id == self._user_id for e in events):
             raise SessionFailed("the stream read back none of the session's own changes")
 
@@ -524,7 +525,7 @@ async def sign_in(
                     notes.append(f"{person.email} is not a member of {person.org_slug}")
                     queue.pop(0)
                     continue
-                session = await client.exchange_session(login.token, choices[0].org.id)
+                session = await client.exchange_auth_session(login.token, choices[0].org.id)
             except ApiError as error:
                 if error.status == 429 and waits_left > 0:
                     waits_left -= 1
@@ -687,7 +688,7 @@ async def provision(
                 )
                 org_ids.append(org.id)
                 # Every org starts on Free: one member and ten active tasks.
-                # A run's tenants are the platform's own load, so they are
+                # A run's tenants are the system's own load, so they are
                 # granted Max, whose levers are open, before anyone joins.
                 await client.request(
                     "PUT", f"/v1/admin/orgs/{org.id}/plan", json={"plan": RUN_PLAN}

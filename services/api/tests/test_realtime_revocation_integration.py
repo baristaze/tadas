@@ -317,7 +317,7 @@ async def test_the_pong_carries_the_head_heard_on_the_bus(tmp_path: Path) -> Non
             processes.org,
         )
         reads: list[int] = []
-        events = server.managers.events
+        events = server.managers.change_events
         read = events.get_head
 
         async def counted(ctx: TenantContext) -> int:
@@ -335,7 +335,7 @@ async def test_the_pong_carries_the_head_heard_on_the_bus(tmp_path: Path) -> Non
             await tasks.create_task(
                 await context_of(writer, headers), AddTaskRequest(title="heard"), new_id()
             )
-            hint = await next_of(ws, "event")
+            hint = await next_of(ws, "change_event")
             await ws.send(json.dumps({"op": "ping"}))
             pong = await next_of(ws, "pong")
     seq = hint["payload"]["seq"]  # type: ignore[index]

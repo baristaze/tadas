@@ -19,14 +19,9 @@ from tadas.apps.cli.model import (
     short_id,
     task_table,
 )
-from tadas.client.types import (
-    FilePurpose,
-    FileStatus,
-    FileView,
-    MembershipChoiceView,
-    TaskStatus,
-    TaskView,
-)
+from tadas.client.types.media import FilePurpose, FileStatus, FileView
+from tadas.client.types.tasks import TaskStatus, TaskView
+from tadas.client.types.tenancy import MembershipChoiceView
 
 ME, BOB = uuid4(), uuid4()
 NAMES = {ME: "Ann", BOB: "Bob"}

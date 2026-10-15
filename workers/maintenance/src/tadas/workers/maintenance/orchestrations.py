@@ -23,11 +23,11 @@ from tadas.infra.observability import OUTCOMES, described
 from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import NotFound, PreconditionFailed
 from tadas.om.orchestrations import OrchestrationsManagerInterface
+from tadas.om.orchestrations.kinds import OrchestrationKinds
 from tadas.om.orchestrations.rules import outcome
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
 )
 from tadas.om.work.rules import is_exhausted
@@ -36,9 +36,9 @@ from tadas.om.work.types.work_item import WakeParkedPayload, WorkItem
 
 log = logging.getLogger(__name__)
 
-StepFn = Callable[[TenantContext, Orchestration], Awaitable[Orchestration]]
-"""One step of a kind: `TasksImportsManagerInterface.step_import`,
-`TasksCleanupManagerInterface.step_cleanup`."""
+OrchestrationStepFn = Callable[[TenantContext, Orchestration], Awaitable[Orchestration]]
+"""One step of a kind: `OrchestrationsManagerInterface.step_noop`, or the step
+of the namespace whose rows a product's kind changes."""
 
 
 class OrchestrationHandlerImpl(WorkHandlerInterface):
@@ -48,8 +48,15 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
     def __init__(
         self,
         orchestrations: OrchestrationsManagerInterface,
-        steps: Mapping[OrchestrationKind, StepFn],
+        kinds: OrchestrationKinds,
+        steps: Mapping[str, OrchestrationStepFn],
     ) -> None:
+        """`steps` maps a kind's name to its step; each is a kind `kinds`,
+        the process's registry, holds, so a step for a kind nobody can start
+        is refused here."""
+        unknown = sorted(kind for kind in steps if kind not in kinds)
+        if unknown:
+            raise ValueError(f"no orchestration kind is registered as {', '.join(unknown)}")
         self._orchestrations = orchestrations
         self._steps = steps
 
@@ -62,7 +69,7 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
         if record.status is not OrchestrationStatus.RUNNING:
             log.info(
                 "%s %s is %s; step %s has nothing to do",
-                record.kind.value,
+                record.kind,
                 record.id,
                 record.status.value,
                 item.id,
@@ -75,7 +82,7 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
             # step it took is the one that counts, and it asked for the next.
             log.info(
                 "%s %s moved under step %s; left to its holder",
-                record.kind.value,
+                record.kind,
                 record.id,
                 item.id,
             )
@@ -83,14 +90,12 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
         except Exception as error:
             if not is_exhausted(item):
                 raise  # the queue retries the item with a growing delay
-            log.exception(
-                "%s %s failed on the last attempt of %s", record.kind.value, record.id, item.id
-            )
+            log.exception("%s %s failed on the last attempt of %s", record.kind, record.id, item.id)
             await self._orchestrations.fail(ctx, record, FailReason.DEFECT, described(error))
             return
         log.info(
             "%s %s at %d of %s: %s",
-            record.kind.value,
+            record.kind,
             record.id,
             after.cursor,
             after.total if after.total is not None else "?",

@@ -1,17 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
-import type {
-  AddTaskRequest,
-  BulkTasksRequest,
-  BulkTasksView,
-  MoveTaskRequest,
-  RestoreTaskRequest,
-  TaskCountView,
-  TaskPageView,
-  TaskScope,
-  TaskStatus,
-  TaskView,
-  UpdateTaskRequest,
-} from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 import { DONE_PAGE_SIZE, OPEN_PAGE_SIZE } from "./taskPlacement";
@@ -21,17 +9,17 @@ export { DONE_PAGE_SIZE, OPEN_PAGE_SIZE } from "./taskPlacement";
 /** A list a page at a time; the next page is the last page's cursor, and the
  * server says when there is none. Both lists page the same way; only the
  * page size differs, since the open list is the one on screen whole. */
-function useTaskPages(status: TaskStatus, scope: TaskScope, pageSize: number) {
+function useTaskPages(status: tasks.TaskStatus, scope: tasks.TaskScope, pageSize: number) {
   return useInfiniteQuery({
     queryKey: status === "open" ? keys.tasks.open(scope) : keys.tasks.done(scope),
     initialPageParam: null as string | null,
-    getNextPageParam: (last: TaskPageView) => last.next_cursor,
+    getNextPageParam: (last: tasks.TaskPageView) => last.next_cursor,
     // The signal is passed on: an invalidation cancels the refetch it
     // supersedes, and without it the cancelled request still runs to
     // completion. A replay hands the router a page of records at a time.
     queryFn: ({ pageParam, signal }) => {
       const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
-      return api.get<TaskPageView>(
+      return api.get<tasks.TaskPageView>(
         `/v1/tasks?status=${status}&scope=${scope}&limit=${pageSize}${cursor}`,
         { signal },
       );
@@ -40,15 +28,15 @@ function useTaskPages(status: TaskStatus, scope: TaskScope, pageSize: number) {
 }
 
 /** One task, read outside any list: a reminder push names only the id. */
-export function fetchTask(id: string): Promise<TaskView> {
-  return api.get<TaskView>(`/v1/tasks/${encodeURIComponent(id)}`);
+export function fetchTask(id: string): Promise<tasks.TaskView> {
+  return api.get<tasks.TaskView>(`/v1/tasks/${encodeURIComponent(id)}`);
 }
 
-export function useOpenTasks(scope: TaskScope) {
+export function useOpenTasks(scope: tasks.TaskScope) {
   return useTaskPages("open", scope, OPEN_PAGE_SIZE);
 }
 
-export function useDoneTasks(scope: TaskScope) {
+export function useDoneTasks(scope: tasks.TaskScope) {
   return useTaskPages("done", scope, DONE_PAGE_SIZE);
 }
 
@@ -60,32 +48,32 @@ export function useDoneTasks(scope: TaskScope) {
 
 export function useCreateTask() {
   return useMutation({
-    mutationFn: (body: AddTaskRequest) =>
-      api.post<TaskView>("/v1/tasks", body, { idempotencyKey: crypto.randomUUID() }),
+    mutationFn: (body: tasks.AddTaskRequest) =>
+      api.post<tasks.TaskView>("/v1/tasks", body, { idempotencyKey: crypto.randomUUID() }),
   });
 }
 
 export function useUpdateTask() {
   return useMutation({
-    mutationFn: ({ id, body, version }: { id: string; body: UpdateTaskRequest; version: number }) =>
-      api.patch<TaskView>(`/v1/tasks/${id}`, body, { ifMatch: version }),
+    mutationFn: ({ id, body, version }: { id: string; body: tasks.UpdateTaskRequest; version: number }) =>
+      api.patch<tasks.TaskView>(`/v1/tasks/${id}`, body, { ifMatch: version }),
   });
 }
 
 export function useMoveTask() {
   return useMutation({
     mutationFn: ({ id, afterId, version }: { id: string; afterId: string | null; version: number }) =>
-      api.post<TaskView>(`/v1/tasks/${id}/move`, {
+      api.post<tasks.TaskView>(`/v1/tasks/${id}/move`, {
         after_id: afterId,
         expected_version: version,
-      } satisfies MoveTaskRequest),
+      } satisfies tasks.MoveTaskRequest),
   });
 }
 
 export function useDeleteTask() {
   return useMutation({
     mutationFn: ({ id, version }: { id: string; version: number }) =>
-      api.del<TaskView>(`/v1/tasks/${id}`, { ifMatch: version }),
+      api.del<tasks.TaskView>(`/v1/tasks/${id}`, { ifMatch: version }),
   });
 }
 
@@ -93,27 +81,27 @@ export function useDeleteTask() {
  * it. A task push refreshes it by the convention, as it does the lists. */
 export const ARCHIVED_PAGE_SIZE = 50;
 
-export function useArchivedTasks(scope: TaskScope, enabled: boolean) {
+export function useArchivedTasks(scope: tasks.TaskScope, enabled: boolean) {
   return useQuery({
     queryKey: keys.tasks.archived(scope),
     enabled,
     queryFn: ({ signal }) =>
-      api.get<TaskPageView>(`/v1/tasks/archived?scope=${scope}&limit=${ARCHIVED_PAGE_SIZE}`, { signal }),
+      api.get<tasks.TaskPageView>(`/v1/tasks/archived?scope=${scope}&limit=${ARCHIVED_PAGE_SIZE}`, { signal }),
   });
 }
 
 export function useRestoreTask() {
   return useMutation({
     mutationFn: ({ id, version }: { id: string; version: number }) =>
-      api.post<TaskView>(`/v1/tasks/${id}/restore`, { expected_version: version } satisfies RestoreTaskRequest),
+      api.post<tasks.TaskView>(`/v1/tasks/${id}/restore`, { expected_version: version } satisfies tasks.RestoreTaskRequest),
   });
 }
 
 /** How many tasks one list shows on the server, whatever the page loaded:
  * the number "Mark all" asks about. Read when it is asked, never cached. */
-export function fetchTaskCount(status: TaskStatus, scope: TaskScope): Promise<number> {
+export function fetchTaskCount(status: tasks.TaskStatus, scope: tasks.TaskScope): Promise<number> {
   return api
-    .get<TaskCountView>(`/v1/tasks/count?status=${status}&scope=${scope}`)
+    .get<tasks.TaskCountView>(`/v1/tasks/count?status=${status}&scope=${scope}`)
     .then((counted) => counted.count);
 }
 
@@ -122,7 +110,7 @@ export function fetchTaskCount(status: TaskStatus, scope: TaskScope): Promise<nu
  * own, like a create, so the transport's retry of it is safe. */
 export function useBulkTasks() {
   return useMutation({
-    mutationFn: (body: BulkTasksRequest) =>
-      api.post<BulkTasksView>("/v1/tasks/bulk", body, { idempotencyKey: crypto.randomUUID() }),
+    mutationFn: (body: tasks.BulkTasksRequest) =>
+      api.post<tasks.BulkTasksView>("/v1/tasks/bulk", body, { idempotencyKey: crypto.randomUUID() }),
   });
 }

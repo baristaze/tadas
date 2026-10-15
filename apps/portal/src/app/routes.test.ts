@@ -9,9 +9,9 @@ import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { FlagsView, IssuedSessionView, MeView, MembershipChoiceView, OrgView, TaskView, UserView } from "@tadas/client";
+import type { tasks, tenancy } from "@tadas/client";
 import { keys } from "../queries/keys";
-import { useSessionStore } from "../store/session";
+import { useAuthSessionStore } from "../store/authSession";
 import { queryClient } from "./queryClient";
 import { routes } from "./routes";
 
@@ -45,14 +45,14 @@ vi.mock("../realtime/RealtimeProvider", () => ({ RealtimeProvider: ({ children }
 vi.mock("../features/billing/PaymentNotice", () => ({ PaymentNotice: () => null }));
 vi.mock("../features/tasks/ArchivedTasks", () => ({ ArchivedTasks: () => null }));
 vi.mock("../features/tasks/TaskItem", () => ({
-  TaskItem: ({ task }: { task: TaskView }) => createElement("div", { "data-task": task.title }, task.title),
+  TaskItem: ({ task }: { task: tasks.TaskView }) => createElement("div", { "data-task": task.title }, task.title),
 }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 const at = "2026-09-01T00:00:00Z";
-const user: UserView = { id: "u1", email: "admin@example.test", display_name: "Admin", created_at: at } as UserView;
-const orgOf = (id: string, name: string, slug: string): OrgView =>
-  ({ id, name, slug, kind: "team", created_at: at, deleted_at: null }) as OrgView;
+const user: tenancy.UserView = { id: "u1", email: "admin@example.test", display_name: "Admin", created_at: at } as tenancy.UserView;
+const orgOf = (id: string, name: string, slug: string): tenancy.OrgView =>
+  ({ id, name, slug, kind: "team", created_at: at, deleted_at: null }) as tenancy.OrgView;
 const orgs = {
   ajax: orgOf("o_ajax", "Ajax", "ajax"),
   beta: orgOf("o_beta", "Beta", "beta"),
@@ -62,7 +62,7 @@ type Slug = keyof typeof orgs;
 const tokenOf = (slug: Slug) => `ses_${slug}`;
 const slugOf = (token: string | null) => (Object.keys(orgs) as Slug[]).find((slug) => tokenOf(slug) === token);
 
-const taskOf = (slug: Slug): TaskView => ({
+const taskOf = (slug: Slug): tasks.TaskView => ({
   id: `t_${slug}`, title: `${orgs[slug].name}'s task`, notes: "", status: "open", assignee_id: null,
   rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
   created_at: at, updated_at: at,
@@ -72,10 +72,10 @@ function answer(path: string): unknown {
   const slug = slugOf(net.token());
   if (!slug) throw new Error(`read without a session: ${path}`);
   if (path === "/v1/me") {
-    return { app: "portal", role: "owner", permissions: ["read", "write"], user, org: orgs[slug] } satisfies MeView;
+    return { app: "portal", role: "owner", permissions: ["read", "write"], user, org: orgs[slug] } satisfies tenancy.MeView;
   }
   if (path.startsWith("/v1/auth/memberships")) {
-    const items: MembershipChoiceView[] = [orgs.ajax, orgs.beta].map((org) => ({ org, user, role: "owner" }));
+    const items: tenancy.MembershipChoiceView[] = [orgs.ajax, orgs.beta].map((org) => ({ org, user, role: "owner" }));
     return { items, next_cursor: null };
   }
   if (path.startsWith("/v1/tasks?status=open")) return { items: [taskOf(slug)], next_cursor: null };
@@ -84,17 +84,17 @@ function answer(path: string): unknown {
   if (path.startsWith("/v1/users")) return { items: [user], next_cursor: null };
   if (path === "/v1/billing") return { plan: "team" };
   // Uploads are off for Ajax alone, so a snapshot names the org it was read in.
-  if (path === "/v1/flags") return { flags: { "media-uploads": slug !== "ajax" } } satisfies FlagsView;
+  if (path === "/v1/flags") return { flags: { "media-uploads": slug !== "ajax" } } satisfies tenancy.FlagsView;
   if (path === "/v1/me/identity") return { id: "i1", email: user.email, operator_role: null, created_at: at, time_zone: null };
   throw new Error(`no read for ${path}`);
 }
 
-function exchange(orgId: string): IssuedSessionView {
+function exchange(orgId: string): tenancy.IssuedAuthSessionView {
   const slug = (Object.keys(orgs) as Slug[]).find((key) => orgs[key].id === orgId)!;
-  return { token: tokenOf(slug), expires_at: "2099-01-01T00:00:00Z", org: orgs[slug], user, role: "owner" } as IssuedSessionView;
+  return { token: tokenOf(slug), expires_at: "2099-01-01T00:00:00Z", org: orgs[slug], user, role: "owner" } as tenancy.IssuedAuthSessionView;
 }
 
-net.token = () => useSessionStore.getState().token;
+net.token = () => useAuthSessionStore.getState().token;
 net.get = (path) => {
   try {
     return Promise.resolve(answer(path));
@@ -104,7 +104,7 @@ net.get = (path) => {
 };
 net.post = (path, body) => {
   if (path === "/v1/auth/sessions") return Promise.resolve(exchange((body as { org_id: string }).org_id));
-  if (path === "/v1/orgs") return Promise.resolve({ org: orgs.gamma, user, role: "owner" } satisfies MembershipChoiceView);
+  if (path === "/v1/orgs") return Promise.resolve({ org: orgs.gamma, user, role: "owner" } satisfies tenancy.MembershipChoiceView);
   return Promise.reject(new Error(`no answer for ${path}`));
 };
 
@@ -142,12 +142,12 @@ async function open(path: string) {
 beforeEach(() => {
   queryClient.clear();
   net.calls.length = 0;
-  useSessionStore.getState().setSession(tokenOf("ajax"), "ajax");
+  useAuthSessionStore.getState().setAuthSession(tokenOf("ajax"), "ajax");
   root = createRoot(container);
 });
 afterEach(async () => {
   await act(async () => root.render(null));
-  useSessionStore.getState().clear();
+  useAuthSessionStore.getState().clear();
 });
 
 it("shows the new org's tasks after a switch from the chip, read once under the new session", async () => {

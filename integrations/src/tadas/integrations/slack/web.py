@@ -14,7 +14,7 @@ rounded up and never zero, since aiohttp takes zero as no timeout at all.
 The SDK tries a call again once when its connection drops, never when it
 times out, so a Slack that hangs costs one timeout.
 
-A call a request makes carries the request's deadline (ADR 0069), and is cut
+A call a request makes carries the request's deadline (ADR 1020), and is cut
 there, the SDK's retry of a dropped connection included: `SlackFailed`, as a
 call that times out is. The session's timeout is the process's, so the cut
 is what bounds the attempt in flight."""

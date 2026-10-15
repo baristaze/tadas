@@ -1,8 +1,13 @@
-"""File routes: the form an upload posts to the store, the bytes through the
-API when the store cannot presign, the confirm, the file, the link a download
-follows, and the org's storage usage. Each function is one call into the
-media service. A file is started by the namespace it belongs to (a task's
-attachment by the task's route), never here."""
+"""Media: the org's files, as references to objects in the store.
+
+A file; the form that posts its bytes straight to the store, or the bytes
+through the API where the store cannot take a form; the confirm once the
+upload is done; the link a download follows, or the bytes through the API;
+and the org's storage used (`/v1/media/files/{file_id}`, `.../upload`,
+`.../content`, `.../confirm`, `.../download`, `/v1/media/usage`). Each
+function is one call into the media service. A file is started by the
+namespace it belongs to (a task's attachment by the task's route), never
+here."""
 
 from uuid import UUID
 

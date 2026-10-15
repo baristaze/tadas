@@ -5,21 +5,21 @@
 // take a form), the upload confirmed, and the import started naming it. The
 // rows are read by the worker; this returns as soon as the import is
 // accepted, and the page follows it by what the channel pushes.
-import type { AddFileRequest, FileView, ImportView, IssuedUploadView, StartImportRequest } from "@tadas/client";
+import type { media, tasks } from "@tadas/client";
 import { storeForm, StoreRefused, type Picked } from "../attachments/transfer";
 
 export const CSV_TYPE = "text/csv";
 
 export interface ImportEffects {
-  startFile(body: AddFileRequest): Promise<FileView>;
-  issueUpload(fileId: string): Promise<IssuedUploadView>;
+  startFile(body: media.AddFileRequest): Promise<media.FileView>;
+  issueUpload(fileId: string): Promise<media.IssuedUploadView>;
   postToStore(url: string, form: FormData): Promise<{ ok: boolean; status: number }>;
-  putContent(fileId: string, bytes: Blob, contentType: string): Promise<FileView>;
-  confirm(fileId: string): Promise<FileView>;
-  start(body: StartImportRequest): Promise<ImportView>;
+  putContent(fileId: string, bytes: Blob, contentType: string): Promise<media.FileView>;
+  confirm(fileId: string): Promise<media.FileView>;
+  start(body: tasks.StartImportRequest): Promise<tasks.ImportView>;
 }
 
-export async function startImport(file: Picked, effects: ImportEffects): Promise<ImportView> {
+export async function startImport(file: Picked, effects: ImportEffects): Promise<tasks.ImportView> {
   // A browser names a CSV file's type as it likes (Windows says Excel); the
   // import takes the one type, and the name's extension is what the API holds.
   const started = await effects.startFile({ name: file.name, content_type: CSV_TYPE, size_bytes: file.size });

@@ -24,7 +24,7 @@ deleted first, it could no longer run the work that names it.
 open tasks there go unassigned, each by the update a person makes to clear
 an assignee. It runs on the service role, whatever role the person held:
 the unassignment is what an account's deletion does, not a write the
-person asks for (ADR 0041).
+person asks for (ADR 1011).
 
 `DELETE_ORG` runs in a team org its owner or an operator deleted. Its
 members and their credentials went in the request, so nobody is in it. It
@@ -32,7 +32,7 @@ deletes the org's organization at the identity provider, ends the
 subscription and deletes the customer at the payment processor, removes the
 Slack app, and deletes the org last: the sweep purges it after the
 retention. Every step, and every wait and failure, is the account's
-(ADR 0042)."""
+(ADR 1012)."""
 
 import logging
 from typing import ClassVar

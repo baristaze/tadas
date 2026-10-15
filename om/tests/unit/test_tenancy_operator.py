@@ -1,6 +1,6 @@
 """The operator plane over the memory impls: what the allowlist entry lets
 an operator do, the reads of one named tenant and the trail they leave, the
-platform's size and the sweep's tally of it, and the creates that share
+system's size and the sweep's tally of it, and the creates that share
 their implementation with the seeding commands."""
 
 import logging
@@ -12,14 +12,12 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.event_storage import make_event
-from contracts.plans import ON_TEAM, GrantedEverywhere
-from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import (
     AppContext,
     AppType,
@@ -29,7 +27,6 @@ from tadas.om.context import (
     RequestContext,
     Role,
 )
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
     NotAuthenticated,
@@ -55,6 +52,10 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkKind, work_row_kind
+
+from contracts.change_event_storage import make_change_event
+from contracts.plans import ON_TEAM, GrantedEverywhere
+from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
 APP = AppContext(type=AppType.CLI, version="cli@test")
 OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
@@ -86,7 +87,7 @@ class Plane:
     def __init__(self, tmp_path: Path) -> None:
         infra = InfraLocalImpl(tmp_path)
         self.outbox = OutboxStorageMemoryImpl()
-        self.events = EventStorageMemoryImpl()
+        self.events = ChangeEventStorageMemoryImpl()
         self.storage = TenancyStorageMemoryImpl(self.outbox, IdempotencyStorageMemoryImpl())
         self.tasks = TasksStorageMemoryImpl(self.outbox)
         relay = RecordingRelay(self.outbox, self.events, infra.get_topics())
@@ -304,7 +305,7 @@ async def test_an_operator_deletes_a_team_org_as_its_owner_does(
     assert {row.actor_id for row in plane.relay.rows} == {writer.identity_id}
     kinds = {(row.kind, row.target_id) for row in plane.relay.rows}
     assert ("tenancy.user.deleted", bob.id) in kinds
-    assert ("tenancy.session.revoked", session.security.credential_id) in kinds
+    assert ("tenancy.auth_session.revoked", session.security.credential_id) in kinds
     work = [r for r in plane.relay.rows if r.kind == work_row_kind(WorkKind.DELETE_ORG)]
     assert len(work) == 1
     assert (work[0].org_id, work[0].target_id) == (org.id, org.id)
@@ -368,10 +369,10 @@ async def test_a_rerun_of_a_create_returns_the_row_as_stored(
 
 
 async def seed_events(plane: Plane, org_id: UUID, count: int) -> None:
-    """Events in the tenant's stream, appended to the storage the relay
+    """Change events in the tenant's stream, appended to the storage the relay
     appends to, one at a time."""
     for _ in range(count):
-        await plane.events.append_events(org_id, [make_event(org_id)])
+        await plane.events.append_change_events(org_id, [make_change_event(org_id)])
 
 
 def make_task(org_id: UUID, title: str, status: TaskStatus, rank: int) -> Task:
@@ -445,15 +446,15 @@ async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
             before = TaskCursor(updated_at=utcnow(), id=last.id)
             await plane.operator.get_tasks(reader, org.id, TaskStatus.OPEN, before, limit=3)
 
-        events = await plane.operator.get_events(reader, org.id, 0, limit=100)
+        events = await plane.operator.get_change_events(reader, org.id, 0, limit=100)
         assert [e.seq for e in events] == [1, 2, 3]  # the clamp, as the tenant's own read
-        assert [e.seq for e in await plane.operator.get_events(reader, org.id, 3, 3)] == [
+        assert [e.seq for e in await plane.operator.get_change_events(reader, org.id, 3, 3)] == [
             4,
             5,
             6,
         ]
         assert {e.org_id for e in events} == {org.id}
-        assert [e.seq for e in await plane.operator.get_events(reader, org.id, 100, 3)] == []
+        assert [e.seq for e in await plane.operator.get_change_events(reader, org.id, 100, 3)] == []
 
     trail = [r.getMessage() for r in caplog.records if r.name == OPERATOR_LOG]
     assert trail == [
@@ -465,9 +466,9 @@ async def test_the_reads_of_one_tenant_page_the_tenants_rows_and_leave_a_trail(
             "tasks",
             "tasks",
             "tasks",
-            "events",
-            "events",
-            "events",
+            "change_events",
+            "change_events",
+            "change_events",
         )
     ]
     assert not any("example.test" in line or "open " in line for line in trail)
@@ -485,7 +486,7 @@ async def test_the_sweeps_tally_counts_the_living_and_the_last_day(
     # The two operators' own orgs count, as does each operator's user in them,
     # and every person's personal org and their user there.
     assert (tally.tenants, tally.users) == (7, 8)
-    assert (tally.tasks_last_24h, tally.events_last_24h) == (2, 3)
+    assert (tally.tasks_last_24h, tally.change_events_last_24h) == (2, 3)
     assert before <= tally.counted_at <= utcnow()
     assert tally.counted_at - tally.since == timedelta(hours=24)  # the window ends at the count
     assert await plane.operator.size(reader) == tally

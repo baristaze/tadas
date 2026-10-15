@@ -10,41 +10,45 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.outbox_storage import a_user, claim_all, make_row
-from contracts.work_storage import make_item
 from opentelemetry.sdk.trace import TracerProvider
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES, JsonFormatter, current_traceparent
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
-from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
-from tadas.om.events.types.event import Event
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
+from tadas.om.change_events.types.change_event import ChangeEvent
+from tadas.om.context import AppContext, AppType, Permission, RequestContext, TenantContext
 from tadas.om.outbox.impl.relay import DEAD_LETTER_KIND, OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, versioned_row
-from tadas.om.root import Managers, build_managers
+from tadas.om.root import KINDS, Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.creates import user_payload
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
-from tadas.om.work.types.work_item import WORK_LANES, WorkKind, relayed_lane, work_row_kind
+from tadas.om.work.kinds import WorkKindSpec
+from tadas.om.work.types.work_item import NoopPayload, WorkKind, work_row_kind
+
+from contracts.outbox_storage import a_user, claim_all, make_row
+from contracts.work_storage import make_item
 
 NO_GRACE = OutboxOptions(grace=timedelta(0), backoff_base=timedelta(0), max_attempts=2)
 
 
-class PoisonedEvents(EventStorageMemoryImpl):
+class PoisonedEvents(ChangeEventStorageMemoryImpl):
     """The append refuses one row's event, as a bad payload downstream would."""
 
     def __init__(self, poison_id: UUID) -> None:
         super().__init__()
         self.poison_id = poison_id
 
-    async def append_events(self, org_id: UUID, events: Sequence[Event]) -> tuple[Event, ...]:
-        if any(event.id == self.poison_id for event in events):
+    async def append_change_events(
+        self, org_id: UUID, change_events: Sequence[ChangeEvent]
+    ) -> tuple[ChangeEvent, ...]:
+        if any(event.id == self.poison_id for event in change_events):
             raise RuntimeError("cannot append this one")
-        return await super().append_events(org_id, events)
+        return await super().append_change_events(org_id, change_events)
 
 
 @pytest.fixture
@@ -96,7 +100,7 @@ async def test_a_failed_relay_logs_its_exception_with_its_frames(
     line = json.loads(JsonFormatter().format(record))
     assert line["message"].endswith("failed on attempt 1: RuntimeError")
     assert line["exception"].endswith("\nRuntimeError")
-    assert ", in append_events\n" in line["exception"]
+    assert ", in append_change_events\n" in line["exception"]
 
 
 async def test_a_poison_row_does_not_block_the_rows_behind_it_and_dies_after_max_attempts(
@@ -149,7 +153,7 @@ async def test_the_sweep_leaves_a_row_younger_than_the_grace(infra: InfraLocalIm
     user = a_user()
     row = make_row(org, user.id, age=timedelta(0))
     await tenancy.write_user(org, user, (row,))
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
     assert await relay.relay_pending(10) == 0, "the request path relays a fresh row"
     assert await relay.relay(org, row)
     assert await claim_all(outbox) == []
@@ -165,7 +169,7 @@ async def test_purge_takes_done_and_failed_rows_past_the_retention(infra: InfraL
     await tenancy.write_user(org, failed, (failed_row,))
     await outbox.mark_done(org, [done_row.id])
     await outbox.record_failure(org, failed_row.id, "for good", utcnow())
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
     assert await relay.purge_done(timedelta(hours=1), 1000) == 0
     assert await relay.purge_done(timedelta(seconds=-1), 1000) == 2
 
@@ -220,7 +224,7 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     assert await managers.outbox.relay(ctx.org_id, asked)
     enqueued = await storage.get_work_storage().read_item_by_key(ctx.org_id, asked.id)
     assert enqueued is not None
-    assert enqueued.kind is WorkKind.NOOP and enqueued.target_id == user.id
+    assert enqueued.kind == WorkKind.NOOP and enqueued.target_id == user.id
     assert enqueued.created_by == ctx.user_id, "the actor of the write that asked"
     assert enqueued.updated_by == EMPTY_UUID
     # The handoff carries the request that made the write and its trace
@@ -260,28 +264,27 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     ), "one row, not two"
 
 
+LONG = WorkKindSpec("LONG", NoopPayload, Permission.WRITE, lane="long")
+"""A kind registered beyond the scaffold's own, on a lane of its own."""
+
+
 @pytest.mark.parametrize(
-    ("lanes", "lane", "capped"),
-    [({WorkKind.NOOP: "long"}, "long", False), ({}, "default", True)],
-    ids=["registered", "unregistered"],
+    ("kind", "lane", "capped"),
+    [(LONG.name, "long", False), (WorkKind.NOOP, "default", True)],
+    ids=["own-lane", "default-lane"],
 )
 async def test_a_relayed_item_lands_on_its_kinds_lane(
-    infra: InfraLocalImpl,
-    monkeypatch: pytest.MonkeyPatch,
-    lanes: dict[WorkKind, str],
-    lane: str,
-    capped: bool,
+    infra: InfraLocalImpl, kind: str, lane: str, capped: bool
 ) -> None:
     """A row carries no lane, so the relay lands the item on its kind's: the
-    one `WORK_LANES` names, else the default one. The wake names that lane, a
+    one its spec names, else the default one. The wake names that lane, a
     worker there claims the item, and a worker on another lane never sees it.
     So a held item counts against the tenant cap of its own lane alone: on a
     lane of its own, the tenant's next item on the default lane is claimed
     under a cap of one there; on the default lane, it fills that cap."""
-    for kind, named in lanes.items():
-        monkeypatch.setitem(WORK_LANES, kind, named)
     storage = StorageMemoryImpl()
-    managers = build_managers(storage, infra, TenancyOptions(dev_sign_in=True))
+    kinds = KINDS.extended((LONG,))
+    managers = build_managers(storage, infra, TenancyOptions(dev_sign_in=True), work_kinds=kinds)
     ctx = await sign_in(managers)
     woken: list[str] = []
 
@@ -292,12 +295,13 @@ async def test_a_relayed_item_lands_on_its_kinds_lane(
     infra.get_topics().subscribe(Topics.WORK_AVAILABLE, "test", record)
     user = a_user()
     change = outbox_row(ctx, "tenancy.user.created", user.id, user_payload(user))
-    asked = outbox_row(ctx, work_row_kind(WorkKind.NOOP), user.id, {})
+    asked = outbox_row(ctx, work_row_kind(kind), user.id, {})
     await storage.get_tenancy_storage().write_user(ctx.org_id, user, (change, asked))
     assert await managers.outbox.relay(ctx.org_id, asked)
 
     enqueued = await storage.get_work_storage().read_item_by_key(ctx.org_id, asked.id)
-    assert enqueued is not None and enqueued.lane == lane == relayed_lane(WorkKind.NOOP)
+    spec = kinds.get(kind)
+    assert spec is not None and enqueued is not None and enqueued.lane == lane == spec.lane
     assert woken == [lane], "the wake names the lane the item is on"
 
     def worker() -> RequestContext:
@@ -307,8 +311,8 @@ async def test_a_relayed_item_lands_on_its_kinds_lane(
 
     lease = timedelta(seconds=30)
     other = "default" if lane == "long" else "long"
-    assert await managers.work.claim(worker(), other, [WorkKind.NOOP], "w0", lease) is None
-    claimed = await managers.work.claim(worker(), lane, [WorkKind.NOOP], "w1", lease)
+    assert await managers.work.claim(worker(), other, [kind], "w0", lease) is None
+    claimed = await managers.work.claim(worker(), lane, [kind], "w1", lease)
     assert claimed is not None and claimed[1].id == enqueued.id
 
     short = await managers.work.enqueue(ctx, make_item())
@@ -366,7 +370,7 @@ async def test_a_batch_is_marked_done_in_one_call_and_relaying_it_again_changes_
     infra: InfraLocalImpl,
 ) -> None:
     outbox = CountedMarks()
-    events = EventStorageMemoryImpl()
+    events = ChangeEventStorageMemoryImpl()
     org = new_id()
     rows = await landed_rows(outbox, org, 5)
     relay = OutboxRelayImpl(outbox, events, infra.get_topics())
@@ -393,7 +397,7 @@ async def test_a_row_settled_meanwhile_keeps_its_mark_and_the_batch_lands(
     outbox = CountedMarks()
     org = new_id()
     rows = await landed_rows(outbox, org, 3)
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
     await outbox.mark_done(org, [rows[0].id])
     marked = {r.id: r for _, r in outbox._rows.values()}[rows[0].id].done_at
     assert await relay.relay_all(org, rows)
@@ -485,7 +489,7 @@ async def test_the_push_names_the_version_a_versioned_row_carries_and_none_other
     assert versioned_row(ctx, "tenancy.user.updated", rows[0].target_id, 4).payload == {
         "version": 4
     }
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
     assert await relay.relay_all(ctx.org_id, rows)
     assert [(p.target_id, p.version) for p in seen] == [
         (rows[0].target_id, 4),

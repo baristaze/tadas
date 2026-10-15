@@ -1,6 +1,6 @@
 # ADR 0051: A refused key is unavailable; a refused request is refused
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -14,9 +14,6 @@ The first is not the call's fault: the same call goes through once a
 person fixes the key, so work that made it must wait, not fail. The
 second gets the same answer every time, and NET-33 retries only a
 failure that can differ, so work that made it must fail at once.
-A client that reads both as one refusal leaves work no way to tell
-them apart: it either fails for good on a key a person could fix, or
-retries a request that can never pass.
 
 ## Decision
 
@@ -39,40 +36,18 @@ refusal of the request. The refusal of the key names the setting
 fix. A `404` on a deletion is not a refusal: the thing is gone already,
 and a rerun is one deletion.
 
-The Stripe client tells the two apart on every call:
-
-| Stripe answers | Raised | Status, code |
-|----------------|--------|--------------|
-| `401`, `403` (the key) | `PaymentsKeyRefused`, a `ProviderUnavailable` | `503`, `payments_key_refused` |
-| `429`, after the SDK's own retries | `ProviderUnavailable` | `503`, `unavailable` |
-| No answer | `BackendUnreachable` | `503`, `unavailable` |
-| `400`, `402`, `404`, an idempotency key reused (the request) | `PaymentsRefused` | `502`, `payments_refused` |
-| `5xx`, anything else | `BackendFailed` | `500`, `backend_failed` |
-
-A refused key is logged at error, naming the call, so the log says which
-permission to add.
-
 **Work reads the outcome by status.** The worker's `ProviderCalls`
 reads every provider failure the same way. A `503` parks the item for a
 minute, spending no attempt, and marks the provider out for every
-worker ([ADR 0088](0088-a-providers-outage-is-a-shared-signal.md)):
-the processor's calls under the platform's runtime key, `SYSTEM_SCOPE`
-and `TADAS_STRIPE_RUNTIME_KEY`. A refusal of the request fails it for good, with the refusal as its
-reason. Anything else is the queue's to retry. `SYNC_SEATS`,
-`DELETE_ACCOUNT`, and `DELETE_ORG` share this one reading.
+worker ([ADR 0088](0088-a-providers-outage-is-a-shared-signal.md)). A
+refusal of the request fails it for good, with the refusal as its
+reason. Anything else is the queue's to retry. `DELETE_ACCOUNT` and
+`DELETE_ORG` share this one reading.
 
 ## Consequences
 
 A request under a refused key answers `503`, which a client reads as
 "try again later", not as its own mistake.
-
-A checkout, the portal, a cancel, or a resume under a refused key
-answers `503` `payments_key_refused`, not `502` `payments_refused`. The
-portal says billing is unavailable right now, with the request's
-reference. A throttle answers `503` `unavailable`, not `500`
-`backend_failed`. A refusal of the request answers `502`. The billing
-read asks Stripe nothing. The webhook consumer leaves a delivery on the
-queue for any failure.
 
 An item under a refused key parks until a person fixes the key, and
 then finishes. An item whose request the provider refused fails at

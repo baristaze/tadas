@@ -62,7 +62,7 @@ class Tenant:
     pending_file_id: str
     api_key_ids: list[str]
     invitation_ids: list[str]
-    session_id: str
+    auth_session_id: str
 
     @property
     def ids(self) -> set[str]:
@@ -70,7 +70,7 @@ class Tenant:
             str(self.org_id),
             self.owner_id,
             self.member_id,
-            self.session_id,
+            self.auth_session_id,
             self.done_task_id,
             *self.task_ids,
             self.pending_file_id,
@@ -148,7 +148,7 @@ async def seed_tenant(
     assert pending.status_code == 201, pending.text
     me = await client.get("/v1/me", headers=headers)
     assert me.status_code == 200, me.text
-    sessions = await client.get("/v1/sessions", headers=headers)
+    sessions = await client.get("/v1/auth/sessions", headers=headers)
     assert sessions.status_code == 200, sessions.text
     return Tenant(
         org_id=org.id,
@@ -161,7 +161,7 @@ async def seed_tenant(
         pending_file_id=pending.json()["id"],
         api_key_ids=keys,
         invitation_ids=invitations,
-        session_id=sessions.json()[0]["id"],
+        auth_session_id=sessions.json()[0]["id"],
     )
 
 
@@ -185,10 +185,10 @@ LISTS: tuple[str, ...] = (
     "/v1/tasks",
     "/v1/users",
     "/v1/memberships",
-    "/v1/sessions",
+    "/v1/auth/sessions",
     "/v1/api-keys",
     "/v1/invitations",
-    "/v1/events",
+    "/v1/change-events",
 )
 """Every route that answers with rows of its own choosing rather than an id
 the caller named. `/v1/me`, `/v1/me/identity`, `/v1/orgs/current`, and
@@ -225,7 +225,7 @@ def by_id_routes(other: Tenant) -> list[tuple[str, str, dict[str, Any]]]:
         ("DELETE", f"/v1/memberships/{other.member_id}", {}),
         ("PATCH", f"/v1/memberships/{other.owner_id}", {"json": {"role": "member"}}),
         ("DELETE", f"/v1/memberships/{other.owner_id}", {}),
-        ("DELETE", f"/v1/sessions/{other.session_id}", {}),
+        ("DELETE", f"/v1/auth/sessions/{other.auth_session_id}", {}),
         ("DELETE", f"/v1/api-keys/{other.api_key_ids[0]}", {}),
         ("POST", f"/v1/invitations/{other.invitation_ids[0]}/resend", {}),
         ("DELETE", f"/v1/invitations/{other.invitation_ids[0]}", {}),
@@ -327,7 +327,7 @@ async def test_no_list_carries_another_tenants_rows(
         *caller.invitation_ids,
         caller.owner_id,
         caller.member_id,
-        caller.session_id,
+        caller.auth_session_id,
     } <= seen
 
 
@@ -463,8 +463,8 @@ async def test_the_event_stream_stops_at_the_tenant_boundary(
     are the same numbers over different rows: A asks from the beginning and
     gets its own."""
     caller, other = tenants
-    mine = await client.get("/v1/events", headers=caller.headers, params={"after_seq": 0})
-    theirs = await client.get("/v1/events", headers=other.headers, params={"after_seq": 0})
+    mine = await client.get("/v1/change-events", headers=caller.headers, params={"after_seq": 0})
+    theirs = await client.get("/v1/change-events", headers=other.headers, params={"after_seq": 0})
     assert mine.status_code == 200 and theirs.status_code == 200, mine.text
     assert [e["seq"] for e in mine.json()] == [e["seq"] for e in theirs.json()] != []
     assert not ids_in(mine.json()) & other.ids
@@ -527,5 +527,5 @@ def test_a_socket_of_one_tenant_never_hears_a_change_in_another(tmp_path: Path) 
             own = tc.post("/v1/tasks", headers=mine, json={"title": "mine"})
             assert own.status_code == 201, own.text
             event = ws.receive_json()
-            assert event["type"] == "event" and event["topic"] == "entity_changed"
+            assert event["type"] == "change_event" and event["topic"] == "entity_changed"
             assert event["payload"]["target_id"] == own.json()["id"]

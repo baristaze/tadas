@@ -17,7 +17,7 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.workers.maintenance.container import (
     MEDIA_PURGE_BATCH,
     WorkerContainer,
-    events_options,
+    change_events_options,
 )
 from tadas.workers.maintenance.main import loop_options
 from tadas.workers.maintenance.settings import MaintenanceSettings
@@ -96,7 +96,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "slack_retention_days": "one retention everywhere",
     "slack_timeout_seconds": "the local default is the tuning",
     "slack_inbound_visibility_seconds": "the local default is the tuning",
-    "event_retention_days": "one retention everywhere, set in code (ADR 0040)",
+    "change_event_retention_days": "one retention everywhere, set in code (ADR 0040)",
 }
 
 
@@ -261,8 +261,10 @@ def test_the_event_retention_keeps_ninety_days_and_0_turns_it_off() -> None:
     """The sweep trims events older than 90 days by default. 0 keeps every
     event: the sweep never moves a floor (ADR 0040)."""
     base = {"_env_file": None, "environment": "test"}
-    assert events_options(MaintenanceSettings.model_validate(base)).retention == timedelta(days=90)
-    off = MaintenanceSettings.model_validate({**base, "event_retention_days": 0})
-    assert events_options(off).retention is None
+    assert change_events_options(MaintenanceSettings.model_validate(base)).retention == timedelta(
+        days=90
+    )
+    off = MaintenanceSettings.model_validate({**base, "change_event_retention_days": 0})
+    assert change_events_options(off).retention is None
     with pytest.raises(ValidationError):
-        MaintenanceSettings.model_validate({**base, "event_retention_days": -1})
+        MaintenanceSettings.model_validate({**base, "change_event_retention_days": -1})

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { BulkTasksView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { actionLabel, confirmTitle, doneMessage, requestFor, requestForAll, undoRequest } from "./bulkModel";
 import { NOTHING, selectAll, toggle } from "./selectionModel";
 
-const answer = (over: Partial<BulkTasksView> = {}): BulkTasksView => ({
+const answer = (over: Partial<tasks.BulkTasksView> = {}): tasks.BulkTasksView => ({
   action: "complete",
   changed: ["a", "b", "c"],
   changed_count: 3,

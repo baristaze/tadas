@@ -1,7 +1,7 @@
 // Pure: what the Slack section of the settings screen says, and who may act
 // on it. The org installs Tadas into one Slack workspace, from here; the
 // channel it posts to is chosen in Slack, with `/tadas connect`.
-import type { MeView, SlackStatusView } from "@tadas/client";
+import type { slack, tenancy } from "@tadas/client";
 
 export const INVITE_COMMAND = "/invite @tadas";
 export const CONNECT_COMMAND = "/tadas connect";
@@ -19,7 +19,7 @@ export interface SlackSummary {
 }
 
 /** Installing and removing take an owner or an admin: the API refuses anyone else. */
-export function canManageSlack(me: MeView | undefined): boolean {
+export function canManageSlack(me: tenancy.MeView | undefined): boolean {
   return me?.permissions.includes("manage_members") ?? false;
 }
 
@@ -53,7 +53,7 @@ export function brokenReasonText(reason: string | null): string {
   }
 }
 
-export function slackSummary(status: SlackStatusView | undefined): SlackSummary {
+export function slackSummary(status: slack.SlackStatusView | undefined): SlackSummary {
   const installation = status?.installation ?? null;
   if (!installation) {
     return { state: "not_installed", line: "Not installed.", fix: null, installLabel: "Add to Slack" };

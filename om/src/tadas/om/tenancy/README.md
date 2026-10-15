@@ -20,14 +20,14 @@ plane. This is one of the kinds of thing
 - **Membership**: the user's place in the org, with a role.
 - **Invitation**: an email, a role, who asked, and whether it is
   pending, accepted, or revoked.
-- **Sign-in** and **session**: a sign-in proves the person and lists
-  their orgs; it is exchanged once for a session in one org. A session
+- **Sign-in** and **auth session**: a sign-in proves the person and lists
+  their orgs; it is exchanged once for an auth session in one org. An auth session
   lasts 30 days, or 14 idle.
 - **API key**, **socket ticket**, **second factor** (an operator's
   TOTP), and **operator token**: each stored as a digest or sealed,
   never in the clear.
-- **Platform size**: the count of orgs, users, and the day's tasks and
-  events the sweep keeps for the operator plane.
+- **System size**: the count of orgs, users, and the day's tasks and
+  change events the sweep keeps for the operator plane.
 
 ## What can happen
 
@@ -35,20 +35,20 @@ plane. This is one of the kinds of thing
   flow for the CLI, or, on a developer's machine, by address alone. A
   first sign-in is the sign-up: the identity, its personal org, its
   user, and the owner membership land together.
-- **Exchange and switch.** A sign-in becomes a session in one org. A
-  session presented to the exchange is a switch, and ends in the same
-  write. The new session keeps its deadline: only a sign-in starts the
+- **Exchange and switch.** A sign-in becomes an auth session in one org. An
+  auth session presented to the exchange is a switch, and ends in the same
+  write. The new auth session keeps its deadline: only a sign-in starts the
   30 days.
-- **Sign out.** The credential presented ends. A hosted-page session
+- **Sign out.** The credential presented ends. A hosted-page auth session
   also ends the provider's session in that browser.
 - **Manage an org**: create a team org, invite, change a role, remove a
-  member, set up single sign-on, list and revoke sessions and API keys.
+  member, set up single sign-on, list and revoke auth sessions and API keys.
   The org's plan bounds its seats and its API keys
   ([billing](../billing/README.md)): an invitation past the seats is
   refused before it is sent, and one accepted once the seats have filled
   stays pending while the sign-in goes on. An org on a plan without API
   keys is refused the first one, and a key it has is kept and refused
-  while it is on that plan. The seeding of a laptop is the platform's
+  while it is on that plan. The seeding of a laptop is the system's
   own: it takes no seat, and it grants the seeded team Team.
 - **Delete.** An owner deletes a team org, and a person deletes their
   account. Each closes at once for everyone it touches; the providers'
@@ -68,7 +68,7 @@ plane. This is one of the kinds of thing
   their own keys. Admin and owner also manage members and the org's
   plan. Nothing a person issues ranks above the issuer, and the service
   role is no rung of it.
-- **A key never mints a key.** Only a session creates an API key.
+- **A key never mints a key.** Only an auth session creates an API key.
 - **A sign-in is exchanged once**
   ([ADR 0037](../../../../../docs/adr/0037-a-sign-in-is-exchanged-once.md)).
 - **An address is one address in any case**
@@ -80,7 +80,7 @@ plane. This is one of the kinds of thing
   ([ADR 0068](../../../../../docs/adr/0068-an-operator-credential-ends-by-itself.md)).
 - **Another org's things do not exist.** A user, a membership, or a key
   of another org is answered as one that never existed.
-- **Events carry ids.** A change about a person names ids, never an
+- **Change events carry ids.** A change about a person names ids, never an
   email or a name, so erasing the person erases them.
 - **An integration acts as a proven member, or as nobody.** It names a
   person by an address its provider vouches is theirs, never one they

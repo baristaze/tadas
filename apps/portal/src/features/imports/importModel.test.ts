@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BillingView, ImportView } from "@tadas/client";
+import type { billing, tasks } from "@tadas/client";
 import {
   activeTasksLimit,
   ENDED_SHOWN_MS,
@@ -10,7 +10,7 @@ import {
   skippedLines,
 } from "./importModel";
 
-function view(fields: Partial<ImportView> = {}): ImportView {
+function view(fields: Partial<tasks.ImportView> = {}): tasks.ImportView {
   return {
     id: "i1",
     file_id: "f1",
@@ -98,7 +98,7 @@ describe("activeTasksLimit", () => {
       plan: "free",
       limits: limits(10),
       plans: [offer("free", 10), offer("pro", null), offer("team", null), offer("max", null)],
-    } as unknown as BillingView;
+    } as unknown as billing.BillingView;
     expect(activeTasksLimit(billing)).toEqual({
       lever: "active_tasks",
       plan: "free",

@@ -1,10 +1,10 @@
 // Pure: which list the tasks page shows and what its heading says. An org
 // with more than one member, of either kind, offers the person's own tasks
 // and the team's; a person alone in an org has one list.
-import type { TaskScope } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 
 /** The switch that stands as the page's heading when the org has company. */
-export const SCOPE_CHOICES: readonly { value: TaskScope; label: string }[] = [
+export const SCOPE_CHOICES: readonly { value: tasks.TaskScope; label: string }[] = [
   { value: "mine", label: "My tasks" },
   { value: "team", label: "Team" },
 ];
@@ -25,11 +25,11 @@ export function scopeHeadingKind(members: number | undefined): ScopeHeading {
  * `mine` is every task assigned to the person, or unassigned and created by
  * them, which in an org of one is every task in it. Until the count is
  * known, the pick stands. */
-export function shownScope(picked: TaskScope, members: number | undefined): TaskScope {
+export function shownScope(picked: tasks.TaskScope, members: number | undefined): tasks.TaskScope {
   return scopeHeadingKind(members) === "alone" ? "mine" : picked;
 }
 
 /** The heading a screen reader hears for the list on screen. */
-export function scopeHeading(scope: TaskScope): string {
+export function scopeHeading(scope: tasks.TaskScope): string {
   return scope === "team" ? "Team tasks" : "My tasks";
 }

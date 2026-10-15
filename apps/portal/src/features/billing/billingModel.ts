@@ -1,9 +1,9 @@
 // Pure: what the billing page and the upgrade dialog say. The numbers come
 // from the server's one table of plans; this file only words them.
-import { ApiError, type BillingView, type Plan, type PlanLimit, type PlanLimitsView, type PlanOfferView } from "@tadas/client";
+import { ApiError, type PlanLimit, type billing } from "@tadas/client";
 import { humanSize } from "../settings/storageModel";
 
-export const PLAN_NAMES: Readonly<Record<Plan, string>> = {
+export const PLAN_NAMES: Readonly<Record<billing.Plan, string>> = {
   free: "Free",
   pro: "Pro",
   team: "Team",
@@ -12,7 +12,7 @@ export const PLAN_NAMES: Readonly<Record<Plan, string>> = {
 
 export function planName(plan: string | null | undefined): string {
   if (!plan) return "Free";
-  return PLAN_NAMES[plan as Plan] ?? plan.charAt(0).toUpperCase() + plan.slice(1);
+  return PLAN_NAMES[plan as billing.Plan] ?? plan.charAt(0).toUpperCase() + plan.slice(1);
 }
 
 function dollars(cents: number): string {
@@ -21,7 +21,7 @@ function dollars(cents: number): string {
 }
 
 /** What a plan costs a month, as its price is shaped. */
-export function priceText(offer: PlanOfferView): string {
+export function priceText(offer: billing.PlanOfferView): string {
   if (offer.flat_cents === 0 && offer.per_seat_cents === 0) return "Free";
   if (offer.included_seats !== null) {
     return `${dollars(offer.flat_cents)} a month up to ${offer.included_seats} members, then ${dollars(offer.per_seat_cents)} a member`;
@@ -30,7 +30,7 @@ export function priceText(offer: PlanOfferView): string {
 }
 
 /** What a per-seat plan bills at a seat count; a flat plan its flat amount. */
-export function monthlyCents(offer: PlanOfferView, seats: number): number {
+export function monthlyCents(offer: billing.PlanOfferView, seats: number): number {
   if (offer.included_seats === null || seats <= offer.included_seats) return offer.flat_cents;
   return offer.per_seat_cents * seats;
 }
@@ -48,7 +48,7 @@ function gib(bytes: number): string {
 }
 
 /** A plan's bounds, one short line each. */
-export function limitLines(limits: PlanLimitsView): string[] {
+export function limitLines(limits: billing.PlanLimitsView): string[] {
   return [
     limits.members === null ? "Unlimited members" : members(limits.members),
     limits.active_tasks === null ? "Unlimited active tasks" : `${limits.active_tasks} active tasks`,
@@ -87,7 +87,7 @@ export function dateText(iso: string): string {
 }
 
 /** What happens when a paid plan set to end ends, or null. */
-export function endsOnSentence(billing: BillingView): string | null {
+export function endsOnSentence(billing: billing.BillingView): string | null {
   if (!billing.ends_at || !billing.paid_plan) return null;
   const after = planName(billing.plan_after);
   return (
@@ -98,14 +98,14 @@ export function endsOnSentence(billing: BillingView): string | null {
 }
 
 /** Where the org's plan comes from. */
-export function sourceText(billing: BillingView): string {
+export function sourceText(billing: billing.BillingView): string {
   if (billing.paid_plan && billing.comped_plan) return "Paid, and granted by Tadas";
   if (billing.paid_plan) return "Paid";
   if (billing.comped_plan) return "Granted by Tadas";
   return "Every org starts here";
 }
 
-export function renewsText(billing: BillingView): string | null {
+export function renewsText(billing: billing.BillingView): string | null {
   if (!billing.paid_plan || billing.ends_at || !billing.current_period_end) return null;
   return `Renews on ${dateText(billing.current_period_end)}.`;
 }
@@ -123,7 +123,7 @@ export interface BillingActions {
   keep: boolean;
 }
 
-export function billingActions(billing: BillingView): BillingActions {
+export function billingActions(billing: billing.BillingView): BillingActions {
   const paid = billing.paid_plan !== null;
   if (!billing.can_manage) return { choose: false, manage: false, cancel: false, keep: false };
   return {
@@ -165,7 +165,7 @@ export const CHECKOUT_CANCELLED = "Checkout cancelled; nothing changed.";
 /** What an owner or an admin is told when the processor could not collect
  * the latest invoice, or null when there is nothing to tell them. A member
  * cannot fix it, so a member is not told. */
-export function paymentFailedSentence(billing: BillingView): string | null {
+export function paymentFailedSentence(billing: billing.BillingView): string | null {
   if (!billing.payment_failed || !billing.can_manage) return null;
   if (billing.status === "unpaid") {
     return (

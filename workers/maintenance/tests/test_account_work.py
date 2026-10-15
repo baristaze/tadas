@@ -34,9 +34,11 @@ from tadas.integrations.exceptions import (
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import new_id
+from tadas.om.billing.kinds import BillingKind
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import Role, TenantContext
 from tadas.om.media.types.file import File, FilePurpose
+from tadas.om.tasks.kinds import TasksKind
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
@@ -52,7 +54,7 @@ from tadas.workers.maintenance.main import (
 from tadas.workers.maintenance.providers import PROVIDER_WAIT, ProviderCalls
 
 LEASE = timedelta(seconds=30)
-ACCOUNT_WORK = [WorkKind.DELETE_ACCOUNT, WorkKind.UNASSIGN_TASKS, WorkKind.SYNC_SEATS]
+ACCOUNT_WORK = [WorkKind.DELETE_ACCOUNT, TasksKind.UNASSIGN_TASKS, BillingKind.SYNC_SEATS]
 
 
 def identity_of(container: WorkerContainer) -> IdentityProviderTwinImpl:
@@ -166,7 +168,7 @@ async def test_a_deleted_account_leaves_nothing_of_its_person_behind(tmp_path: P
 
     await tenancy.org.delete_account(bob, "bob@example.test")
     ran = await run(container)
-    assert {item.kind for item in ran} >= {WorkKind.DELETE_ACCOUNT, WorkKind.UNASSIGN_TASKS}
+    assert {item.kind for item in ran} >= {WorkKind.DELETE_ACCOUNT, TasksKind.UNASSIGN_TASKS}
 
     # The providers' side is gone.
     assert identity_of(container).deleted == [subject]

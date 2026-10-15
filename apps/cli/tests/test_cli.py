@@ -14,7 +14,8 @@ from cli_support import BOB, Stack
 from typer.testing import CliRunner
 
 from tadas.apps.cli import config, main
-from tadas.client.client import ApiClient, ApiError
+from tadas.client.client import ApiClient
+from tadas.client.transport import ApiError
 from tadas.om.base import new_id, utcnow
 from tadas.om.context import Role
 from tadas.om.tasks.types.task import Task
@@ -28,17 +29,17 @@ def test_login_keeps_a_session_and_whoami_reads_it(
     # Ann belongs to Ajax and to her personal org; with no --org she enters
     # the personal one, the place every person has.
     assert signed.stdout.startswith("signed in as Ann at Ann (owner)\nsession kept in ")
-    session = config.load_session()
+    session = config.load_auth_session()
     assert session is not None and session.org_slug.startswith("ann-")
     assert session.api_url == "http://test"
-    assert (config.home() / "session.json").stat().st_mode & 0o777 == 0o600
+    assert (config.home() / "auth_session.json").stat().st_mode & 0o777 == 0o600
 
     who = stack.tadas("whoami", token=None)  # the session file, no TADAS_TOKEN
     assert who.exit_code == 0 and who.output == "Ann <ann@example.test> at Ann (owner)\n"
 
     out = stack.tadas("logout", token=None)
     assert out.exit_code == 0 and out.output == "signed out\n"
-    assert config.load_session() is None
+    assert config.load_auth_session() is None
     assert stack.tadas("logout", token=None).output == "no session to forget\n"
 
 
@@ -46,13 +47,13 @@ def test_login_over_a_kept_session_ends_that_session_and_keeps_the_new_one(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stack.login(monkeypatch=monkeypatch)
-    first = config.load_session()
+    first = config.load_auth_session()
     assert first is not None
 
     again = stack.login("--org", "ajax", monkeypatch=monkeypatch)
     assert again.exit_code == 0, again.output
     assert again.stdout.endswith("the session kept before is ended\n")
-    second = config.load_session()
+    second = config.load_auth_session()
     assert second is not None and second.token != first.token and second.org_slug == "ajax"
 
     # The old token answers 401; the new one is the kept session and works.
@@ -64,7 +65,7 @@ def test_login_over_a_session_already_gone_says_nothing_of_it(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stack.login(monkeypatch=monkeypatch)
-    first = config.load_session()
+    first = config.load_auth_session()
     assert first is not None
 
     async def revoke_elsewhere() -> None:
@@ -84,8 +85,8 @@ def test_login_keeps_the_new_session_when_the_old_ones_api_cannot_be_reached(
     """The kept session goes back to the API that issued it and nowhere else;
     when that API is away, the new session is kept all the same and stderr
     says the old one lapses on its own."""
-    config.save_session(
-        config.Session(
+    config.save_auth_session(
+        config.AuthSession(
             api_url="https://gone.example.test",
             token="ses_kept",
             email="ann@example.test",
@@ -120,7 +121,7 @@ def test_login_keeps_the_new_session_when_the_old_ones_api_cannot_be_reached(
         "the session kept before was not ended; cannot reach https://gone.example.test: refused\n"
     )
     assert sent_to == ["http://test", "https://gone.example.test"]
-    session = config.load_session()
+    session = config.load_auth_session()
     assert session is not None and session.token != "ses_kept"
 
 
@@ -130,7 +131,7 @@ def test_login_naming_an_org_the_person_is_not_in_is_a_usage_error(
     out = stack.login("--org", "nope", monkeypatch=monkeypatch)
     assert out.exit_code == 2, out.output
     assert "choose an org with --org: ajax" in out.output
-    assert config.load_session() is None
+    assert config.load_auth_session() is None
 
 
 def test_logout_forgets_a_session_the_api_already_revoked(
@@ -139,7 +140,7 @@ def test_logout_forgets_a_session_the_api_already_revoked(
     """A session revoked elsewhere, or expired, answers 401: there is nothing
     left to revoke, so the file goes and the command succeeds."""
     stack.login(monkeypatch=monkeypatch)
-    session = config.load_session()
+    session = config.load_auth_session()
     assert session is not None
 
     async def revoke_elsewhere() -> None:
@@ -150,20 +151,20 @@ def test_logout_forgets_a_session_the_api_already_revoked(
     out = stack.tadas("logout", token=None)
     assert out.exit_code == 0, out.output
     assert out.output == "signed out; the session was already gone (not_authenticated)\n"
-    assert config.load_session() is None
+    assert config.load_auth_session() is None
 
 
 def test_logout_revokes_the_kept_session_and_leaves_the_environments_token_alone(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stack.login(monkeypatch=monkeypatch)
-    session = config.load_session()
+    session = config.load_auth_session()
     assert session is not None
-    bob = stack.session_token(BOB["email"])
+    bob = stack.auth_session_token(BOB["email"])
 
     out = stack.tadas("logout", token=bob)  # TADAS_TOKEN is Bob's; the file is Ann's
     assert out.exit_code == 0 and out.output == "signed out\n"
-    assert config.load_session() is None
+    assert config.load_auth_session() is None
     assert stack.tadas("whoami", token=bob).exit_code == 0
     assert stack.tadas("whoami", token=session.token).exit_code == 3
 
@@ -180,8 +181,8 @@ def test_logout_never_sends_the_session_to_another_api(
     naming another one is refused, nothing is sent, and the file stays."""
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("TADAS_TOKEN", raising=False)
-    config.save_session(
-        config.Session(
+    config.save_auth_session(
+        config.AuthSession(
             api_url="https://api.example.test",
             token="ses_kept",
             email="ann@example.test",
@@ -210,7 +211,7 @@ def test_logout_never_sends_the_session_to_another_api(
     result = CliRunner().invoke(main.app, ["logout", "--api", "http://localhost:8000"])
     assert result.exit_code == main.EXIT_USAGE, result.output
     assert sent == []
-    assert config.load_session() is not None
+    assert config.load_auth_session() is not None
 
 
 def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
@@ -220,8 +221,8 @@ def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
     anyway, so the next command is not run as a session the caller gave up."""
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("TADAS_TOKEN", raising=False)
-    config.save_session(
-        config.Session(
+    config.save_auth_session(
+        config.AuthSession(
             api_url="http://test",
             token="ses_kept",
             email="ann@example.test",
@@ -249,7 +250,7 @@ def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
     result = CliRunner().invoke(main.app, ["logout"])
     assert result.exit_code == 4, result.output
     assert result.output.startswith("session forgotten, not revoked; cannot reach the API:")
-    assert config.load_session() is None
+    assert config.load_auth_session() is None
 
 
 def test_login_waits_for_the_person_to_confirm_the_code(
@@ -273,7 +274,7 @@ def test_login_waits_for_the_person_to_confirm_the_code(
     assert signed.exit_code == 0, signed.output
     assert "to sign in, open https://identity.twin.invalid/device?user_code=" in signed.output
     assert opened == [] and len(asks) == 2
-    session = config.load_session()
+    session = config.load_auth_session()
     assert session is not None and session.email == BOB["email"] and session.org_slug == "ajax"
 
 
@@ -300,7 +301,7 @@ def test_a_declined_sign_in_is_refused_with_exit_1(
     result = stack.tadas("login", token=None)
     assert result.exit_code == 1, result.output
     assert "refused: sign_in_refused" in result.output
-    assert config.load_session() is None
+    assert config.load_auth_session() is None
 
 
 def test_a_code_nobody_confirms_expires_with_exit_1(
@@ -368,7 +369,7 @@ def test_not_signed_in_is_exit_3(stack: Stack) -> None:
 
 def test_whoami_names_the_person_the_org_and_the_role(stack: Stack) -> None:
     assert stack.tadas("whoami").output == "Ann <ann@example.test> at Ajax (owner)\n"
-    bob = stack.session_token(BOB["email"])
+    bob = stack.auth_session_token(BOB["email"])
     assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Ajax (member)\n"
 
 
@@ -404,7 +405,7 @@ def test_the_task_verbs_in_sequence(stack: Stack) -> None:
 
     mine = stack.tadas("ls", "--mine")  # assigned to me, or unassigned and created by me
     assert "Review PR #42" in mine.output and "Migrate the DB" in mine.output
-    bobs = stack.tadas("ls", "--mine", token=stack.session_token(BOB["email"]))
+    bobs = stack.tadas("ls", "--mine", token=stack.auth_session_token(BOB["email"]))
     assert bobs.output.count("\n") == 1  # the header only
 
     review_short = second.output.split()[1]
@@ -424,7 +425,7 @@ def test_the_task_verbs_in_sequence(stack: Stack) -> None:
 def test_ls_lists_past_the_page_the_api_clamps_at(stack: Stack) -> None:
     # 201 open tasks against the API's clamp of 200: `ls` follows the cursor
     # and shows every one, and a short id resolves on the second page too.
-    token = stack.session_token(OWNER["email"])
+    token = stack.auth_session_token(OWNER["email"])
     ctx = run(stack.container.managers.tenancy.authenticate(seed_request(), token))
     manager = stack.container.managers.tasks
     now = utcnow()
@@ -468,7 +469,7 @@ def test_short_ids_and_members_that_do_not_resolve(stack: Stack) -> None:
 
 def test_a_member_sees_the_owners_tasks_and_the_api_decides_what_is_allowed(stack: Stack) -> None:
     stack.tadas("add", "Owner's task")
-    bob = stack.session_token(BOB["email"])
+    bob = stack.auth_session_token(BOB["email"])
     listed = stack.tadas("ls", token=bob)
     assert "Owner's task" in listed.output
     assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Ajax (member)\n"
@@ -577,7 +578,7 @@ def test_a_bad_timeout_does_not_forget_the_session_logout_could_not_revoke(
     the environment got wrong means the API was never asked: the session
     stays, so the caller fixes the setting and signs out for real."""
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
-    session = config.Session(
+    session = config.AuthSession(
         api_url="http://127.0.0.1:1",
         token="ses_1",
         email="ann@example.test",
@@ -585,13 +586,13 @@ def test_a_bad_timeout_does_not_forget_the_session_logout_could_not_revoke(
         org_slug="ajax",
         org_name="Ajax",
     )
-    config.save_session(session)
+    config.save_auth_session(session)
     result = CliRunner().invoke(
         main.app, ["logout"], env={"TADAS_HTTP_TIMEOUT_SECONDS": "soon"}, catch_exceptions=False
     )
     assert result.exit_code == 2, result.output
     assert result.output.startswith("TADAS_HTTP_TIMEOUT_SECONDS")
-    assert config.load_session() == session
+    assert config.load_auth_session() == session
 
 
 def test_a_token_the_environment_got_wrong_is_a_usage_error(
@@ -635,8 +636,8 @@ def test_a_session_that_cannot_be_forgotten_is_a_usage_error(
     """`logout` forgets the file whatever the API answers, so a file it cannot
     remove is the one thing left to tell: one line and exit 2."""
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
-    config.save_session(
-        config.Session(
+    config.save_auth_session(
+        config.AuthSession(
             api_url="http://127.0.0.1:1",
             token="ses_1",
             email="ann@example.test",
@@ -683,12 +684,12 @@ def test_switch_moves_the_kept_session_and_ends_the_old_one(
 ) -> None:
     second_org(stack)
     stack.login("--org", "ajax", monkeypatch=monkeypatch)
-    before = config.load_session()
+    before = config.load_auth_session()
     assert before is not None
     moved = stack.tadas("switch", "beta", token=None)
     assert moved.exit_code == 0, moved.output
     assert moved.output == "switched to Beta as Ann (member); the old session is ended\n"
-    after = config.load_session()
+    after = config.load_auth_session()
     assert after is not None and after.org_slug == "beta" and after.token != before.token
     who = stack.tadas("whoami", token=None)
     assert who.output == "Ann <ann@example.test> at Beta (member)\n"
@@ -701,11 +702,11 @@ def test_switch_to_an_org_the_person_is_not_in_is_a_usage_error(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stack.login(monkeypatch=monkeypatch)
-    before = config.load_session()
+    before = config.load_auth_session()
     out = stack.tadas("switch", "nope", token=None)
     assert out.exit_code == 2, out.output
     assert "no org 'nope' to switch to; yours are: ajax" in out.output
-    assert config.load_session() == before
+    assert config.load_auth_session() == before
 
 
 def test_switch_needs_a_kept_session(stack: Stack) -> None:

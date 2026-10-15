@@ -16,7 +16,7 @@ from tadas.integrations.slack import (
     SlackTokenRevoked,
     SlackTokens,
 )
-from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.base import OmBase, new_id, utcnow
 from tadas.om.context import Permission, RequestContext, TenantContext
 from tadas.om.exceptions import NotFound, SlackWorkspaceTaken, UniqueKeyTaken
 from tadas.om.outbox import OutboxRelayInterface
@@ -36,7 +36,7 @@ from tadas.om.tenancy import TenancyManagerInterface
 log = logging.getLogger(__name__)
 
 
-class SlackOptions(Platform):
+class SlackOptions(OmBase):
     state_lifetime: timedelta = timedelta(minutes=10)
     # A token is renewed this long before it expires, so a caller that finds
     # a renewal already running still holds a token that works.
@@ -398,7 +398,7 @@ class SlackManagerImpl(SlackManagerInterface):
             await self._slack.revoke(tokens.access_token.get_secret_value(), deadline=ctx.deadline)
         except SlackError as error:
             log.warning(
-                "a Slack token the platform does not keep was not revoked: %s",
+                "a Slack token the system does not keep was not revoked: %s",
                 error,
                 exc_info=error,
             )

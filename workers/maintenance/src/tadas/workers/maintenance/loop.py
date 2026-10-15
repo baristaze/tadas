@@ -9,7 +9,7 @@ names as due, a page a pass, then the purge of a tenant past its retention
 per tenant, then
 every namespace's purge of its rows past their retention across tenants,
 then the purges of done outbox rows and settled work items, within a time
-budget, then the tally of the platform's size when it is due, then the four
+budget, then the tally of the system's size when it is due, then the four
 gauges of the queue and the outbox), and drain first on stop."""
 
 import asyncio
@@ -39,13 +39,14 @@ from tadas.infra.observability import (
     traceparent_of,
 )
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
-from tadas.om.base import EMPTY_UUID, Platform, new_id
+from tadas.om.base import EMPTY_UUID, OmBase, new_id
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import LeaseLost, NotFound
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.work import WorkManagerInterface
+from tadas.om.work.kinds import WorkKinds
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
-from tadas.om.work.types.work_item import WorkItem, WorkKind
+from tadas.om.work.types.work_item import WorkItem
 
 log = logging.getLogger(__name__)
 
@@ -90,12 +91,12 @@ chore, never a read per chore, and a tenant it does not name costs the pass
 nothing."""
 
 TallyStep = Callable[[], Awaitable[object]]
-"""The count of the platform's size across every tenant, kept as the tally the
+"""The count of the system's size across every tenant, kept as the tally the
 operator plane reads (`TenancyOperatorManagerInterface.tally_size`); it runs
 once every `LoopOptions.tally_interval`, not every pass."""
 
 
-class LoopOptions(Platform):
+class LoopOptions(OmBase):
     worker_id: str
     lane: str = "default"
     # The most items one tenant holds claimed on the lane, so it cannot hold
@@ -131,7 +132,7 @@ class LoopOptions(Platform):
     # this long and then goes. The alarms on them say the same window (the
     # alarms module).
     failed_window: timedelta = timedelta(minutes=15)
-    # The platform's size is counted this often, not every pass: its counts
+    # The system's size is counted this often, not every pass: its counts
     # cover a day, and a tally five minutes old answers what the operator
     # plane asks of it (ADR 0074). Each worker counts on its own clock.
     tally_interval: timedelta = timedelta(minutes=5)
@@ -144,7 +145,8 @@ class WorkerLoop:
         work: WorkManagerInterface,
         outbox: OutboxRelayInterface,
         purges: Mapping[str, PurgeStep],
-        handlers: Mapping[WorkKind, WorkHandlerInterface],
+        kinds: WorkKinds,
+        handlers: Mapping[str, WorkHandlerInterface],
         across: Mapping[str, AcrossStep] | None = None,
         across_batches: Mapping[str, int] | None = None,
         chores: Mapping[str, ChoreStep] | None = None,
@@ -154,6 +156,12 @@ class WorkerLoop:
         liveness: CacheInterface,
         options: LoopOptions,
     ) -> None:
+        """`handlers` maps a kind's name to its handler, and the loop claims
+        the kinds it names; each is a kind `kinds`, the process's registry,
+        holds, so a handler for a kind nobody can enqueue is refused here."""
+        unknown = sorted(kind for kind in handlers if kind not in kinds)
+        if unknown:
+            raise ValueError(f"no work kind is registered as {', '.join(unknown)}")
         self._work = work
         self._outbox = outbox
         self._purges = purges
@@ -184,12 +192,12 @@ class WorkerLoop:
         # Where the next pass reads the tenants with a chore due from: after
         # the last one this pass ran, or None to read from the first.
         self._chores_after: UUID | None = None
-        # When this worker last counted the platform's size, on the event
+        # When this worker last counted the system's size, on the event
         # loop's clock; None until it has, so its first pass counts.
         self._tallied_at: float | None = None
 
     @property
-    def kinds(self) -> list[WorkKind]:
+    def kinds(self) -> list[str]:
         return list(self._handlers)
 
     @property
@@ -290,7 +298,7 @@ class WorkerLoop:
         # past the end of that request, so the causal edge joins two traces
         # instead of stretching one over both. An item with no trace context
         # on it starts a trace here.
-        span.update_name(f"work {item.kind.value}")
+        span.update_name(f"work {item.kind}")
         for link in links_to(item.traceparent):
             span.add_link(link.context, link.attributes)
         span.set_attributes(self._span_attributes(ctx, item))
@@ -529,7 +537,7 @@ class WorkerLoop:
         in turn with the others, while the budget lasts. The purges across
         tenants run on every pass, each at least once and again while its
         batch comes back full and the budget lasts. A living tenant with no
-        chore due costs a pass nothing. The count of the platform's size
+        chore due costs a pass nothing. The count of the system's size
         runs once an interval, whatever the budget, as the
         gauges do: it is three counts and a write, and the operator plane
         reads it. The four reads of the queue and the outbox end every pass,
@@ -618,7 +626,7 @@ class WorkerLoop:
         )
 
     async def _tally(self) -> None:
-        """The count of the platform's size, when the interval has passed
+        """The count of the system's size, when the interval has passed
         since this worker last made one. One that fails is logged and tried
         again on the next pass; the tally the operator plane reads stays as
         it was, and says how old it is."""
@@ -632,10 +640,10 @@ class WorkerLoop:
         try:
             await self._tally_step()
         except Exception:
-            log.exception("sweep: the tally of the platform's size failed")
+            log.exception("sweep: the tally of the system's size failed")
             return
         self._tallied_at = clock()
-        log.info("sweep: counted the platform's size in %.3fs", self._tallied_at - started)
+        log.info("sweep: counted the system's size in %.3fs", self._tallied_at - started)
 
     async def _gauges(self) -> dict[str, int]:
         """The four numbers the queue and outbox alarms read, one read each

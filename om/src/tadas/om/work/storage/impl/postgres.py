@@ -26,7 +26,7 @@ from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.storage.tables.tenant_caps import TenantCaps
 from tadas.om.work.storage.tables.work_items import WorkItems
 from tadas.om.work.types.tenant_cap import TenantCap
-from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
+from tadas.om.work.types.work_item import WorkItem, WorkStatus
 
 
 class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
@@ -97,7 +97,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
     async def claim_next(
         self,
         lane: str,
-        kinds: Sequence[WorkKind],
+        kinds: Sequence[str],
         worker_id: str,
         lease: timedelta,
         tenant_cap: int | None = None,
@@ -106,7 +106,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
         ready = select(WorkItems.id).where(
             WorkItems.lane == lane,
             WorkItems.status == WorkStatus.QUEUED.value,
-            WorkItems.kind.in_([kind.value for kind in kinds]),
+            WorkItems.kind.in_(list(kinds)),
             WorkItems.available_at <= now,
         )
         # rules.is_at_cap, in SQL: the tenants that already hold their cap on
@@ -149,7 +149,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 lease_expires_at=now + lease,
                 attempts=WorkItems.attempts + 1,  # rules.attempts_after_claim, in SQL
                 updated_at=now,
-                updated_by=EMPTY_UUID,  # the claim is the platform's write
+                updated_by=EMPTY_UUID,  # the claim is the system's write
             )
             .returning(WorkItems)
         )

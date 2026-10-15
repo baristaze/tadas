@@ -14,6 +14,8 @@ from tadas.om.context import (
     RequestContext,
     Role,
     TenantContext,
+    stageless,
+    transition,
 )
 from tadas.om.tenancy.credentials import TenancyCredentialsManagerInterface
 from tadas.om.tenancy.members import TenancyMembersManagerInterface
@@ -53,6 +55,7 @@ class TenancyManagerInterface(ABC):
     """The caller's sessions and the org's API keys."""
 
     @abstractmethod
+    @transition
     async def bootstrap(
         self,
         rctx: RequestContext,
@@ -63,7 +66,7 @@ class TenancyManagerInterface(ABC):
         *,
         operator_role: OperatorRole | None = None,
     ) -> tuple[TenantContext, Org]:
-        """Platform-internal: seeds a fresh environment with one team org and its
+        """System-internal: seeds a fresh environment with one team org and its
         owner; an owner nobody has seen before is made with their personal org.
 
         Produces the owner's context once the identity, org, user, and
@@ -77,6 +80,7 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def add_member(
         self,
         rctx: RequestContext,
@@ -85,7 +89,7 @@ class TenancyManagerInterface(ABC):
         display_name: str,
         role: Role,
     ) -> tuple[TenantContext, User, bool]:
-        """Platform-internal: seeds a person into an existing org, for local and
+        """System-internal: seeds a person into an existing org, for local and
         test environments; a person joins a deployed one by invitation.
 
         Produces the context of the org's creator first, and the rest runs
@@ -98,8 +102,9 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
-        """Platform-internal: the transition to the identity stage. Verifies the
+        """System-internal: the transition to the identity stage. Verifies the
         person's own sign-in and produces the identity behind it: the login
         credential (`lgn_`), a live session token (`ses_`), which proves the
         identity of its user as well as the tenant, so a signed-in app lists
@@ -113,14 +118,16 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def authenticate(self, rctx: RequestContext, credential: str) -> TenantContext:
-        """Platform-internal: the transition to the tenant stage. The gateway asks
+        """System-internal: the transition to the tenant stage. The gateway asks
         for the principal behind a session token or an api key."""
         ...
 
     @abstractmethod
+    @transition
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
-        """Platform-internal: the transition to the operator stage. Admits the
+        """System-internal: the transition to the operator stage. Admits the
         verified identity when it is on the operator allowlist, NotAnOperator
         otherwise. Two credentials admit, and a tenant's never does (a tenant
         session is InvalidCredential): the person's own sign-in, and an
@@ -137,29 +144,32 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def grant_operator(
         self, rctx: RequestContext, email: str, operator_role: OperatorRole
     ) -> Identity:
-        """Platform-internal: the grant job's, on a deployed database as on a
+        """System-internal: the grant job's, on a deployed database as on a
         local one. Puts the identity that holds the email on the operator
         allowlist with that entry, audited under the system scope. No identity
         holding the email is NotFound, since an operator signs in like any
-        person first; the platform's own identities (the provisioner and the
-        smoke identity, in the platform's reserved domain) are made here the
+        person first; the system's own identities (the provisioner and the
+        smoke identity, in the system's reserved domain) are made here the
         first time, with no org and no way to sign in. A rerun with
         the same arguments changes nothing. It enrols no second factor: the
         operator does that at the first sign-in to the plane."""
         ...
 
     @abstractmethod
+    @transition
     async def disable_operator(self, rctx: RequestContext, email: str) -> Identity:
-        """Platform-internal: the grant job's. Takes the identity off the
+        """System-internal: the grant job's. Takes the identity off the
         allowlist, audited, and ends every operator token and every sign-in
         with a second factor it holds, in the same commit: they stop at once,
         and a grant made again later revives none of them."""
         ...
 
     @abstractmethod
+    @transition
     async def grant_operator_token(
         self,
         rctx: RequestContext,
@@ -167,7 +177,7 @@ class TenancyManagerInterface(ABC):
         expires_in: timedelta | None = None,
         operator_role: OperatorRole | None = None,
     ) -> IssuedOperatorToken:
-        """Platform-internal: the grant job mints the operator token of an
+        """System-internal: the grant job mints the operator token of an
         agent's identity, the provisioner's or the smoke identity's, carrying
         one permission, `operator_role` or else the entry's, never wider than
         the entry (NotAuthorized), and expiring within the hour (3600 seconds
@@ -177,6 +187,7 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def resume(
         self,
         rctx: RequestContext,
@@ -186,7 +197,7 @@ class TenancyManagerInterface(ABC):
         *,
         record_use: bool = True,
     ) -> SocketPrincipal:
-        """Platform-internal: re-checks the credential behind a redeemed socket
+        """System-internal: re-checks the credential behind a redeemed socket
         ticket and yields the socket's context with the credential's expiry,
         the bound on the socket's authority. An api key is refused with
         PlanLimitReached when the org's plan has no keys, as its every
@@ -198,17 +209,19 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> SocketPrincipal:
-        """Platform-internal: consumes a socket ticket exactly once and re-checks the
+        """System-internal: consumes a socket ticket exactly once and re-checks the
         credential behind it. The gateway holds a ticket, not a principal; what
         it gets back is the principal and the instant its authority ends."""
         ...
 
     @abstractmethod
+    @transition
     async def service_context(
         self, rctx: RequestContext, org_id: UUID, user_id: UUID
     ) -> TenantContext:
-        """Platform-internal: the context a claimed work item runs under. Minted
+        """System-internal: the context a claimed work item runs under. Minted
         for the tenant on the service role, with `user_id` kept as the
         attribution: the person authorized the work once, at enqueue, so only
         the org must be live, not their user or membership; a member who has
@@ -217,10 +230,11 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def member_context(
         self, rctx: RequestContext, org_id: UUID, email: str
     ) -> TenantContext | None:
-        """Platform-internal: the context an integration's call acts under when
+        """System-internal: the context an integration's call acts under when
         it acts for a person. The live member of `org_id` whose identity holds
         `email`, found by the address's digest, with their own role, its
         permissions, and their teams, on the credential kind `INTERNAL`.
@@ -239,8 +253,9 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def service_contexts(self, rctx: RequestContext) -> list[TenantContext]:
-        """Platform-internal: one service context per tenant, deleted ones
+        """System-internal: one service context per tenant, deleted ones
         included, for sweeps, with one for the system scope (`EMPTY_UUID` as the
         org) first, since login credentials live there and a sweep that never
         visits it lets them pile up. Minted for the tenant, not for a member: it
@@ -255,8 +270,9 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> TenantContext | None:
-        """Platform-internal: the service context a purge across tenants acts
+        """System-internal: the service context a purge across tenants acts
         in one tenant under, once it found a row of that tenant and must do
         that tenant's work before the row goes, such as asking another
         manager to erase the files attached to it: the one `service_contexts`
@@ -269,8 +285,9 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @stageless
     async def purge_across_tenants(self) -> int:
-        """Platform-internal: the sweep, across tenants, once a pass, in one
+        """System-internal: the sweep, across tenants, once a pass, in one
         transaction: hard-deletes removed members (and their memberships),
         revoked or expired api keys, revoked or expired sessions (the
         sign-ins of the system scope among them), redeemed or expired socket
@@ -294,7 +311,7 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def tenant_expired(self, ctx: TenantContext) -> bool:
-        """Platform-internal: True when the tenant's org row is deleted longer ago
+        """System-internal: True when the tenant's org row is deleted longer ago
         than the retention. Every namespace's sweep asks it before its own
         purge, so one answer decides for the whole system: a tenant past it
         keeps its org row as the record and no row of any other kind. Under a
@@ -305,7 +322,7 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def mark_purged(self, ctx: TenantContext) -> bool:
-        """Platform-internal, for the sweep, after a pass found nothing of the
+        """System-internal, for the sweep, after a pass found nothing of the
         tenant left to trim: stamps the org `purged_at` when the tenant is past
         its retention, and the sweep leaves it out from then on; its org row
         stays as the record. False, with nothing written, for any other

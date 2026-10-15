@@ -3,7 +3,7 @@
 // every one that runs or waits shows, stacked newest first, each parked one
 // carries its own Resume, and every one that runs or waits its Cancel, which
 // asks before it ends the import.
-import type { ImportView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,7 @@ import { importCard, shownImports } from "./importModel";
 import { ImportStatus } from "./ImportStatus";
 import type { ImportVm } from "./useImportVm";
 
-function view(fields: Partial<ImportView>): ImportView {
+function view(fields: Partial<tasks.ImportView>): tasks.ImportView {
   return {
     id: "i1",
     file_id: "f1",
@@ -48,7 +48,7 @@ afterEach(() => {
   host.remove();
 });
 
-function draw(items: ImportView[], dismissed: Set<string> = new Set(), asking: string | null = null) {
+function draw(items: tasks.ImportView[], dismissed: Set<string> = new Set(), asking: string | null = null) {
   const vm = {
     cards: shownImports(items, dismissed, OPENED).map(importCard),
     resume: vi.fn(() => Promise.resolve()),

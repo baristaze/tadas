@@ -3,8 +3,9 @@ SYNC_SEATS, which holds a per-seat subscription's quantity to the org's
 active members.
 
 Each handler names the permissions its calls take (`REQUIRES`), and the
-tests hold every role that may ask for the kind (`WORK_ENQUEUE_PERMISSIONS`)
-to them: nobody reaches through the queue what they could not do directly."""
+tests hold every role that may ask for the kind (the permission on its spec,
+`tadas.om.work.kinds`) to them: nobody reaches through the queue what they
+could not do directly."""
 
 import logging
 from typing import ClassVar

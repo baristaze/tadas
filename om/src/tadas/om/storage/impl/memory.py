@@ -2,8 +2,8 @@
 
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.storage.impl.memory import BillingStorageMemoryImpl
-from tadas.om.events.storage import EventStorageInterface
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
+from tadas.om.change_events.storage import ChangeEventStorageInterface
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.leases.storage import LeasesStorageInterface
@@ -37,15 +37,41 @@ class StorageMemoryImpl(StorageInterface):
         self._billing = BillingStorageMemoryImpl(self._outbox)
         self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency, self._billing)
         self._work = WorkStorageMemoryImpl()
-        # The records first: a step of one lands beside the tasks it changes.
         self._orchestrations = OrchestrationsStorageMemoryImpl(self._outbox)
-        self._tasks = TasksStorageMemoryImpl(self._outbox, self._orchestrations)
         # The leases land an orchestration's park beside a request, as the
         # Postgres impl runs its statement in the request's transaction.
         self._leases = LeasesStorageMemoryImpl(self._outbox, self._orchestrations)
         self._media = MediaStorageMemoryImpl(self._outbox)
-        self._events = EventStorageMemoryImpl()
+        self._change_events = ChangeEventStorageMemoryImpl()
+        # A copy adds its entries below this line.
+        # The records before the tasks: a step of one lands beside the tasks
+        # it changes.
+        self._tasks = TasksStorageMemoryImpl(self._outbox, self._orchestrations)
         self._slack = SlackStorageMemoryImpl(self._outbox)
+
+    async def healthcheck(self) -> bool:
+        return True
+
+    async def close(self) -> None:
+        return None
+
+    def get_change_event_storage(self) -> ChangeEventStorageInterface:
+        return self._change_events
+
+    def get_idempotency_storage(self) -> IdempotencyStorageInterface:
+        return self._idempotency
+
+    def get_lease_storage(self) -> LeasesStorageInterface:
+        return self._leases
+
+    def get_media_storage(self) -> MediaStorageInterface:
+        return self._media
+
+    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
+        return self._orchestrations
+
+    def get_outbox_storage(self) -> OutboxStorageInterface:
+        return self._outbox
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
         return self._tenancy
@@ -53,20 +79,7 @@ class StorageMemoryImpl(StorageInterface):
     def get_work_storage(self) -> WorkStorageInterface:
         return self._work
 
-    def get_tasks_storage(self) -> TasksStorageInterface:
-        return self._tasks
-
-    def get_media_storage(self) -> MediaStorageInterface:
-        return self._media
-
-    def get_idempotency_storage(self) -> IdempotencyStorageInterface:
-        return self._idempotency
-
-    def get_event_storage(self) -> EventStorageInterface:
-        return self._events
-
-    def get_outbox_storage(self) -> OutboxStorageInterface:
-        return self._outbox
+    # A copy adds its entries below this line.
 
     def get_billing_storage(self) -> BillingStorageInterface:
         return self._billing
@@ -74,14 +87,5 @@ class StorageMemoryImpl(StorageInterface):
     def get_slack_storage(self) -> SlackStorageInterface:
         return self._slack
 
-    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
-        return self._orchestrations
-
-    def get_lease_storage(self) -> LeasesStorageInterface:
-        return self._leases
-
-    async def healthcheck(self) -> bool:
-        return True
-
-    async def close(self) -> None:
-        return None
+    def get_tasks_storage(self) -> TasksStorageInterface:
+        return self._tasks

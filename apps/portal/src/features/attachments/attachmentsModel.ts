@@ -1,6 +1,6 @@
 // Pure: how a file is shown, and what type a file the browser could not name
 // is sent as. Values in, values out; the server decides what it accepts.
-import type { FileView } from "@tadas/client";
+import type { media } from "@tadas/client";
 import { humanSize } from "../settings/storageModel";
 
 // The types a browser often leaves empty; the server holds the name's
@@ -57,7 +57,7 @@ export interface AttachmentRow {
   preview: PreviewKind | null;
 }
 
-export function attachmentRow(file: FileView): AttachmentRow {
+export function attachmentRow(file: media.FileView): AttachmentRow {
   const kind = file.extension ? file.extension.toUpperCase() : (file.content_type.split("/")[1] ?? "file");
   return {
     id: file.id,

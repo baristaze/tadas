@@ -1,12 +1,12 @@
 """The Slack app an org installed, the one-time state an install carries
-through Slack and back, and the record of what the platform posted."""
+through Slack and back, and the record of what the system posted."""
 
 from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
-from tadas.om.base import Created, Identifiable, Platform, SoftDeletable, Trackable
+from tadas.om.base import Created, Identifiable, OmBase, SoftDeletable, Trackable
 
 
 class SlackInstallationStatus(StrEnum):
@@ -64,7 +64,7 @@ class SlackInstallState(Identifiable, Created):
     redeemed_at: datetime | None = None
 
 
-class SlackInstallStart(Platform):
+class SlackInstallStart(OmBase):
     """Where the browser goes to install: Slack's page, carrying the state."""
 
     url: str
@@ -72,7 +72,7 @@ class SlackInstallStart(Platform):
 
 
 class SlackPost(Identifiable, Created):
-    """A message the platform posted, keyed by the work that posted it: a
+    """A message the system posted, keyed by the work that posted it: a
     retried post finds its key here and posts nothing. Slack's timestamp
     names the message in the channel."""
 

@@ -111,7 +111,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **A change says which version it wrote.** The announcement of a
   task's change names the task and the version the change set, never a
   field. A screen that already shows that version, the one whose own
-  write it was, has nothing to read (ADR 0061). A reminder and the
+  write it was, has nothing to read (ADR 1018). A reminder and the
   daily archive name no version, and every screen reads the task.
 - **Some fields are never the caller's.** An edit changes the title,
   the notes, the assignee, and the status. Who made the task, whether

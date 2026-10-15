@@ -3,7 +3,7 @@
 // sections of the task list they folded, and which ended imports they
 // dismissed, per org. Local storage is the right place for a preference; the
 // session token is the one thing that never goes there.
-import type { TaskScope } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { parseTheme, type ThemePreference } from "../app/themeModel";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -51,8 +51,8 @@ export function parseDismissedImports(stored: unknown): DismissedImports {
 }
 
 interface PreferencesState {
-  taskScope: TaskScope;
-  setTaskScope: (scope: TaskScope) => void;
+  taskScope: tasks.TaskScope;
+  setTaskScope: (scope: tasks.TaskScope) => void;
   theme: ThemePreference;
   setTheme: (theme: ThemePreference) => void;
   folded: FoldedSections;
@@ -64,13 +64,13 @@ interface PreferencesState {
 }
 
 /** Pure: the scope a bare word names, and nothing else. */
-export function legacyScope(value: string | null): TaskScope | null {
+export function legacyScope(value: string | null): tasks.TaskScope | null {
   return value === "team" || value === "mine" ? value : null;
 }
 
 /** Reads the scope kept as a bare word under its own key, once, and drops
  * it; null when there is none or the storage cannot be read. */
-export function adoptLegacyScope(storage: Pick<Storage, "getItem" | "removeItem"> | undefined): TaskScope | null {
+export function adoptLegacyScope(storage: Pick<Storage, "getItem" | "removeItem"> | undefined): tasks.TaskScope | null {
   try {
     const scope = legacyScope(storage?.getItem(LEGACY_SCOPE_KEY) ?? null);
     storage?.removeItem(LEGACY_SCOPE_KEY);

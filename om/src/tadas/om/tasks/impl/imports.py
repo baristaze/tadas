@@ -11,22 +11,21 @@ from tadas.om.media.rules import BOUNDS
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.orchestrations import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import advanced
-from tadas.om.orchestrations.steps import step_rows
+from tadas.om.orchestrations.steps import orchestration_step_rows
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
-    OrchestrationKind,
     OrchestrationPage,
+    OrchestrationStep,
     ParkReason,
     RowError,
-    Step,
-    TaskImportInput,
 )
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, versioned_row
 from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.om.tasks.impl.shared import reminder_rows, room_left
 from tadas.om.tasks.imports import TasksImportsManagerInterface
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import (
     IMPORT_BATCH,
     ImportedTask,
@@ -39,6 +38,7 @@ from tadas.om.tasks.rules import (
 )
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.task import Task
+from tadas.om.tasks.types.work import TaskImportInput
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.rules import fold_email
 
@@ -84,19 +84,19 @@ class TasksImportsManagerImpl(TasksImportsManagerInterface):
             updated_at=now,
             created_by=ctx.user_id,
             updated_by=ctx.user_id,
-            kind=OrchestrationKind.TASK_IMPORT,
+            kind=TasksOrchestrationKind.TASK_IMPORT,
             input=TaskImportInput(file_id=file_id).model_dump(mode="json"),
         )
         return await self._orchestrations.start(ctx, record)
 
     async def get_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
         record = await self._orchestrations.get(ctx, import_id)
-        if record.kind is not OrchestrationKind.TASK_IMPORT:
+        if record.kind != TasksOrchestrationKind.TASK_IMPORT:
             raise NotFound(f"import {import_id} not found")
         return record
 
     async def get_imports(self, ctx: TenantContext, limit: int) -> OrchestrationPage:
-        return await self._orchestrations.get_recent(ctx, OrchestrationKind.TASK_IMPORT, limit)
+        return await self._orchestrations.get_recent(ctx, TasksOrchestrationKind.TASK_IMPORT, limit)
 
     async def resume_import(self, ctx: TenantContext, import_id: UUID) -> Orchestration:
         await self.get_import(ctx, import_id)
@@ -154,12 +154,15 @@ class TasksImportsManagerImpl(TasksImportsManagerInterface):
             park=park,
         )
         tasks = await self._imported_tasks(ctx, record, made, now)
-        rows_after = step_rows(ctx, after)
+        rows_after = orchestration_step_rows(ctx, after)
         written = await self._storage.create_tasks_in_step(
-            ctx.org_id, tasks, Step(record=after, expected_version=record.version), rows_after
+            ctx.org_id,
+            tasks,
+            OrchestrationStep(record=after, expected_version=record.version),
+            rows_after,
         )
-        # The step's tasks relay together: their events take one run of
-        # numbers under one hold of the tenant's cursor, not one hold each.
+        # The step's tasks relay together: their change events take one run
+        # of numbers under one hold of the tenant's cursor, not one hold each.
         landed_rows = [
             row
             for (_, task_rows), landed in zip(tasks, written, strict=True)

@@ -1,5 +1,5 @@
 // The plans on offer, one row each, with a choice on the ones a person may take.
-import type { Plan, PlanOfferView } from "@tadas/client";
+import type { billing } from "@tadas/client";
 import { Button, Pill } from "../../design/kit";
 import { limitLines, planName, priceText } from "./billingModel";
 
@@ -10,11 +10,11 @@ export function PlanList({
   choose,
   choosing,
 }: {
-  plans: PlanOfferView[];
-  current: Plan;
+  plans: billing.PlanOfferView[];
+  current: billing.Plan;
   suggested?: string | null;
   /** When absent, the list is read-only. */
-  choose?: (plan: Plan) => void;
+  choose?: (plan: billing.Plan) => void;
   choosing?: boolean;
 }) {
   return (

@@ -8,18 +8,16 @@ from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.context import TenantContext
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.kinds import SlackKind
 from tadas.om.slack.types.installation import SlackInstallationStatus
+from tadas.om.slack.types.work import SlackPostEvent, SlackPostPayload
+from tadas.om.tasks.kinds import TasksKind
 from tadas.om.tasks.rules import earliest_reminder_time, room_for
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope
-from tadas.om.work.types.work_item import (
-    SlackPostEvent,
-    SlackPostPayload,
-    TaskReminderPayload,
-    WorkKind,
-    work_row_kind,
-)
+from tadas.om.tasks.types.work import TaskReminderPayload
+from tadas.om.work.types.work_item import work_row_kind
 
 
 async def room_left(
@@ -49,7 +47,7 @@ def reminder_rows(ctx: TenantContext, task: Task) -> tuple[OutboxRow, ...]:
     if task.due_on is None:
         return ()
     payload = TaskReminderPayload(not_before=earliest_reminder_time(task.due_on))
-    kind = work_row_kind(WorkKind.TASK_REMINDER)
+    kind = work_row_kind(TasksKind.TASK_REMINDER)
     return (outbox_row(ctx, kind, task.id, payload.model_dump(mode="json")),)
 
 
@@ -67,5 +65,5 @@ async def slack_rows(
     ):
         return ()
     payload = SlackPostPayload(event=event)
-    kind = work_row_kind(WorkKind.SLACK_POST)
+    kind = work_row_kind(SlackKind.SLACK_POST)
     return (outbox_row(ctx, kind, task_id, payload.model_dump(mode="json")),)

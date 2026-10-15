@@ -16,7 +16,7 @@ holds. What the command does, it does as that person, with their role.
 
 Handling twice is harmless, which is what makes Slack's retries and the
 queue's redeliveries safe. A task `/tadas add` creates takes an id derived
-from the call's key and the time it was received (ADR 0027), so the second
+from the call's key and the time it was received (ADR 1008), so the second
 create meets the row already there. The reply to a mention is recorded under
 the call's key, so it is posted once. The rest are answers to the person who
 typed, which say the same thing again, and reads, which change nothing. A
@@ -44,7 +44,7 @@ from tadas.integrations.slack import (
 from tadas.integrations.slack.requests import SlackInbound
 from tadas.om.base import derived_id, new_id, utcnow
 from tadas.om.context import AppContext, Permission, RequestContext, TenantContext
-from tadas.om.exceptions import PlanLimitReached, PlatformException
+from tadas.om.exceptions import OmException, PlanLimitReached
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import TaskFilter
@@ -340,12 +340,12 @@ class InboundOptions(BaseModel):
     otherwise spin."""
 
 
-def settled(error: SlackError | PlatformException) -> bool:
-    """Whether a refusal ends the call: a platform refusal of the request (a
-    4xx) and a Slack answer about the channel or the install do; a rate
-    limit, a transport failure, and a platform that cannot serve now (a 5xx)
+def settled(error: SlackError | OmException) -> bool:
+    """Whether a refusal ends the call: the system's refusal of the request
+    (a 4xx) and a Slack answer about the channel or the install do; a rate
+    limit, a transport failure, and a system that cannot serve now (a 5xx)
     are worth another run."""
-    if isinstance(error, PlatformException):
+    if isinstance(error, OmException):
         return error.http_status < 500
     return not isinstance(error, SlackRateLimited | SlackFailed)
 
@@ -398,7 +398,7 @@ class SlackInboundConsumer:
                 continue
             try:
                 await self._handler.handle(delivery)
-            except (SlackError, PlatformException) as error:
+            except (SlackError, OmException) as error:
                 if not settled(error):
                     log.warning(
                         "slack inbound: %s met %s; the queue hands it back",

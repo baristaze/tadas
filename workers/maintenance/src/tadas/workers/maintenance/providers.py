@@ -24,7 +24,7 @@ from tadas.infra.base import SYSTEM_SCOPE, utcnow
 from tadas.infra.exceptions import InfraException
 from tadas.infra.outages import Outage, OutageSignalInterface
 from tadas.integrations.exceptions import PaymentsRefused, ProviderRefused
-from tadas.om.exceptions import PlatformException
+from tadas.om.exceptions import OmException
 from tadas.om.work.types.handler import WorkParked, WorkRefused
 
 PROVIDER_WAIT = timedelta(minutes=1)
@@ -40,7 +40,7 @@ credential in this process, or refusing the one it has."""
 @dataclass(frozen=True)
 class ProviderCalls:
     """The calls a worker makes to one provider under one credential: the org
-    that holds it (`SYSTEM_SCOPE` for the platform's own) and the secret's
+    that holds it (`SYSTEM_SCOPE` for the system's own) and the secret's
     name, never its value. The root builds one per pair, over the signal
     every worker on the shared cache reads."""
 
@@ -62,7 +62,7 @@ class ProviderCalls:
             )
         try:
             yield
-        except (InfraException, PlatformException) as error:
+        except (InfraException, OmException) as error:
             if error.http_status == UNAVAILABLE:
                 await self.outages.mark(
                     Outage(

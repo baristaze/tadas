@@ -18,13 +18,13 @@ from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
 )
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.impl.manager import TasksOptions
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import CLEANUP_BATCH
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import TaskFilter
@@ -111,7 +111,7 @@ async def test_the_cleanup_archives_done_tasks_past_ninety_days_and_keeps_the_re
     await world.done(ctx, "91 days ago", 91)
     kept = await world.done(ctx, "89 days ago", 89)
     record = await world.managers.tasks.cleanup.open_cleanup(ctx)
-    assert record is not None and record.kind is OrchestrationKind.TASK_CLEANUP
+    assert record is not None and record.kind == TasksOrchestrationKind.TASK_CLEANUP
     assert record.input["older_than_days"] == 90
     finished = await world.run(ctx, record)
     assert finished.status is OrchestrationStatus.SUCCEEDED
@@ -133,7 +133,9 @@ async def test_the_days_record_opens_once_and_only_with_something_to_archive(
     second = await world.managers.tasks.cleanup.open_cleanup(ctx)
     assert first is not None and second is not None and first.id == second.id
     assert first.period == utcnow().date().isoformat()
-    page = await world.managers.orchestrations.get_recent(ctx, OrchestrationKind.TASK_CLEANUP, 10)
+    page = await world.managers.orchestrations.get_recent(
+        ctx, TasksOrchestrationKind.TASK_CLEANUP, 10
+    )
     assert [r.id for r in page.items] == [first.id]
 
 

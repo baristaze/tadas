@@ -10,7 +10,6 @@ from uuid import UUID
 
 import pytest
 
-from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
 from tadas.om.slack.rules import credential_ref_for, new_state, state_digest
@@ -21,6 +20,11 @@ from tadas.om.slack.types.installation import (
     SlackInstallState,
     SlackPost,
 )
+
+from contracts.racing import race
+
+INTERFACE = SlackStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {

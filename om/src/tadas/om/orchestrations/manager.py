@@ -6,17 +6,17 @@ start, its failure, the two ways a parked record wakes (the event that
 clears its reason, or a person), and the way out that is no wake (a
 person's cancel). What one step of a kind does is the namespace whose rows
 it changes (the tasks namespace steps an import and a cleanup): that
-namespace lands the record beside its own rows (`Step`), a park among
-them."""
+namespace lands the record beside its own rows (`OrchestrationStep`), a
+park among them. The one kind this namespace steps itself is `noop`,
+which changes nothing else."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from tadas.om.context import TenantContext
+from tadas.om.context import TenantContext, stageless
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
-    OrchestrationKind,
     OrchestrationPage,
     ParkReason,
 )
@@ -27,18 +27,26 @@ class OrchestrationsManagerInterface(ABC):
     async def start(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         """The create: the record lands running at its first cursor, with the
         hint that announces it and the work row that asks for its first step,
-        in one commit. The input must be the shape its kind fixes
-        (`ORCHESTRATION_INPUTS`). An id written already answers the record as
-        stored; so does a record kept per period whose period is open."""
+        in one commit. Its kind must be one the registry holds, and the
+        input the shape that kind fixes (`orchestrations.kinds`); either
+        miss is refused (`ValidationFailed`). An id written already answers
+        the record as stored; so does a record kept per period whose period
+        is open."""
         ...
 
     @abstractmethod
     async def get(self, ctx: TenantContext, record_id: UUID) -> Orchestration: ...
 
     @abstractmethod
-    async def get_recent(
-        self, ctx: TenantContext, kind: OrchestrationKind, limit: int
-    ) -> OrchestrationPage:
+    async def step_noop(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
+        """One step of a `noop` record: the cursor moves by one, and the record
+        succeeds once it reaches its input's count. The record is written
+        alone, conditioned on the version of `record`, with the work row of
+        the next step while it runs."""
+        ...
+
+    @abstractmethod
+    async def get_recent(self, ctx: TenantContext, kind: str, limit: int) -> OrchestrationPage:
         """The org's newest records of a kind, newest first; `limit` is clamped."""
         ...
 
@@ -57,7 +65,7 @@ class OrchestrationsManagerInterface(ABC):
         resumes, staggered; returns how many. What cleared the reason asks
         for it (a plan that rose clears `plan_limit`).
         With `record_id`, only that record, when it is parked for `reason`: a
-        grant clears `resource` for the one record it was for."""
+        grant clears `leasable_resource` for the one record it was for."""
         ...
 
     @abstractmethod
@@ -88,8 +96,9 @@ class OrchestrationsManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @stageless
     async def purge_across_tenants(self) -> int:
-        """Platform-internal: the sweep, across tenants, once a pass: the
+        """System-internal: the sweep, across tenants, once a pass: the
         records settled past the retention, a batch at most, whatever their
         tenant; returns how many. It takes no context, because it runs for
         no tenant and no principal."""

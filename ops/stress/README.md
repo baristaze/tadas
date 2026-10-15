@@ -9,8 +9,8 @@ client does and reads the signals back when it ends.
 Each person signs in once per run, by the local sign-in, and out once at
 the end. A session opens the realtime channel, lists the open tasks, adds
 five or six, edits one, completes two, reopens one, moves one, lists the
-done ones, deletes one, reads the events, and waits to see its own change
-on the socket. A person thinks between steps.
+done ones, deletes one, reads the change events, and waits to see its own
+change on the socket. A person thinks between steps.
 
 The people of an org share its open list. A write that meets a task
 changed under it, by a reminder or by the sweep's respace of a run of
@@ -25,7 +25,7 @@ still is.
 A p95 and an error ratio, stated in the file or on the run with
 `--p95-ms` and `--error-ratio`. The p95 judges the working requests; the
 sign-ins and sign-outs are reported beside it. After the run the
-platform's own request and 5xx counts are read back, and the run fails
+system's own request and 5xx counts are read back, and the run fails
 when they miss the target.
 
 ## The file

@@ -20,7 +20,7 @@ from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
 from tadas.integrations.slack import SlackInterface
 from tadas.om.billing.impl.manager import BillingOptions
-from tadas.om.events.impl.manager import EventsOptions
+from tadas.om.change_events.impl.manager import ChangeEventsOptions
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.leases.impl.manager import LeasesOptions
 from tadas.om.media.impl.manager import MediaOptions
@@ -45,11 +45,11 @@ LEASE_SWEEP_BATCH = LeasesOptions().sweep_batch
 or more may have left some due."""
 
 
-def events_options(settings: MaintenanceSettings) -> EventsOptions:
+def change_events_options(settings: MaintenanceSettings) -> ChangeEventsOptions:
     """The sweep's trim of each living org's stream, 90 days by default and
     off at 0, a batch per call like every purge."""
-    days = settings.event_retention_days
-    return EventsOptions(
+    days = settings.change_event_retention_days
+    return ChangeEventsOptions(
         retention=timedelta(days=days) if days else None, purge_batch=settings.worker_purge_batch
     )
 
@@ -87,7 +87,7 @@ def worker_managers(
         idempotency_options=IdempotencyOptions(
             retention=timedelta(hours=settings.idempotency_retention_hours), purge_batch=batch
         ),
-        events_options=events_options(settings),
+        change_events_options=change_events_options(settings),
         billing_options=BillingOptions(
             retention=timedelta(days=settings.billing_delivery_retention_days),
             purge_batch=batch,

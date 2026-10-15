@@ -47,7 +47,8 @@ import websockets
 from PIL import Image, ImageDraw
 
 from tadas.client.client import ApiClient
-from tadas.client.types import OrgKind, TaskScope, TaskStatus
+from tadas.client.types.tasks import TaskScope, TaskStatus
+from tadas.client.types.tenancy import OrgKind
 
 WIDTH, HEIGHT = 420, 840  # each window in the GIF: portrait, height twice the width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
@@ -80,13 +81,13 @@ class Api:
     def _client(self, token: str | None = None) -> ApiClient:
         return ApiClient(self.base, app="portal", app_version="portal@demo", token=token)
 
-    async def session(self, email: str) -> dict[str, Any]:
+    async def auth_session(self, email: str) -> dict[str, Any]:
         """What the portal keeps in session storage once someone has signed in
         and chosen the seeded team; every person also has a personal org."""
         async with self._client() as client:
             login = await client.dev_sign_in(email)
             org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
-            issued = await client.exchange_session(login.token, org.id)
+            issued = await client.exchange_auth_session(login.token, org.id)
         return {"state": {"token": issued.token, "orgSlug": org.slug}, "version": 0}
 
     async def clear_tasks(self, token: str) -> int:
@@ -341,13 +342,13 @@ async def open_window(
     await cdp.send("Emulation.setEmulatedMedia", scheme, window.session)
     await cdp.send("Page.navigate", {"url": f"{portal}/login/dev"}, window.session)
     await window.wait_for("document.readyState === 'complete'")
-    stored = json.dumps(json.dumps(await api.session(email)))
+    stored = json.dumps(json.dumps(await api.auth_session(email)))
     scope = json.dumps(json.dumps({"state": {"taskScope": "team"}, "version": 0}))
-    # The bearer lives in the tab's session storage, and the portal drops a
-    # session it finds in local storage on load; the scope is a preference and
-    # stays in local storage.
+    # The bearer lives in the tab's session storage, and the portal drops an
+    # auth session it finds in local storage on load; the scope is a preference
+    # and stays in local storage.
     await window.js(
-        f"sessionStorage.setItem('tadas.portal.session', {stored});"
+        f"sessionStorage.setItem('tadas.portal.authSession', {stored});"
         f"localStorage.setItem('tadas.portal.preferences', {scope}); true"
     )
     await cdp.send("Page.navigate", {"url": f"{portal}/"}, window.session)
@@ -473,8 +474,8 @@ async def still(window: Window, path: str) -> None:
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
     if not args.still:  # a still shows whatever the list holds; a recording starts empty
-        owner_session = await api.session(args.owner)
-        cleared = await api.clear_tasks(owner_session["state"]["token"])
+        owner_auth_session = await api.auth_session(args.owner)
+        cleared = await api.clear_tasks(owner_auth_session["state"]["token"])
         print(f"cleared {cleared} tasks")
 
     profile = tempfile.mkdtemp(prefix="tadas-demo-chrome-")

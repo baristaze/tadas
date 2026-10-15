@@ -26,7 +26,7 @@ drop across releases
 
 ## Consequences
 
-`EventView` names an event by `kind` and `target_id` under `/v1`.
+`ChangeEventView` names a change event by `kind` and `target_id` under `/v1`.
 Reviews treat a field that leaves `/v1` as the recorded exception, not
 as the pattern: it is marked deprecated for a release first, and the
 clients in the tree stop reading it in that release.

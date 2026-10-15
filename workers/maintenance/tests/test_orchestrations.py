@@ -5,7 +5,8 @@ that waits in line for a resource and the grant that wakes it with its lease,
 a step that errors retried by the queue from its cursor and failed as a defect
 on its last attempt, and a step for a record that no longer runs doing nothing.
 Then the sweep opening the day's cleanup, whose steps archive the old done
-tasks, and the sweep respacing a run of long ranks."""
+tasks, the sweep respacing a run of long ranks, and a step for a kind nobody
+registered refused at the build."""
 
 from collections.abc import Mapping
 from datetime import timedelta
@@ -19,18 +20,22 @@ from worker_support import build_container, request, sign_in, start_import
 from tadas.om.base import derived_id, new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import TenantContext
+from tadas.om.leases.types.leasable_resource import LeasableResource, LeasableResourceKind
 from tadas.om.leases.types.lease import Lease
 from tadas.om.leases.types.request import LeaseRequest, WaiterKind
-from tadas.om.leases.types.resource import Resource, ResourceKind
+from tadas.om.orchestrations.kinds import OrchestrationKindSpec
 from tadas.om.orchestrations.rules import advanced
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
+    NoopInput,
     Orchestration,
     OrchestrationKind,
     OrchestrationStatus,
+    OrchestrationStep,
     ParkReason,
-    Step,
 )
+from tadas.om.root import ORCHESTRATION_KINDS
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import needs_respace
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -44,13 +49,13 @@ LEASE = timedelta(seconds=30)
 KINDS = [WorkKind.ORCHESTRATION, WorkKind.WAKE_PARKED]
 
 
-def handlers_of(container: WorkerContainer) -> Mapping[WorkKind, WorkHandlerInterface]:
+def handlers_of(container: WorkerContainer) -> Mapping[str, WorkHandlerInterface]:
     """The worker's own handlers."""
     return build_loop(container)._handlers  # pyright: ignore[reportPrivateUsage]
 
 
 async def drain(
-    container: WorkerContainer, handlers: Mapping[WorkKind, WorkHandlerInterface]
+    container: WorkerContainer, handlers: Mapping[str, WorkHandlerInterface]
 ) -> list[WorkItem]:
     """Claims every available step and wake-up and runs it with `handlers`,
     settling it as the loop does."""
@@ -77,7 +82,7 @@ async def test_a_record_steps_from_the_queue_until_it_succeeds(tmp_path: Path) -
     done = await container.managers.orchestrations.get(ctx, started.id)
     assert (done.status, done.cursor, done.total) == (OrchestrationStatus.SUCCEEDED, 250, 250)
     assert done.finished_at is not None
-    # The platform ran the steps; the record is still the person's.
+    # The system ran the steps; the record is still the person's.
     assert {item.created_by for item in ran} == {ctx.user_id}
 
 
@@ -98,12 +103,12 @@ async def test_an_import_parks_at_the_plan_and_the_processors_delivery_wakes_it(
     paid = await checkout(container, ctx, Plan.PRO, 1)
     assert await consumer.handle(await queued(container, paid)) == "applied"
     ran = await drain(container, handlers_of(container))
-    assert ran[0].kind is WorkKind.WAKE_PARKED
+    assert ran[0].kind == WorkKind.WAKE_PARKED
     done = await container.managers.tasks.imports.get_import(ctx, started.id)
     assert done.status is OrchestrationStatus.SUCCEEDED
     assert (done.applied, done.cursor, done.total) == (50, 50, 50)
     assert await container.managers.tasks.count_active_tasks(ctx) == 50
-    # The platform's delivery woke it; the tasks are still the person's.
+    # The processor's delivery woke it; the tasks are still the person's.
     team = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
     page = await container.managers.tasks.get_open_tasks(ctx, team, None, 200)
     assert {t.created_by for t in page.items} == {ctx.user_id}
@@ -114,7 +119,7 @@ class Leasing:
     derives, parks on `resource` in the same call while it waits, and steps
     once it holds one. Woken, it asks again by the key and finds its lease."""
 
-    def __init__(self, container: WorkerContainer, resource: Resource) -> None:
+    def __init__(self, container: WorkerContainer, resource: LeasableResource) -> None:
         self.container = container
         self.resource = resource
         self.held: list[Lease] = []
@@ -128,16 +133,16 @@ class Leasing:
             created_by=ctx.user_id,
             updated_by=ctx.user_id,
             idempotency_key=derived_id(record.id, record.created_at, "resource"),
-            kind=ResourceKind.NOOP,
-            resource_id=self.resource.id,
+            kind=LeasableResourceKind.NOOP,
+            leasable_resource_id=self.resource.id,
             waiter_kind=WaiterKind.ORCHESTRATION,
             waiter_id=record.id,
         )
         parked = advanced(
             record, now, ctx.user_id, cursor=record.cursor, total=record.total,
-            park=ParkReason.RESOURCE,
+            park=ParkReason.LEASABLE_RESOURCE,
         )  # fmt: skip
-        park = Step(record=parked, expected_version=record.version)
+        park = OrchestrationStep(record=parked, expected_version=record.version)
         standing = await self.container.managers.leases.ask(ctx, ask, park)
         if standing.lease is None:
             return parked
@@ -156,17 +161,17 @@ async def test_a_record_waits_in_line_and_the_grant_wakes_it_with_its_lease(
     now = utcnow()
     dock = await leases.register(
         ctx,
-        Resource(
+        LeasableResource(
             id=new_id(), created_at=now, updated_at=now, created_by=ctx.user_id,
-            updated_by=ctx.user_id, kind=ResourceKind.NOOP, ref_id=new_id(),
+            updated_by=ctx.user_id, kind=LeasableResourceKind.NOOP, ref_id=new_id(),
         ),
     )  # fmt: skip
     first = await leases.ask(
         ctx,
         LeaseRequest(
             id=new_id(), created_at=now, updated_at=now, created_by=ctx.user_id,
-            updated_by=ctx.user_id, idempotency_key=new_id(), kind=ResourceKind.NOOP,
-            resource_id=dock.id,
+            updated_by=ctx.user_id, idempotency_key=new_id(), kind=LeasableResourceKind.NOOP,
+            leasable_resource_id=dock.id,
         ),
     )  # fmt: skip
     assert first.lease is not None
@@ -175,12 +180,17 @@ async def test_a_record_waits_in_line_and_the_grant_wakes_it_with_its_lease(
     handlers = {
         **handlers_of(container),
         WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
-            container.managers.orchestrations, {OrchestrationKind.TASK_IMPORT: leasing}
+            container.managers.orchestrations,
+            ORCHESTRATION_KINDS,
+            {TasksOrchestrationKind.TASK_IMPORT: leasing},
         ),
     }
     assert len(await drain(container, handlers)) == 1, "a record in line asks for no step"
     parked = await container.managers.orchestrations.get(ctx, started.id)
-    assert (parked.status, parked.park_reason) == (OrchestrationStatus.PARKED, ParkReason.RESOURCE)
+    assert (parked.status, parked.park_reason) == (
+        OrchestrationStatus.PARKED,
+        ParkReason.LEASABLE_RESOURCE,
+    )
     # The resource frees: the grant wakes the record it was for, and its
     # steps run to the end under the lease it finds by its key.
     await leases.release(ctx, first.lease.id)
@@ -214,7 +224,9 @@ async def test_a_step_that_errors_is_the_queues_to_retry_and_goes_on_from_its_cu
     started = await start_import(container, ctx, 250)
     flaky = Flaky(container)
     handler = OrchestrationHandlerImpl(
-        container.managers.orchestrations, {OrchestrationKind.TASK_IMPORT: flaky}
+        container.managers.orchestrations,
+        ORCHESTRATION_KINDS,
+        {TasksOrchestrationKind.TASK_IMPORT: flaky},
     )
     steps = [WorkKind.ORCHESTRATION]
     claimed = await container.managers.work.claim(request(), "default", steps, "test", LEASE)
@@ -249,7 +261,9 @@ async def test_the_last_attempt_fails_the_record_as_a_defect(tmp_path: Path) -> 
     ctx = await sign_in(container)
     started = await start_import(container, ctx, 3)
     handler = OrchestrationHandlerImpl(
-        container.managers.orchestrations, {OrchestrationKind.TASK_IMPORT: Flaky(container)}
+        container.managers.orchestrations,
+        ORCHESTRATION_KINDS,
+        {TasksOrchestrationKind.TASK_IMPORT: Flaky(container)},
     )
     claimed = await container.managers.work.claim(request(), "default", KINDS, "test", LEASE)
     assert claimed is not None
@@ -308,7 +322,7 @@ async def test_the_sweep_opens_the_days_cleanup_and_its_steps_archive_old_done_t
     # The day's second sweep opens nothing more.
     await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     page = await container.managers.orchestrations.get_recent(
-        ctx, OrchestrationKind.TASK_CLEANUP, 10
+        ctx, TasksOrchestrationKind.TASK_CLEANUP, 10
     )
     (record,) = page.items
     assert record.input["older_than_days"] == 90
@@ -354,3 +368,21 @@ async def test_the_sweep_respaces_a_run_of_long_ranks(tmp_path: Path) -> None:
     after = (await tasks.get_open_tasks(ctx, team, None, 10)).items
     assert [t.title for t in after] == [t.title for t in before]
     assert not any(needs_respace(t.rank) for t in after)
+
+
+def test_a_step_for_a_kind_nobody_registered_is_refused_at_the_build(tmp_path: Path) -> None:
+    """A copy keys its kind's step by the name its own module registers; a
+    step for a name the registry does not hold is refused before any item
+    is claimed."""
+    container = build_container(tmp_path)
+    orchestrations = container.managers.orchestrations
+    steps = {
+        OrchestrationKind.NOOP: orchestrations.step_noop,
+        "dock_import": orchestrations.step_noop,
+    }
+    with pytest.raises(ValueError, match="no orchestration kind is registered as dock_import"):
+        OrchestrationHandlerImpl(orchestrations, ORCHESTRATION_KINDS, steps)
+    copys = ORCHESTRATION_KINDS.extended((OrchestrationKindSpec("dock_import", NoopInput),))
+    assert isinstance(
+        OrchestrationHandlerImpl(orchestrations, copys, steps), OrchestrationHandlerImpl
+    )
