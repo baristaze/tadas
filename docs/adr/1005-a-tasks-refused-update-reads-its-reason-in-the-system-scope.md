@@ -15,9 +15,9 @@ is gone, another tenant holds it, or it moved past that version.
 Narrowed to the tenant, "another tenant holds it" and "nobody does" are
 one empty answer, and they are different refusals.
 
-Tadas's own run of the controls shows what the second fence is for: a
-suite with a cross-tenant case for the open list and none for the done
-list stayed green when the done list's `WHERE` lost its tenant
+The controls show what the second fence is for: a suite with a
+cross-tenant case for the open list and none for the done list stays
+green when the done list's `WHERE` loses its tenant
 (`docs/runbooks/tenant-isolation.md`).
 
 ## Decision

@@ -28,6 +28,7 @@ list there.
 While Stripe is down, or refuses the key, the org waits, empty, and
 its subscription keeps billing until Stripe answers.
 
-Stripe's runtime key already has Customers and Subscriptions at Write
-([ADR 0032](0032-two-restricted-stripe-keys.md)). No key gains a
-permission.
+The cancel and the delete take Customers and Subscriptions at Write,
+which Stripe's runtime key holds
+([ADR 0032](0032-two-restricted-stripe-keys.md)), so the deletion asks
+no key for more.

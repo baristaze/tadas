@@ -44,10 +44,10 @@ the width of its handler, and no route enqueues it.
 
 ## Consequences
 
-Stripe's runtime key already has Customers and Subscriptions at Write,
-which cover the cancel and the delete
-([ADR 0032](0032-two-restricted-stripe-keys.md)). No key gains a
-permission.
+The cancel and the delete take Customers and Subscriptions at Write,
+which Stripe's runtime key holds
+([ADR 0032](0032-two-restricted-stripe-keys.md)), so the deletion asks
+no key for more.
 
 While Stripe or Slack is down, or refuses the key, the personal org's
 rows wait as they do for the identity provider, and a paid plan keeps
