@@ -1,12 +1,12 @@
 -- The queue role: the work queue, hot and tiny, in a role of its own so a
--- claim never competes with an analytical scan.
+-- claim never competes with an analytical scan, and each tenant's own cap on
+-- a lane.
 
 -- A work item. Its routing field is its lane. Every claim mints a token the
 -- claim returns, and every transition of a claimed item is conditional on
 -- it, since one worker can hold one item twice across a requeue. The item
 -- carries the request that caused the work and its trace context: the W3C
--- header and not a trace id, because a span links to a span. The not-null
--- constraint of `lane` carries the name every migrated database holds.
+-- header and not a trace id, because a span links to a span.
 CREATE TABLE queue.work_items (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE queue.work_items (
     target_id uuid NOT NULL,
     idempotency_key uuid NOT NULL,
     payload jsonb NOT NULL,
-    lane text CONSTRAINT work_items_queue_not_null NOT NULL,
+    lane text NOT NULL,
     status text NOT NULL,
     available_at timestamptz NOT NULL,
     claimed_by text NULL,
@@ -89,6 +89,44 @@ CREATE POLICY tenant_fence ON queue.work_items FOR ALL TO tadas_runtime
 CREATE POLICY system_fence ON queue.work_items FOR ALL TO tadas_system
     USING (current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000')
     WITH CHECK (current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000');
+
+-- A tenant's own cap on a lane: one row per tenant and lane, which the
+-- claim joins to its count of the lane's claimed items, in place of the
+-- lane's cap for that tenant.
+CREATE TABLE queue.tenant_caps (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_by uuid NOT NULL,
+    lane text NOT NULL,
+    cap integer NOT NULL,
+    CONSTRAINT pk_tenant_caps PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_tenant_caps_org_id_lane ON queue.tenant_caps (org_id, lane);
+
+-- The second fence, as on every tenant table (ADR 0016): the transaction's
+-- own tenant, or the system scope to the system login alone. An operator's
+-- write reaches the one tenant it names; the claim reads the caps of the
+-- lane it claims from under the system scope.
+ALTER TABLE queue.tenant_caps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE queue.tenant_caps FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON queue.tenant_caps FOR ALL
+    USING (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    )
+    WITH CHECK (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    );
 
 -- The runtime and the system logins hold DML on every table of the role and
 -- nothing else: no table is theirs, so neither can drop a policy, turn FORCE

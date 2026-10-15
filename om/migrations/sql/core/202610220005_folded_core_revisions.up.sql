@@ -1,5 +1,6 @@
 -- The core role: the tenancy swimlane, tasks, the idempotency markers, the
--- transactional outbox, files, billing, Slack, and the orchestrations.
+-- transactional outbox, files, billing, Slack, the orchestrations, and the
+-- leases on a leasable resource.
 -- Every table opens with its mixin header block. The columns of a table
 -- stand in the order every migrated database holds them.
 --
@@ -34,7 +35,7 @@
 -- no bound value, only IS NULL, IS NOT NULL, and a literal the read spells
 -- too, so a prepared statement's generic plan proves it and reads the index.
 
--- The tenancy swimlane: orgs, identities, users, memberships, sessions, api
+-- The tenancy swimlane: orgs, identities, users, memberships, auth sessions, api
 -- keys, socket tickets, sign-in delays, and invitations.
 
 -- An org says what it is for (`kind`, personal or team), and a personal org
@@ -233,12 +234,12 @@ CREATE POLICY tenant_fence ON core.memberships FOR ALL
         )
     );
 
--- A session, a sign-in, and an operator token, told apart by
+-- An auth session, a sign-in, and an operator token, told apart by
 -- `credential_kind`. `last_seen_at` counts the idle lifetime,
 -- `second_factor_at` and `operator_role` are the operator plane's, and
--- `provider_session_id` is the identity provider's own session behind a
--- session: the sign-out ends it too.
-CREATE TABLE core.sessions (
+-- `provider_session_id` is the identity provider's own session behind an
+-- auth session: the sign-out ends it too.
+CREATE TABLE core.auth_sessions (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
     created_at timestamptz NOT NULL,
@@ -255,18 +256,18 @@ CREATE TABLE core.sessions (
     second_factor_at timestamptz NULL,
     operator_role text NULL,
     provider_session_id text NULL,
-    CONSTRAINT pk_sessions PRIMARY KEY (id)
+    CONSTRAINT pk_auth_sessions PRIMARY KEY (id)
 );
-CREATE UNIQUE INDEX uq_sessions_token_hash ON core.sessions (token_hash);
--- A tenant's sessions by their expiry, for the purge of a tenant; org_id
+CREATE UNIQUE INDEX uq_auth_sessions_token_hash ON core.auth_sessions (token_hash);
+-- A tenant's auth sessions by their expiry, for the purge of a tenant; org_id
 -- leads it, so it gets no index of its own. The purge across tenants reads
 -- the expiry alone.
-CREATE INDEX ix_sessions_org_id_expires_at ON core.sessions (org_id, expires_at);
-CREATE INDEX ix_sessions_expires_at ON core.sessions (expires_at);
+CREATE INDEX ix_auth_sessions_org_id_expires_at ON core.auth_sessions (org_id, expires_at);
+CREATE INDEX ix_auth_sessions_expires_at ON core.auth_sessions (expires_at);
 
-ALTER TABLE core.sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE core.sessions FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_fence ON core.sessions FOR ALL
+ALTER TABLE core.auth_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.auth_sessions FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON core.auth_sessions FOR ALL
     USING (
         (
             org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
@@ -351,7 +352,7 @@ CREATE POLICY tenant_fence ON core.api_keys FOR ALL
         )
     );
 
--- Socket tickets: a single-use credential standing for a session or an api
+-- Socket tickets: a single-use credential standing for an auth session or an api
 -- key. Redeeming one is a conditional update on its hash, so the row, not a
 -- cache entry, decides who was first.
 CREATE TABLE core.socket_tickets (
@@ -480,7 +481,6 @@ CREATE TABLE core.tasks (
     notes text NOT NULL,
     status text NOT NULL,
     assignee_id uuid NULL,
-    position double precision NOT NULL,
     updated_by uuid NOT NULL,
     version integer NOT NULL DEFAULT 1,
     reminded_at timestamptz NULL,
@@ -538,54 +538,6 @@ CREATE POLICY tenant_fence ON core.tasks FOR ALL
             AND current_user = 'tadas_system'
         )
     );
-
--- The position is the rank as a float, kept for the release before: an
--- expand and contract in flight (ADR 0050). That release names the position
--- in every insert and reads it as a number, for the minutes of a roll and
--- again after a fast rollback. The column is in the table and out of the
--- mapping, so no statement of the tree names it, and two triggers keep it
--- and the rank in step. The contract step, a revision on this one, drops
--- both triggers, their functions, and the column together.
---
--- A row written with a position and no rank takes the rank its position
--- names, digit for digit: a float's text is the shortest that reads back as
--- the same float. So does a row whose position changed alone. The release
--- before's integration tests write tasks that way. The trigger runs before
--- the check, so such a row meets NOT NULL with its rank set. A write that
--- sets the rank itself is left alone.
-CREATE FUNCTION core.tasks_rank_from_position() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.rank IS NULL
-        OR (TG_OP = 'UPDATE' AND NEW.rank = OLD.rank AND NEW.position IS DISTINCT FROM OLD.position)
-    THEN
-        NEW.rank := NEW.position::text::numeric;
-    END IF;
-    RETURN NEW;
-END
-$$;
-
-CREATE TRIGGER tasks_rank_from_position BEFORE INSERT OR UPDATE ON core.tasks
-FOR EACH ROW EXECUTE FUNCTION core.tasks_rank_from_position();
-
--- A row inserted with no position, and a row whose rank changed while its
--- position stayed, takes the float of its rank: the position the release
--- before reads. The column is NOT NULL: this trigger fills it before the
--- check. It also keeps the trigger above, which fills the rank from a
--- position that changed alone, from ever meeting a stale position. A row
--- written with both is left alone.
-CREATE FUNCTION core.tasks_position_from_rank() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.position IS NULL
-        OR (TG_OP = 'UPDATE' AND NEW.rank IS DISTINCT FROM OLD.rank AND NEW.position = OLD.position)
-    THEN
-        NEW.position := NEW.rank::double precision;
-    END IF;
-    RETURN NEW;
-END
-$$;
-
-CREATE TRIGGER tasks_position_from_rank BEFORE INSERT OR UPDATE ON core.tasks
-FOR EACH ROW EXECUTE FUNCTION core.tasks_position_from_rank();
 
 -- The idempotency swimlane: the durable outcome of a request the caller may
 -- retry. org_id leads the unique compound index, so it gets no index of its
@@ -989,6 +941,175 @@ CREATE INDEX ix_orchestrations_status_updated_at ON core.orchestrations (status,
 ALTER TABLE core.orchestrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE core.orchestrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_fence ON core.orchestrations FOR ALL
+    USING (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    )
+    WITH CHECK (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    );
+
+-- The leases swimlane: the leasable resources, each with the lease store's
+-- anchor (the highest token granted, the lease that holds it, and until
+-- when), the leases granted on them, and the requests in line in front of
+-- them.
+
+-- One row per leasable thing, unique by its org, its kind, and the row it
+-- stands for. The anchor is the row a grant locks.
+CREATE TABLE core.leasable_resources (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_by uuid NOT NULL,
+    kind text NOT NULL,
+    ref_id uuid NOT NULL,
+    labels jsonb NOT NULL,
+    max_term_seconds integer NOT NULL,
+    available boolean NOT NULL,
+    retired_at timestamptz NULL,
+    token bigint NOT NULL,
+    lease_id uuid NULL,
+    held_until timestamptz NULL,
+    mean_hold_seconds double precision NULL,
+    CONSTRAINT pk_leasable_resources PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_leasable_resources_org_id_kind_ref_id
+    ON core.leasable_resources (org_id, kind, ref_id);
+CREATE INDEX ix_leasable_resources_org_id_kind_id ON core.leasable_resources (org_id, kind, id);
+CREATE INDEX ix_leasable_resources_org_id_kind_free ON core.leasable_resources (org_id, kind)
+    WHERE lease_id IS NULL AND available AND retired_at IS NULL;
+CREATE INDEX ix_leasable_resources_retired_at ON core.leasable_resources (retired_at)
+    WHERE retired_at IS NOT NULL;
+
+ALTER TABLE core.leasable_resources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.leasable_resources FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON core.leasable_resources FOR ALL
+    USING (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    )
+    WITH CHECK (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    );
+
+-- One grant of one leasable resource. The partial unique index is the second
+-- fence: one active lease per leasable resource, whatever passed the anchor's
+-- lock; and one lease per request. A lease kept by the worker that runs its
+-- job carries the key of the work item the grant writes in its own commit
+-- (`job_key`), and when that job started; a lease its holder keeps itself
+-- carries neither. The history of the leases reads newest first, the org's
+-- and one leasable resource's, each by an index whose order it walks
+-- backwards and stops at the page's bound.
+CREATE TABLE core.leases (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_by uuid NOT NULL,
+    leasable_resource_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    holder_id uuid NOT NULL,
+    token bigint NOT NULL,
+    term_seconds integer NOT NULL,
+    expires_at timestamptz NOT NULL,
+    status text NOT NULL,
+    ended_at timestamptz NULL,
+    job_key uuid NULL,
+    started_at timestamptz NULL,
+    CONSTRAINT pk_leases PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_leases_org_id_leasable_resource_id_active
+    ON core.leases (org_id, leasable_resource_id) WHERE status = 'active';
+CREATE UNIQUE INDEX uq_leases_org_id_request_id ON core.leases (org_id, request_id);
+CREATE INDEX ix_leases_org_id_expires_at_active ON core.leases (org_id, expires_at)
+    WHERE status = 'active';
+CREATE INDEX ix_leases_expires_at_active ON core.leases (expires_at) WHERE status = 'active';
+CREATE INDEX ix_leases_ended_at ON core.leases (ended_at) WHERE ended_at IS NOT NULL;
+CREATE INDEX ix_leases_org_id_created_at_id ON core.leases (org_id, created_at, id);
+CREATE INDEX ix_leases_org_id_leasable_resource_id_created_at_id
+    ON core.leases (org_id, leasable_resource_id, created_at, id);
+
+ALTER TABLE core.leases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.leases FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON core.leases FOR ALL
+    USING (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    )
+    WITH CHECK (
+        org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
+        OR (
+            current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+            AND current_user = 'tadas_system'
+        )
+    );
+
+-- The line: a request names one leasable resource or a selector, and holds
+-- one place in its org's rank order. An ask asked again by its key meets the
+-- key. A request whose lease starts a job carries the window that job has to
+-- start in (`start_seconds`).
+CREATE TABLE core.lease_requests (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_by uuid NOT NULL,
+    idempotency_key uuid NOT NULL,
+    kind text NOT NULL,
+    leasable_resource_id uuid NULL,
+    labels jsonb NULL,
+    payload jsonb NOT NULL,
+    waiter_kind text NULL,
+    waiter_id uuid NULL,
+    term_seconds integer NOT NULL,
+    wait_seconds integer NOT NULL,
+    wait_until timestamptz NOT NULL,
+    rank double precision NOT NULL,
+    status text NOT NULL,
+    end_reason text NULL,
+    lease_id uuid NULL,
+    start_seconds integer NULL,
+    CONSTRAINT pk_lease_requests PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX uq_lease_requests_org_id_idempotency_key
+    ON core.lease_requests (org_id, idempotency_key);
+CREATE INDEX ix_lease_requests_org_id_kind_rank_id_waiting
+    ON core.lease_requests (org_id, kind, rank, id) WHERE status = 'waiting';
+CREATE INDEX ix_lease_requests_org_id_wait_until_waiting
+    ON core.lease_requests (org_id, wait_until) WHERE status = 'waiting';
+CREATE INDEX ix_lease_requests_wait_until_waiting
+    ON core.lease_requests (wait_until) WHERE status = 'waiting';
+CREATE INDEX ix_lease_requests_org_id_waiter_kind_waiter_id_waiting
+    ON core.lease_requests (org_id, waiter_kind, waiter_id) WHERE status = 'waiting';
+CREATE INDEX ix_lease_requests_org_id_leasable_resource_id_waiting
+    ON core.lease_requests (org_id, leasable_resource_id) WHERE status = 'waiting';
+CREATE INDEX ix_lease_requests_updated_at_settled
+    ON core.lease_requests (updated_at) WHERE status <> 'waiting';
+
+ALTER TABLE core.lease_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.lease_requests FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON core.lease_requests FOR ALL
     USING (
         org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
         OR (

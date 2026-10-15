@@ -3,13 +3,11 @@ revision of every role downgrades and upgrades again, the logins are safe to
 make twice and stand on every database a role lives on, a migration behind a
 held lock gives up within its bound, a stamp writes another checkout's heads
 and back, and a data migration passes the fence it runs under and fails when
-it misses rows. What Tadas's own schema keeps holds too: the step down from
-the position's drop puts the column back at each rank's float, with its two
-triggers, and the database folds an address as the process does."""
+it misses rows. What Tadas's own schema keeps holds too: the database folds
+an address as the process does."""
 
 import asyncio
 import time
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -35,13 +33,11 @@ from tadas.om.storage.migrate import (
 )
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings
-from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 
 from contracts.change_event_storage import make_change_event
 from contracts.factories import make_identity
-from contracts.task_storage import make_task
 
 pytestmark = pytest.mark.integration
 
@@ -259,10 +255,6 @@ async def test_a_backfill_that_misses_rows_fails_and_keeps_the_fence(
         await engine.dispose()
 
 
-# The step down from 202610220000, the drop of a task's position, puts the
-# column back as the release before declares it (ADR 0038).
-
-
 def raw(connection: Connection, sql: str) -> list[tuple[object, ...]]:
     """A statement over every tenant's tasks: the fence lifted for it and put
     back, in the caller's transaction, as a migration does."""
@@ -282,60 +274,6 @@ async def on_core(url: str, sql: str) -> list[tuple[object, ...]]:
             return await connection.run_sync(lambda sync: raw(sync, sql))
     finally:
         await engine.dispose()
-
-
-LONG = Decimal("0.1500000000000000000000001")
-"""A rank whose float, 0.15, holds only its first digits."""
-
-POSITION = (
-    "SELECT is_nullable FROM information_schema.columns"
-    " WHERE table_schema = 'core' AND table_name = 'tasks' AND column_name = 'position'"
-)
-TRIGGERS = (
-    "SELECT tgname FROM pg_trigger"
-    " WHERE tgrelid = 'core.tasks'::regclass AND NOT tgisinternal ORDER BY tgname"
-)
-
-
-async def test_the_step_down_puts_the_position_back_at_each_ranks_float(
-    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
-) -> None:
-    """Two tenants' tasks, one on a rank no float holds. The step down fills
-    the position with each rank's float across the fence, makes it not null,
-    and brings both triggers back, and every rank keeps its digits. The step
-    up drops the three again, and the schema agrees with the ORM."""
-    core = migrated[DatabaseRole.CORE]
-    storage = TasksStoragePostgresImpl(pg_sessions)
-    for org, task in (
-        (new_id(), make_task("long", rank=str(LONG))),
-        (new_id(), make_task("short", rank="-2.5")),
-    ):
-        assert await storage.create_task(org, task, ())
-
-    await downgrade(DatabaseRole.CORE, core, "202610200100")
-    try:
-        assert await version_of_core(core) == ["202610200100"]
-        assert await on_core(
-            core, "SELECT title, rank, position FROM core.tasks ORDER BY title"
-        ) == [
-            ("long", LONG, 0.15),
-            ("short", Decimal("-2.5"), -2.5),
-        ]
-        assert await on_core(core, POSITION) == [("NO",)]
-        assert await on_core(core, TRIGGERS) == [
-            ("tasks_position_from_rank",),
-            ("tasks_rank_from_position",),
-        ]
-    finally:
-        await upgrade(DatabaseRole.CORE, core)
-
-    assert await on_core(core, POSITION) == []
-    assert await on_core(core, TRIGGERS) == []
-    assert await on_core(core, "SELECT title, rank FROM core.tasks ORDER BY title") == [
-        ("long", LONG),
-        ("short", Decimal("-2.5")),
-    ]
-    assert await check(DatabaseRole.CORE, core) == []
 
 
 # An address, folded by the database as the process folds it.
