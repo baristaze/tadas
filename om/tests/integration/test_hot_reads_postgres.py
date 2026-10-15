@@ -24,8 +24,6 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.factories import make_api_key
-from contracts.idempotency_storage import attempt_minted_at, make_record
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -42,6 +40,9 @@ from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 from tadas.om.work.storage.impl.postgres import WorkStoragePostgresImpl
+
+from contracts.factories import make_api_key
+from contracts.idempotency_storage import attempt_minted_at, make_record
 
 pytestmark = pytest.mark.integration
 

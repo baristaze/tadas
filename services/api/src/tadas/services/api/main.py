@@ -2,11 +2,10 @@
 bootstrap, add-member, grant-operator, and openapi are subcommands of one
 entry point. Each one boots the same way before it does anything else, and
 logs to standard error, so standard output carries only what a command
-prints (the OpenAPI document, a local token)."""
+prints (the documents it wrote, a local token)."""
 
 import argparse
 import asyncio
-import json
 import logging
 import sys
 import tempfile
@@ -26,6 +25,7 @@ from tadas.om.storage import migrate
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer, boot, memory_storage, postgres_storage
 from tadas.services.api.gateway.observability import TargetRedactor
+from tadas.services.api.openapi import documents, write
 from tadas.services.api.realtime.timeouts import (
     SERVER_PING_INTERVAL_SECONDS,
     SERVER_PING_TIMEOUT_SECONDS,
@@ -229,15 +229,9 @@ def openapi(args: argparse.Namespace) -> int:
     boot(settings)
     with tempfile.TemporaryDirectory() as tmp:
         container = AppContainer.for_tests(memory_storage(), InfraLocalImpl(Path(tmp)), settings)
-        document = create_app(container).openapi()
-    text = json.dumps(document, indent=2, sort_keys=True) + "\n"
-    if args.out == "-":
-        sys.stdout.write(text)
-    else:
-        out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text)
-        print(f"wrote {out}")
+        emitted = documents(create_app(container))
+    for path in write(emitted, Path(args.out)):
+        print(f"wrote {path}")
     return 0
 
 
@@ -320,15 +314,17 @@ def main(argv: list[str] | None = None) -> int:
     p_grant.add_argument(
         "--email",
         required=True,
-        help="the identity: a person who signed up first, or one of the platform's own "
+        help="the identity: a person who signed up first, or one of the system's own "
         "(@platform.tadas.invalid), which the first grant makes",
     )
     p_grant.add_argument(
         "--expires-in", type=int, help="with --mint-token: seconds, 3600 when absent and at most"
     )
 
-    p_openapi = sub.add_parser("openapi", help="emit the OpenAPI document")
-    p_openapi.add_argument("--out", default="-")
+    p_openapi = sub.add_parser(
+        "openapi", help="emit each namespace's OpenAPI document into a folder"
+    )
+    p_openapi.add_argument("--out", required=True, help="the folder, such as clients/openapi")
 
     args = parser.parse_args(argv)
     if args.command == "serve":

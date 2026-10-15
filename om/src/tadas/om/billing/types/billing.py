@@ -3,12 +3,12 @@ entitles the org to, with the account behind it."""
 
 from datetime import datetime
 
-from tadas.om.base import Platform
+from tadas.om.base import OmBase
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.plan import Plan, PlanLimits
 
 
-class Entitlements(Platform):
+class Entitlements(OmBase):
     """The plan an org is on now and its bounds: what every lever reads."""
 
     plan: Plan
@@ -31,7 +31,7 @@ class Billing(Entitlements):
     account: BillingAccount | None
 
 
-class CheckoutStart(Platform):
+class CheckoutStart(OmBase):
     """Where the person goes to pay."""
 
     url: str

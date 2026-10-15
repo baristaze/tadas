@@ -5,7 +5,7 @@ to the service unchanged."""
 from enum import StrEnum
 from uuid import UUID
 
-from tadas.om.base import Platform
+from tadas.om.base import OmBase
 
 
 class BulkAction(StrEnum):
@@ -27,12 +27,12 @@ class SkipReason(StrEnum):
     PLAN_LIMIT = "plan_limit"  # reopening it would take the org past its plan's active tasks
 
 
-class SkippedTask(Platform):
+class SkippedTask(OmBase):
     id: UUID
     reason: SkipReason
 
 
-class PlanBound(Platform):
+class PlanBound(OmBase):
     """The plan's bound a reopen met: the lever, the org's plan, the bound,
     and the first plan above it that lifts it. The fields of the refusal a
     single reopen raises (`PlanLimitReached`), kept as a value, since a bulk
@@ -44,7 +44,7 @@ class PlanBound(Platform):
     suggested_plan: str | None
 
 
-class BulkOutcome(Platform):
+class BulkOutcome(OmBase):
     """What a bulk change did. `changed` names the tasks it wrote, in the
     order it wrote them, and `skipped` the ones it left alone with the reason;
     each list names at most the report's cap (`tasks.rules.BULK_REPORT_CAP`),

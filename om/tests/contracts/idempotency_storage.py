@@ -8,12 +8,16 @@ from uuid import UUID
 
 import pytest
 
-from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import DuplicateIdempotencyKey, TenantMismatch
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
+
+from contracts.racing import race
+
+INTERFACE = IdempotencyStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.delivery import BillingDelivery
+from tadas.om.context import tenantless
 from tadas.om.outbox.types.row import OutboxRow
 
 
@@ -45,6 +46,7 @@ class BillingStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def purge_deliveries(self, before: datetime, limit: int) -> int:
         """Cross-tenant, for the sweep, in the system scope, once a pass for
         every tenant: removes at most `limit` marks older than `before`, past

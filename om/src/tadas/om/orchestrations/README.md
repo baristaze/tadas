@@ -9,15 +9,17 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
   status, and a cursor where the next step starts. It counts what its
   steps applied and skipped, names the first twenty skipped rows with
   a reason, and carries a version every write names.
-- **Kind**: what the job is, with the shape of its input. There are
-  two, and both are the [tasks](../tasks/README.md) namespace's: an
-  **import** of tasks from a CSV file, and the daily **cleanup** that
-  archives old done tasks.
+- **Kind**: what the job is, with the shape of its input. The core has
+  one, `noop`, which steps through a count and changes nothing else.
+  The [tasks](../tasks/README.md) namespace has two: an **import** of
+  tasks from a CSV file, and the daily **cleanup** that archives old
+  done tasks.
 - **Status**: running, parked, succeeded, failed, or cancelled. The
   last three are settled: a record never leaves them.
 - **Park reason**: why a parked record waits, and so what wakes it.
   There are two: `plan_limit`, the plan's bound on active tasks, and
-  `resource`, for a record in line for a [lease](../leases/README.md).
+  `leasable_resource`, for a record in line for a
+  [lease](../leases/README.md).
 - **Fail reason**: why a record ended unfinished: a bound of its input
   (a file too large, too many rows, not a CSV file, no `title` column, a
   file removed), or `defect`, a step that still failed on its last
@@ -43,12 +45,11 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
   record's alone), at the time its park named, or when a person resumes
   it.
 - **Succeed** after the last step, or **fail** on a bound.
-- **Cancel.** A person ends a running or a parked record, and it
-  settles `cancelled`, keeping its cursor and what it made. No wake
-  revives it, and a step already under way lands nothing after it. A
-  request it waits on in a lease's line is passed over at the next
-  grant
-  ([ADR 0099](../../../../../docs/adr/0099-a-person-cancels-a-running-or-a-parked-record.md)).
+- **Cancel.** A person ends a running or a parked record, and it settles
+  `cancelled`, keeping its cursor and what it made. No wake revives it,
+  and a step already under way lands nothing after it. A request it
+  waits on in a lease's wait line is passed over at the next grant ([ADR
+  0099](../../../../../docs/adr/0099-a-person-cancels-a-running-or-a-parked-record.md)).
 - **Sweep.** A settled record goes thirty days later. A parked or a
   running one is kept.
 
@@ -67,16 +68,19 @@ This is one of the kinds of thing [Tadas is made of](../../../../README.md).
   derived from the record and the row, so a second run meets them.
 - **A woken record asks its guard again** before its next step.
 - **Its push names its version**
-  ([ADR 0061](../../../../../docs/adr/0061-a-task-push-names-the-version-it-wrote.md)).
+  ([ADR 0061](../../../../../docs/adr/0061-a-push-names-the-version-it-wrote.md)).
 
 ## How another namespace composes it
 
-A product adds a kind to `OrchestrationKind` and its input shape to
-`ORCHESTRATION_INPUTS`. A kind a person starts says what a second
-start does while one is open: it answers the open record, it is
-refused, or it starts beside it. The step lives in the namespace whose
-rows it changes: it writes its rows and the record's `Step` in one commit, the
-record's rows from `steps.step_rows` among them. The worker's
-orchestration handler maps the kind to that step. A guard adds a
-`ParkReason`, and whatever clears it asks for `WAKE_PARKED`
-([ADR 0039](../../../../../docs/adr/0039-long-running-work-is-a-record-a-guard-parks-and-a-bound-fails.md)).
+A namespace declares its kind in its own `kinds.py`: an
+`OrchestrationKindSpec` with the kind's name and its input shape, which
+the root registers in `ORCHESTRATION_KINDS` below the marker
+([`kinds.py`](kinds.py)). A start of a kind the registry does not hold is
+refused. A kind a person starts says what a second start does while one
+is open: it answers the open record, it is refused, or it starts beside
+it. The step lives in the namespace whose rows it changes: it writes its
+rows and the record's `OrchestrationStep` in one commit, the record's
+rows from `steps.orchestration_step_rows` among them. The worker's
+orchestration handler maps the kind's name to that step. A guard adds
+a `ParkReason`, and whatever clears it asks for `WAKE_PARKED` ([ADR
+0039](../../../../../docs/adr/0039-long-running-work-is-a-record-a-guard-parks-and-a-bound-fails.md)).

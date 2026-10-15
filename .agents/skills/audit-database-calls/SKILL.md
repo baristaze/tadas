@@ -20,7 +20,7 @@ The audit counts the checkout, tools and code alike; to count another
 commit, run it from a checkout of that commit that has `ops/audit/`.
 Every command runs from the repository root. `--only` runs some of the
 built-in flows (`sign_in`, `members`, `invitations`, `api_keys`,
-`switch`, `tasks`, `attachments`, `events`, `billing`, `worker`,
+`switch`, `tasks`, `attachments`, `change_events`, `billing`, `worker`,
 `org_deleted`, `account_deleted`, `sweep`, `health`), such as
 `--only api_keys,sweep`; `seed` always runs first, and a flows file of
 the run's own always runs in full.
@@ -46,8 +46,8 @@ the providers. It holds no cloud credential and reads no environment.
 2. List every route (the routers under
    `services/api/src/tadas/services/api/routers/`, the socket in
    `.../api/realtime/socket.py`, and `/healthz`, `/readyz`, and `/metrics`
-   in `.../api/app.py`), every kind of work item (`WorkKind` in
-   `om/src/tadas/om/work/types/work_item.py`) and its handler and every
+   in `.../api/app.py`), every kind of work item (each spec in `KINDS`, which
+   `om/src/tadas/om/root.py` builds from each namespace's `kinds.py`) and its handler and every
    consumer (`workers/maintenance/src/tadas/workers/maintenance/`), and
    the sweep's steps (that folder's `loop.py`, `_sweep_once`). Compare the list with the calls the built-in flows make
    (`ops/audit/dbcalls_flows.py`): a route or a flow they do not reach is
@@ -84,7 +84,7 @@ the providers. It holds no cloud credential and reads no environment.
    - the fixed cost: every transaction pays `BEGIN`, which carries the
      scope's `set_config` in the same message, and `COMMIT` or
      `ROLLBACK`, so a one-statement read is three round trips;
-   - the per-request baseline of each credential (session, API key,
+   - the per-request baseline of each credential (auth session, API key,
      sign-in credential, operator token), and each route's cost above it;
    - what grows it: a count that rises with a list, an id set, the
      orgs of a person, the members of an org; say the formula (`13 + 8M`)

@@ -16,7 +16,7 @@ name: tadas
 # local run proves that nothing crosses a role: a statement or a test that
 # leans on two roles sharing an instance fails here. The cloud runs one
 # instance for all four, for its price; the role URLs in .env.example are
-# what put each role on its own here (docs/adr/1001-each-role-on-its-own-instance-locally.md).
+# what put each role on its own here (docs/adr/0083-each-role-on-its-own-instance-locally.md).
 # On each, the superuser is `postgres` and the local master is `tadas`, which
 # the init script creates as LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE and
 # makes the owner of the database. `make migrate` has it make the three logins

@@ -1,8 +1,8 @@
-import type { MeView, SlackInstallationView, SlackStatusView } from "@tadas/client";
+import type { slack, tenancy } from "@tadas/client";
 import { describe, expect, it } from "vitest";
 import { brokenReasonText, canManageSlack, installOutcomeText, slackSummary } from "./slackModel";
 
-const installation = (overrides: Partial<SlackInstallationView> = {}): SlackInstallationView => ({
+const installation = (overrides: Partial<slack.SlackInstallationView> = {}): slack.SlackInstallationView => ({
   id: "i1",
   team_id: "T1",
   team_name: "Acme",
@@ -15,9 +15,9 @@ const installation = (overrides: Partial<SlackInstallationView> = {}): SlackInst
   ...overrides,
 });
 
-const status = (i: SlackInstallationView | null): SlackStatusView => ({ installation: i });
+const status = (i: slack.SlackInstallationView | null): slack.SlackStatusView => ({ installation: i });
 
-const me = (permissions: MeView["permissions"]): MeView => ({
+const me = (permissions: tenancy.MeView["permissions"]): tenancy.MeView => ({
   user: { id: "u1", email: "a@b.c", display_name: "Ann", created_at: "2026-09-01T00:00:00Z" },
   org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z" },
   role: "member",

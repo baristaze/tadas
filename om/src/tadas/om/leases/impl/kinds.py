@@ -6,10 +6,10 @@ from uuid import UUID
 
 from tadas.om.context import TenantContext
 from tadas.om.exceptions import NotFound
-from tadas.om.leases.hooks import ResourceKindInterface, WaiterInterface
+from tadas.om.leases.hooks import LeasableResourceKindInterface, WaiterInterface
+from tadas.om.leases.types.leasable_resource import LeasableResource
 from tadas.om.leases.types.lease import Lease
-from tadas.om.leases.types.request import LeaseRequest
-from tadas.om.leases.types.resource import Resource
+from tadas.om.leases.types.request import LeaseRequest, NoopAsk
 from tadas.om.orchestrations import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import is_settled
 from tadas.om.orchestrations.types.orchestration import ParkReason
@@ -17,16 +17,18 @@ from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.work.types.work_item import WakeParkedPayload, WorkKind, work_row_kind
 
 
-class NoopResourceKindImpl(ResourceKindInterface):
+class NoopLeasableResourceKindImpl(LeasableResourceKindInterface):
     """A grant starts nothing, and every request may be granted."""
 
+    ASK = NoopAsk
+
     async def may_grant(
-        self, ctx: TenantContext, resource: Resource, request: LeaseRequest
+        self, ctx: TenantContext, resource: LeasableResource, request: LeaseRequest
     ) -> bool:
         return True
 
     def grant_rows(
-        self, ctx: TenantContext, resource: Resource, request: LeaseRequest, lease: Lease
+        self, ctx: TenantContext, resource: LeasableResource, request: LeaseRequest, lease: Lease
     ) -> tuple[OutboxRow, ...]:
         return ()
 
@@ -65,7 +67,7 @@ class OrchestrationWaiterImpl(WaiterInterface):
     @staticmethod
     def _wake(ctx: TenantContext, waiter_id: UUID) -> tuple[OutboxRow, ...]:
         """A `WAKE_PARKED` item naming the one record."""
-        payload = WakeParkedPayload(reason=ParkReason.RESOURCE, record_id=waiter_id)
+        payload = WakeParkedPayload(reason=ParkReason.LEASABLE_RESOURCE, record_id=waiter_id)
         return (
             outbox_row(
                 ctx,

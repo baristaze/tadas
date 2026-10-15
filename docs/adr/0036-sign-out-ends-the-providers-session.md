@@ -1,18 +1,18 @@
 # ADR 0036: Sign-out ends the identity provider's session too
 
-**Status**: accepted (2026-09-24)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
 A person signs in through WorkOS AuthKit's hosted page
 ([ADR 0028](0028-sign-in-is-the-identity-providers.md)). AuthKit keeps
 its own session in that browser, beside Tadas's. A sign-out that ends
-Tadas's session alone leaves AuthKit's standing, and the next `/login`
+Tadas's auth session alone leaves AuthKit's standing, and the next `/login`
 on that browser signs the same person back in with no prompt. On a
 shared computer, the next person to open Tadas would be the last one.
 
 WorkOS's documented sign-out takes the session id from the `sid` claim
-of the access token the code exchange answers, ends the app's session,
+of the access token the code exchange answers, ends the app's auth session,
 and sends the browser to WorkOS's logout for that session. WorkOS then
 sends the browser to a `return_to` among the application's sign-out
 URIs.
@@ -21,10 +21,10 @@ URIs.
 
 **The sign-out ends both sessions.** A sign-in through the hosted page
 keeps AuthKit's session id server-side, in
-`core.sessions.provider_session_id`. The exchange into a tenant and
-every switch carry it to the new session. `POST /v1/auth/logout` ends
-Tadas's session and answers `provider_logout_url`, WorkOS's logout for
-that session. The portal goes there last. WorkOS sends it back to the
+`core.auth_sessions.provider_session_id`. The exchange into a tenant and
+every switch carry it to the new auth session. `POST /v1/auth/logout` ends
+Tadas's auth session and answers `provider_logout_url`, WorkOS's logout for
+that auth session. The portal goes there last. WorkOS sends it back to the
 portal's `/signed-out`, which waits for the person to ask before a new
 sign-in starts.
 
@@ -45,7 +45,7 @@ the logout address the browser follows.
 **The device sign-in and the local sign-in sign out of Tadas alone.**
 The browser that confirms a device code may be another machine's, and
 a terminal has no browser to send to a logout. So a device sign-in
-keeps no AuthKit session, and `tadas logout` ends Tadas's session only.
+keeps no AuthKit session, and `tadas logout` ends Tadas's auth session only.
 The local sign-in has no provider.
 
 ## Consequences
@@ -53,5 +53,5 @@ The local sign-in has no provider.
 The column is nullable, and nothing reads it but the sign-out.
 
 A sign-out URI missing from the Tadas App leaves the person at WorkOS
-after it ends their session, not back at the portal. The WorkOS runbook
+after it ends their auth session, not back at the portal. The WorkOS runbook
 names the step and the value per environment.

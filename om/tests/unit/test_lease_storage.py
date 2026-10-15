@@ -1,11 +1,12 @@
 import pytest
-from contracts.lease_storage import LeaseStorageContract
 
 from tadas.om.leases.storage import LeasesStorageInterface
 from tadas.om.leases.storage.impl.memory import LeasesStorageMemoryImpl
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+
+from contracts.lease_storage import LeaseStorageContract
 
 
 class TestLeaseStorageMemory(LeaseStorageContract):

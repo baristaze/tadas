@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import new_id
 from tadas.om.context import OperatorContext, TenantContext
-from tadas.om.exceptions import IdempotencyAttemptLost, IdempotencyInProgress, PlatformException
+from tadas.om.exceptions import IdempotencyAttemptLost, IdempotencyInProgress, OmException
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.idempotency.types.record import IdempotencyRecord
@@ -149,7 +149,7 @@ class Idempotency:
         assert attempt_id is not None, "begin hands back a marker it armed"
         try:
             view = await handler(Attempt(target_id=record.target_id, attempt_id=attempt_id))
-        except PlatformException as error:
+        except OmException as error:
             # A 429 is a refusal only for now: replayed, it would be the
             # answer for good, and the client's only exit a new key. So is a
             # 402, a plan's bound: the org may be on another plan a moment
@@ -196,7 +196,7 @@ class Idempotency:
         over; its outcome is the retry's to record, so the refusal ends here.
         The key is the caller's own text, so the line names it by its digest:
         a log line holds nothing a tenant wrote, and whoever reads it under
-        the request's id reads the platform's words alone."""
+        the request's id reads the system's words alone."""
         assert self._key is not None
         log.warning(
             "idempotency key %s: %s refused, a retry holds the marker now",

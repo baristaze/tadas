@@ -9,7 +9,7 @@ from tadas.om.root import Managers
 from tadas.services.api.services import (
     AdminServiceInterface,
     BillingServiceInterface,
-    EventsServiceInterface,
+    ChangeEventsServiceInterface,
     FlagsServiceInterface,
     LeasesServiceInterface,
     MediaServiceInterface,
@@ -22,7 +22,7 @@ from tadas.services.api.services import (
 )
 from tadas.services.api.services.impl.admin import AdminServiceImpl
 from tadas.services.api.services.impl.billing import BillingServiceImpl
-from tadas.services.api.services.impl.events import EventsServiceImpl
+from tadas.services.api.services.impl.change_events import ChangeEventsServiceImpl
 from tadas.services.api.services.impl.flags import FlagsServiceImpl
 from tadas.services.api.services.impl.leases import LeasesServiceImpl
 from tadas.services.api.services.impl.media import MediaServiceImpl
@@ -36,50 +36,59 @@ from tadas.services.api.services.impl.webhooks import WebhooksServiceImpl
 class ServicesImpl(ServicesInterface):
     def __init__(
         self,
-        tasks: TasksServiceInterface,
-        tenancy: TenancyServiceInterface,
         admin: AdminServiceInterface,
-        events: EventsServiceInterface,
-        media: MediaServiceInterface,
+        change_events: ChangeEventsServiceInterface,
         flags: FlagsServiceInterface,
-        realtime: RealtimeServiceInterface,
-        billing: BillingServiceInterface,
-        webhooks: WebhooksServiceInterface,
-        slack: SlackServiceInterface,
         leases: LeasesServiceInterface,
+        media: MediaServiceInterface,
+        realtime: RealtimeServiceInterface,
+        tenancy: TenancyServiceInterface,
+        webhooks: WebhooksServiceInterface,
+        # A copy adds its entries below this line.
+        tasks: TasksServiceInterface,
+        billing: BillingServiceInterface,
+        slack: SlackServiceInterface,
     ) -> None:
-        self._tasks = tasks
-        self._tenancy = tenancy
         self._admin = admin
-        self._events = events
-        self._media = media
+        self._change_events = change_events
         self._flags = flags
-        self._realtime = realtime
-        self._billing = billing
-        self._webhooks = webhooks
-        self._slack = slack
         self._leases = leases
-
-    def get_tasks_service(self) -> TasksServiceInterface:
-        return self._tasks
-
-    def get_tenancy_service(self) -> TenancyServiceInterface:
-        return self._tenancy
+        self._media = media
+        self._realtime = realtime
+        self._tenancy = tenancy
+        self._webhooks = webhooks
+        # A copy adds its entries below this line.
+        self._tasks = tasks
+        self._billing = billing
+        self._slack = slack
 
     def get_admin_service(self) -> AdminServiceInterface:
         return self._admin
 
-    def get_events_service(self) -> EventsServiceInterface:
-        return self._events
-
-    def get_media_service(self) -> MediaServiceInterface:
-        return self._media
+    def get_change_events_service(self) -> ChangeEventsServiceInterface:
+        return self._change_events
 
     def get_flags_service(self) -> FlagsServiceInterface:
         return self._flags
 
+    def get_lease_service(self) -> LeasesServiceInterface:
+        return self._leases
+
+    def get_media_service(self) -> MediaServiceInterface:
+        return self._media
+
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
+
+    def get_tenancy_service(self) -> TenancyServiceInterface:
+        return self._tenancy
+
+    def get_webhooks_service(self) -> WebhooksServiceInterface:
+        return self._webhooks
+
+    # A copy adds its entries below this line.
+    def get_tasks_service(self) -> TasksServiceInterface:
+        return self._tasks
 
     def get_billing_service(self) -> BillingServiceInterface:
         return self._billing
@@ -87,41 +96,40 @@ class ServicesImpl(ServicesInterface):
     def get_slack_service(self) -> SlackServiceInterface:
         return self._slack
 
-    def get_webhooks_service(self) -> WebhooksServiceInterface:
-        return self._webhooks
-
-    def get_lease_service(self) -> LeasesServiceInterface:
-        return self._leases
-
 
 def build_services(
     managers: Managers,
     infra: InfraInterface,
     integrations: IntegrationsInterface,
+    head_max_age: timedelta,
     portal_origins: list[str],
     slack_redirect_uri: str,
     portal_url: str,
-    head_max_age: timedelta,
 ) -> ServicesInterface:
     """In-process impls only: a Python caller outside the process reaches the
     same services through the typed client under `clients/python`."""
     return ServicesImpl(
-        tasks=TasksServiceImpl(managers.tasks),
-        tenancy=TenancyServiceImpl(managers.tenancy),
-        admin=AdminServiceImpl(
-            managers.tenancy_operator, managers.billing_operator, managers.work_operator
-        ),
-        events=EventsServiceImpl(managers.events),
-        media=MediaServiceImpl(managers.media),
+        admin=AdminServiceImpl(managers.tenancy_operator, managers.work_operator),
+        change_events=ChangeEventsServiceImpl(managers.change_events),
         flags=FlagsServiceImpl(infra.get_flags()),
+        leases=LeasesServiceImpl(managers.leases),
+        media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(
-            managers.tenancy, managers.events, infra.get_topics(), head_max_age
+            managers.tenancy, managers.change_events, infra.get_topics(), head_max_age
         ),
-        billing=BillingServiceImpl(
-            managers.billing, managers.tenancy, managers.tasks, managers.media, portal_origins
-        ),
+        tenancy=TenancyServiceImpl(managers.tenancy),
         webhooks=WebhooksServiceImpl(
             integrations.get_identity_provider(), integrations.get_payments(), infra.get_queues()
+        ),
+        # A copy adds its entries below this line.
+        tasks=TasksServiceImpl(managers.tasks, managers.tenancy_operator),
+        billing=BillingServiceImpl(
+            managers.billing,
+            managers.billing_operator,
+            managers.tenancy,
+            managers.tasks,
+            managers.media,
+            portal_origins,
         ),
         slack=SlackServiceImpl(
             managers.slack,
@@ -130,5 +138,4 @@ def build_services(
             slack_redirect_uri,
             portal_url,
         ),
-        leases=LeasesServiceImpl(managers.leases),
     )

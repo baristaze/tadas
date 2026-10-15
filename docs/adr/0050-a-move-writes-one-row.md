@@ -73,5 +73,5 @@ regular profile for 60 seconds meets 0 conflicts, where sessions own
 their tasks.
 
 The CLI's `listen` says "moved a task" when a task's rank changed, so
-a respace shows as the platform moving the tasks of the run. The order
+a respace shows as the system moving the tasks of the run. The order
 it shows does not change.

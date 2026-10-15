@@ -10,7 +10,7 @@
 // even after the task left the lists; a read issued before a removal never
 // brings the task back. A write's answer takes its stamp when it lands.
 import type { InfiniteData, QueryClient, QueryKey } from "@tanstack/react-query";
-import { ApiError, type MeView, type TaskPageView, type TaskScope, type TaskStatus, type TaskView } from "@tadas/client";
+import { ApiError, type tasks, type tenancy } from "@tadas/client";
 import type { HintEffects } from "../realtime/hints";
 import { keys } from "./keys";
 import { createLedger, type Ledger } from "./ledger";
@@ -23,13 +23,13 @@ import {
   type TaskChange,
 } from "./taskPlacement";
 
-type Pages = InfiniteData<TaskPageView>;
+type Pages = InfiniteData<tasks.TaskPageView>;
 
 interface Heard {
   ledger: Ledger;
   /** The newest answer placed of each task: the task, or null once a 404
    * took it out. */
-  tasks: Map<string, TaskView | null>;
+  tasks: Map<string, tasks.TaskView | null>;
   /** Lists being read while a change was placed: their answer may predate
    * it, so the change is placed again once the read lands. */
   pending: Map<string, Set<string>>;
@@ -47,7 +47,7 @@ function heardOf(queryClient: QueryClient): Heard {
     const ids = created.pending.get(event.query.queryHash);
     if (!ids) return;
     created.pending.delete(event.query.queryHash);
-    const scope = event.query.queryKey[2] as TaskScope;
+    const scope = event.query.queryKey[2] as tasks.TaskScope;
     for (const id of ids) {
       const task = created.tasks.get(id);
       if (task === undefined) continue;
@@ -58,17 +58,17 @@ function heardOf(queryClient: QueryClient): Heard {
   return created;
 }
 
-const LIMITS: Record<TaskStatus, number> = { open: OPEN_PAGE_SIZE, done: DONE_PAGE_SIZE };
+const LIMITS: Record<tasks.TaskStatus, number> = { open: OPEN_PAGE_SIZE, done: DONE_PAGE_SIZE };
 
-const listKey = (status: TaskStatus, scope: TaskScope): QueryKey =>
+const listKey = (status: tasks.TaskStatus, scope: tasks.TaskScope): QueryKey =>
   status === "open" ? keys.tasks.open(scope) : keys.tasks.done(scope);
 
 /** Every scope some task list is cached under. */
-function cachedScopes(queryClient: QueryClient): Set<TaskScope> {
-  const scopes = new Set<TaskScope>();
+function cachedScopes(queryClient: QueryClient): Set<tasks.TaskScope> {
+  const scopes = new Set<tasks.TaskScope>();
   for (const status of ["open", "done"] as const) {
     for (const query of queryClient.getQueryCache().findAll({ queryKey: [keys.tasks.all[0], status] })) {
-      scopes.add(query.queryKey[2] as TaskScope);
+      scopes.add(query.queryKey[2] as tasks.TaskScope);
     }
   }
   return scopes;
@@ -77,11 +77,11 @@ function cachedScopes(queryClient: QueryClient): Set<TaskScope> {
 function applyToScope(
   queryClient: QueryClient,
   heard: Heard,
-  scope: TaskScope,
+  scope: tasks.TaskScope,
   change: TaskChange,
   options: PlacementOptions,
 ): void {
-  const meId = queryClient.getQueryData<MeView>(keys.me)?.user.id ?? null;
+  const meId = queryClient.getQueryData<tenancy.MeView>(keys.me)?.user.id ?? null;
   const lists: ScopeLists = {
     open: queryClient.getQueryData<Pages>(listKey("open", scope)),
     done: queryClient.getQueryData<Pages>(listKey("done", scope)),
@@ -109,14 +109,14 @@ function applyToScope(
  * the lists do not carry, so a task newly archived asks for it to be read
  * again (which reads nothing while it is closed); a task that left it is
  * taken out. */
-function applyToArchive(queryClient: QueryClient, id: string, task: TaskView | null): void {
+function applyToArchive(queryClient: QueryClient, id: string, task: tasks.TaskView | null): void {
   for (const query of queryClient.getQueryCache().findAll({ queryKey: [keys.tasks.all[0], "archived"] })) {
-    const data = query.state.data as TaskPageView | undefined;
+    const data = query.state.data as tasks.TaskPageView | undefined;
     const held = data?.items.find((t) => t.id === id);
     if (task?.archived_at && !task.deleted_at) {
       if (!held || held.version < task.version) void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true });
     } else if (held && data) {
-      queryClient.setQueryData<TaskPageView>(query.queryKey, { ...data, items: data.items.filter((t) => t.id !== id) });
+      queryClient.setQueryData<tasks.TaskPageView>(query.queryKey, { ...data, items: data.items.filter((t) => t.id !== id) });
     }
   }
 }
@@ -132,7 +132,7 @@ export function taskStamp(queryClient: QueryClient): number {
  * 404 took out. Placing puts a task into every cached list, and the ledger
  * places it again into a list read while it was placed, so every list this
  * tab holds already shows it; a push naming that version has nothing to read. */
-export function heldTask(queryClient: QueryClient, id: string, version: number): TaskView | null {
+export function heldTask(queryClient: QueryClient, id: string, version: number): tasks.TaskView | null {
   const heard = heardOf(queryClient);
   return heard.ledger.holds(id, version) ? (heard.tasks.get(id) ?? null) : null;
 }
@@ -146,7 +146,7 @@ export interface PlaceOptions extends PlacementOptions {
  * write's answer, or a single read's. An answer older than one already
  * placed, or a read issued before a 404 that landed, is dropped. An
  * optimistic edit is placed as asked and leaves the ledger alone. */
-export function placeTask(queryClient: QueryClient, task: TaskView, options: PlaceOptions = {}): void {
+export function placeTask(queryClient: QueryClient, task: tasks.TaskView, options: PlaceOptions = {}): void {
   const heard = heardOf(queryClient);
   if (!options.optimistic) {
     if (!heard.ledger.admit(task.id, task.version, options.since ?? heard.ledger.stamp())) return;
@@ -188,8 +188,8 @@ export function refreshTaskLists(queryClient: QueryClient): void {
  * read under the next session. */
 export function taskHintEffects(
   queryClient: QueryClient,
-  read: (id: string) => Promise<TaskView>,
-): HintEffects<TaskView> {
+  read: (id: string) => Promise<tasks.TaskView>,
+): HintEffects<tasks.TaskView> {
   return {
     read,
     isGone: (cause) => cause instanceof ApiError && cause.status === 404,

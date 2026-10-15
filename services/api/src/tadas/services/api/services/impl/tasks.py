@@ -4,15 +4,17 @@ from decimal import Decimal
 from uuid import UUID
 
 from tadas.om.base import utcnow
-from tadas.om.context import TenantContext
+from tadas.om.context import OperatorContext, TenantContext
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media.types.file import File, FilePurpose
-from tadas.om.orchestrations.types.orchestration import Orchestration, TaskImportInput
+from tadas.om.orchestrations.types.orchestration import Orchestration
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.bulk import BulkOutcome
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.tasks.types.work import TaskImportInput
+from tadas.om.tenancy import TenancyOperatorManagerInterface
 from tadas.services.api.services.impl.media import file_view
 from tadas.services.api.services.tasks import TasksServiceInterface
 from tadas.services.api.types.common import PlanLimitDetail, clamp_limit
@@ -122,8 +124,15 @@ def expected_version(named: int | None) -> int:
 
 
 class TasksServiceImpl(TasksServiceInterface):
-    def __init__(self, tasks: TasksManagerInterface) -> None:
+    """The cursors an operator's read of a tenant's tasks hands out are the
+    ones the tenant's own lists mint, so a page is read the same way from
+    either plane."""
+
+    def __init__(
+        self, tasks: TasksManagerInterface, tenancy_operator: TenancyOperatorManagerInterface
+    ) -> None:
         self._tasks = tasks
+        self._tenancy_operator = tenancy_operator
 
     async def get_tasks(
         self,
@@ -305,3 +314,19 @@ class TasksServiceImpl(TasksServiceInterface):
 
     async def remove_attachment(self, ctx: TenantContext, task_id: UUID, file_id: UUID) -> FileView:
         return file_view(await self._tasks.attachments.remove_attachment(ctx, task_id, file_id))
+
+    async def get_org_tasks(
+        self,
+        admin: OperatorContext,
+        org_id: UUID,
+        status: TaskStatus,
+        cursor: str | None,
+        limit: int,
+    ) -> TaskPageView:
+        limit = clamp_limit(limit)
+        mark = decode_cursor(status, cursor) if cursor else None
+        page = await self._tenancy_operator.get_tasks(admin, org_id, status, mark, limit)
+        return TaskPageView(
+            items=[TaskView.model_validate(t) for t in page.items],
+            next_cursor=encode_cursor(status, page.items[-1]) if page.has_more else None,
+        )

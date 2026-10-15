@@ -401,7 +401,7 @@ async def test_a_transport_failure_is_a_failure_worth_a_retry(
 ) -> None:
     """A call's and a reply's alike. The failure says the transport's error
     by its type alone: its text can quote what the call carried, and a
-    failure the platform raises keeps its own text in the log line and the
+    failure the system raises keeps its own text in the log line and the
     tracker. The transport's error stays as the cause, with its frames."""
     quoted = "ada.lovelace@example.test"
     client = await started(monkeypatch, TimeoutError(f"read timed out for {quoted}"))

@@ -1,6 +1,6 @@
 # ADR 0056: Purges across tenants plan with their values
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -29,11 +29,9 @@ eight times with a backlog and then idle on the same connection:
 | outbox, done rows (100,000) | Seq Scan | 4.7 ms |
 | work items (50,000) | Seq Scan | 4.8 ms |
 | invitations (20,000) | Seq Scan | 0.99 ms |
-| Slack install states (20,000) | Seq Scan | 0.83 ms |
-| sessions (20,000) | Seq Scan | 0.79 ms |
-| api keys, tickets, delivery marks, posts, orchestrations | generic, still on their indexes | under 0.07 ms |
+| auth sessions (20,000) | Seq Scan | 0.79 ms |
+| api keys, tickets, orchestrations | generic, still on their indexes | under 0.07 ms |
 | files, idempotency records, the trim | generic, still on their indexes | under 0.1 ms |
-| tasks, users, memberships, Slack installations, failed outbox rows | custom | under 0.05 ms |
 
 Which purge flips depends on its statistics, so a purge on its index
 today can flip tomorrow.
@@ -44,10 +42,10 @@ today can flip tomorrow.
 values.** The first statement of its transaction is
 `SET LOCAL plan_cache_mode = force_custom_plan` (`PLAN_WITH_VALUES` in
 `tadas.om.storage.impl.pg_base`). The outbox's two statements, the work
-items, the tenancy transaction, Slack's transaction, the delivery marks,
-and the settled orchestrations do this. The setting is in the purge's
-own method, never in the storage funnel. `SET LOCAL` ends with the
-transaction, so no per-request read runs under it.
+items, the tenancy transaction, and the settled orchestrations do this.
+The setting is in the purge's own method, never in the storage funnel.
+`SET LOCAL` ends with the transaction, so no per-request read runs
+under it.
 
 **The files purge names the pending status as a literal.** Its index
 holds the pending uploads alone: `ix_files_created_at_pending ON
@@ -57,8 +55,7 @@ proves it and the index serves any plan. A confirm writes the index no
 entry.
 
 **The idempotency purge and the trim keep the generic plan,** which
-reads their indexes. The read of deleted tasks stays as it is too: it
-holds its index, with an order by its retention column.
+reads their indexes.
 
 **The plan takes its values, never an order by the retention column.**
 An order keeps the generic plan on the index, since an index walk gives
@@ -67,8 +64,7 @@ plan there. The system scope's policy makes the planner count about 22
 rows where 95,000 are past the cut. With 22 rows to sort, a scan and a
 sort look cheap, so the planner sorts the whole backlog to take one
 batch. On the seed's outbox that batch takes 51 ms, with a sort spilled
-to disk, where the index walk takes 2.2 ms. Only the read of deleted
-tasks keeps an order: its partial index holds deleted rows alone.
+to disk, where the index walk takes 2.2 ms.
 
 ## Consequences
 

@@ -1,6 +1,6 @@
 // The store runs here without a browser: an in-memory Storage twin stands in
 // for the origin's local storage.
-import type { ImportView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { shownImports } from "../features/imports/importModel";
 
@@ -134,7 +134,7 @@ describe("preferences store", () => {
 
   it("keeps a dismissed import gone across a reload, and prunes one no longer recent", async () => {
     const ended = (id: string) =>
-      ({ id, status: "succeeded", created_at: "2026-09-25T10:00:00Z", finished_at: "2026-09-25T10:04:00Z" }) as ImportView;
+      ({ id, status: "succeeded", created_at: "2026-09-25T10:00:00Z", finished_at: "2026-09-25T10:04:00Z" }) as tasks.ImportView;
     const openedAt = Date.parse("2026-09-25T10:05:00Z");
     const recent = [ended("i2"), ended("i1")];
     const first = await import("./preferences");

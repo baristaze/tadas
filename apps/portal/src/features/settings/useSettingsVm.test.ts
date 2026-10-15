@@ -5,16 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  ApiError,
-  type ApiKeyPageView,
-  type ApiKeyView,
-  type MembershipPageView,
-  type MeView,
-  type SlackInstallationView,
-  type SlackStatusView,
-  type UserPageView,
-} from "@tadas/client";
+import { ApiError, type slack, type tenancy } from "@tadas/client";
 import { useNoticesStore } from "../../store/notices";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 
@@ -42,7 +33,7 @@ vi.mock("../../app/api", () => ({
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 let root: ReturnType<typeof createRoot>;
 
-const me: MeView = {
+const me: tenancy.MeView = {
   app: "portal",
   role: "owner",
   permissions: ["read", "write", "manage_keys"],
@@ -52,7 +43,7 @@ const me: MeView = {
 
 const bob = { id: "u2", email: "bob@example.test", display_name: "Bob", created_at: "2026-09-02T00:00:00Z" };
 
-const keyOf = (id: string, name: string): ApiKeyView => ({
+const keyOf = (id: string, name: string): tenancy.ApiKeyView => ({
   id,
   name,
   role: "member",
@@ -100,14 +91,14 @@ beforeEach(() => {
       { id: "m2", user_id: "u2", role: "member", teams: [] },
     ],
     next_cursor: null,
-  } satisfies MembershipPageView);
+  } satisfies tenancy.MembershipPageView);
   net.reads.set("/v1/me", me);
-  net.reads.set("/v1/users", { items: [me.user, bob], next_cursor: null } satisfies UserPageView);
+  net.reads.set("/v1/users", { items: [me.user, bob], next_cursor: null } satisfies tenancy.UserPageView);
   net.reads.set("/v1/api-keys", {
     items: [keyOf("k1", "first"), keyOf("k2", "second")],
     next_cursor: null,
-  } satisfies ApiKeyPageView);
-  net.reads.set("/v1/slack/installation", { installation: null } satisfies SlackStatusView);
+  } satisfies tenancy.ApiKeyPageView);
+  net.reads.set("/v1/slack/installation", { installation: null } satisfies slack.SlackStatusView);
   useNoticesStore.setState({ notices: [] });
 });
 
@@ -141,7 +132,7 @@ it("says a created key whose secret was lost, instead of showing nothing", async
   ]);
 });
 
-const installed: SlackInstallationView = {
+const installed: slack.SlackInstallationView = {
   id: "i1",
   team_id: "T1",
   team_name: "Acme",
@@ -155,7 +146,7 @@ const installed: SlackInstallationView = {
 
 it("shows a member the Slack state and nothing to act on", async () => {
   net.reads.set("/v1/me", { ...me, role: "member", permissions: ["read", "write"] });
-  net.reads.set("/v1/slack/installation", { installation: installed } satisfies SlackStatusView);
+  net.reads.set("/v1/slack/installation", { installation: installed } satisfies slack.SlackStatusView);
   await mount();
   for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
   expect(vm().slack.summary.line).toBe("Installed in Acme, posting to channel C0123.");
@@ -192,7 +183,7 @@ it("says how the install went when Slack sends the browser back, once", async ()
 
 it("removes Tadas from Slack and says it is gone", async () => {
   net.reads.set("/v1/me", { ...me, permissions: [...me.permissions, "manage_members"] });
-  net.reads.set("/v1/slack/installation", { installation: installed } satisfies SlackStatusView);
+  net.reads.set("/v1/slack/installation", { installation: installed } satisfies slack.SlackStatusView);
   await mount();
   for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
   expect(vm().slack.installed).toBe(true);

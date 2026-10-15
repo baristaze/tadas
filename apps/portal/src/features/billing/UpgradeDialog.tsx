@@ -1,7 +1,7 @@
 // The one upgrade dialog: what a refusal met, the plans, and a checkout for
 // the plan that lifts it. Someone who cannot change the plan is told whom to ask.
 import { useState } from "react";
-import type { Plan } from "@tadas/client";
+import type { billing } from "@tadas/client";
 import { Banner, Button, ErrorText, Muted } from "../../design/kit";
 import { useBilling, useOpenBillingPortal, useStartCheckout } from "../../queries/billing";
 import { useUpgradeStore } from "../../store/upgrade";
@@ -23,7 +23,7 @@ function UpgradeDialogOpen({ close }: { close: () => void }) {
   const [failure, setFailure] = useState<string | null>(null);
   const suggested = limit.suggested_plan;
 
-  const start = async (plan: Plan) => {
+  const start = async (plan: billing.Plan) => {
     setFailure(null);
     try {
       await checkout.mutateAsync(plan);
@@ -68,7 +68,7 @@ function UpgradeDialogOpen({ close }: { close: () => void }) {
             Not now
           </Button>
           {canManage && suggested && billing.data?.paid_plan === null ? (
-            <Button onClick={() => void start(suggested as Plan)} disabled={checkout.isPending}>
+            <Button onClick={() => void start(suggested as billing.Plan)} disabled={checkout.isPending}>
               Upgrade to {planName(suggested)}
             </Button>
           ) : null}

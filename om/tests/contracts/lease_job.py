@@ -13,35 +13,37 @@ import pytest
 from tadas.om.base import new_id, utcnow
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.exceptions import LeaseEnded, NotAuthorized
-from tadas.om.leases.hooks import ResourceKindInterface
+from tadas.om.leases.hooks import LeasableResourceKindInterface
 from tadas.om.leases.impl.manager import LeasesManagerImpl
-from tadas.om.leases.types.lease import JobClaim, Lease, LeaseStatus
-from tadas.om.leases.types.request import LeaseRequest
-from tadas.om.leases.types.resource import (
+from tadas.om.leases.types.leasable_resource import (
     MAX_LABELS,
     MAX_TERM_SECONDS,
-    Resource,
-    ResourceKind,
+    LeasableResource,
+    LeasableResourceKind,
 )
+from tadas.om.leases.types.lease import JobClaim, Lease, LeaseStatus
+from tadas.om.leases.types.request import LeaseRequest, NoopAsk
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
-from tadas.om.root import Managers
-from tadas.om.work.types.work_item import WorkItem, WorkKind, relayed_lane, work_row_kind
+from tadas.om.root import KINDS, Managers
+from tadas.om.work.types.work_item import WorkItem, WorkKind, work_row_kind
 
 WORKER = AppContext(type=AppType.WORKER, version="worker@test")
 CLAIM = timedelta(minutes=5)
 
 
-class StartsAJob(ResourceKindInterface):
+class StartsAJob(LeasableResourceKindInterface):
     """A kind whose grant starts a job: one work item, which names the lease
     it runs for."""
 
+    ASK = NoopAsk
+
     async def may_grant(
-        self, ctx: TenantContext, resource: Resource, request: LeaseRequest
+        self, ctx: TenantContext, resource: LeasableResource, request: LeaseRequest
     ) -> bool:
         return True
 
     def grant_rows(
-        self, ctx: TenantContext, resource: Resource, request: LeaseRequest, lease: Lease
+        self, ctx: TenantContext, resource: LeasableResource, request: LeaseRequest, lease: Lease
     ) -> tuple[OutboxRow, ...]:
         return (outbox_row(ctx, work_row_kind(WorkKind.NOOP), lease.id, {}),)
 
@@ -65,15 +67,15 @@ class JobWorld(Protocol):
 
 def a_dock(
     owner: TenantContext, labels: tuple[str, ...] = (), max_term_seconds: int = 600
-) -> Resource:
+) -> LeasableResource:
     now = utcnow()
-    return Resource(
+    return LeasableResource(
         id=new_id(),
         created_at=now,
         updated_at=now,
         created_by=owner.user_id,
         updated_by=owner.user_id,
-        kind=ResourceKind.NOOP,
+        kind=LeasableResourceKind.NOOP,
         ref_id=new_id(),
         labels=labels,
         max_term_seconds=max_term_seconds,
@@ -81,7 +83,7 @@ def a_dock(
 
 
 def an_ask(
-    resource: Resource | None = None,
+    resource: LeasableResource | None = None,
     *,
     labels: tuple[str, ...] | None = None,
     term_seconds: int = 60,
@@ -95,8 +97,8 @@ def an_ask(
         created_by=new_id(),
         updated_by=new_id(),
         idempotency_key=new_id(),
-        kind=ResourceKind.NOOP,
-        resource_id=None if resource is None else resource.id,
+        kind=LeasableResourceKind.NOOP,
+        leasable_resource_id=None if resource is None else resource.id,
         labels=labels,
         term_seconds=term_seconds,
         start_seconds=start_seconds,
@@ -106,13 +108,15 @@ def an_ask(
 async def claim_job(world: JobWorld, lease: Lease) -> tuple[TenantContext, WorkItem]:
     """The worker's claim on the lease's job, as a worker of its lane claims.
     Items other cases left on the lane are handed back as they were."""
+    job = KINDS.get(WorkKind.NOOP)
+    assert job is not None
     passed: list[tuple[TenantContext, WorkItem]] = []
     try:
         for _ in range(50):
             claimed = await world.managers.work.claim(
                 RequestContext(request_id=new_id(), app=WORKER),
-                relayed_lane(WorkKind.NOOP),
-                [WorkKind.NOOP],
+                job.lane,
+                [job.name],
                 "w1",
                 CLAIM,
             )
@@ -239,11 +243,11 @@ async def a_resource_with_as_many_labels_as_a_real_one_is_matched(world: JobWorl
     dock = await world.leases.register(
         owner, a_dock(owner, labels=labels, max_term_seconds=MAX_TERM_SECONDS)
     )
-    assert (await world.leases.get_resource(owner, dock.id)).labels == labels
+    assert (await world.leases.get_leasable_resource(owner, dock.id)).labels == labels
     standing = await world.leases.ask(
         ann, an_ask(labels=labels[::-1], term_seconds=MAX_TERM_SECONDS)
     )
-    assert standing.lease is not None and standing.lease.resource_id == dock.id
+    assert standing.lease is not None and standing.lease.leasable_resource_id == dock.id
     assert standing.lease.expires_at == world.clock() + timedelta(days=7)
     run, item = await claim_job(world, standing.lease)
     await world.managers.work.complete(run, item)

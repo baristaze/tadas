@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.context import tenantless
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.slack.types.installation import SlackInstallation, SlackInstallState, SlackPost
 
@@ -19,6 +20,7 @@ class SlackStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def read_installation_by_team(
         self, team_id: str
     ) -> tuple[UUID, SlackInstallation] | None:
@@ -67,6 +69,7 @@ class SlackStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def redeem_install_state(
         self, state_hash: str, now: datetime
     ) -> tuple[UUID, SlackInstallState] | None:
@@ -88,6 +91,7 @@ class SlackStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def purge(self, before: datetime, limit: int) -> int:
         """Cross-tenant, for the sweep, in the system scope: the hard delete,
         one transaction a pass for every tenant: installations deleted,

@@ -1,6 +1,6 @@
 ---
 name: audit-credential-lifetimes
-description: "Audit how long each credential keeps working after it should stop: one row per credential kind (session, API key, operator token, sign-in, socket ticket, and any other the code has) and channel (HTTP request, realtime socket, bus control message, worker), with where it is checked, how often, what one check costs, the worst case a revoked credential keeps working, how a change of role or membership reaches it, its rate limit, and whether it fails open or closed when the cache is down. Flags every trust decision carried only by an at-most-once push, and every worst case above a stated bound. Never changes anything."
+description: "Audit how long each credential keeps working after it should stop: one row per credential kind (auth session, API key, operator token, sign-in, socket ticket, and any other the code has) and channel (HTTP request, realtime socket, bus control message, worker), with where it is checked, how often, what one check costs, the worst case a revoked credential keeps working, how a change of role or membership reaches it, its rate limit, and whether it fails open or closed when the cache is down. Flags every trust decision carried only by an at-most-once push, and every worst case above a stated bound. Never changes anything."
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
 ---
 
@@ -42,7 +42,7 @@ no cloud credential, reads no environment, and reads no env file.
    overwrites another's; the database takes the same suffix. Make the folder (`mkdir -p`). Say which commit
    the run read (`git rev-parse HEAD`).
 2. List the credential kinds. `CredentialKind` in
-   `om/src/tadas/om/context.py` names the ones the platform mints; the
+   `om/src/tadas/om/context.py` names the ones the system mints; the
    tenancy manager and its delegates (`om/src/tadas/om/tenancy/impl/`)
    mint and check them, with each lifetime in the manager's options
    (`TenancyOptions` in `impl/manager.py`).
@@ -54,7 +54,7 @@ no cloud credential, reads no environment, and reads no env file.
    (read at `services/api/src/tadas/services/api/gateway/webhooks.py`,
    checked in `integrations/src/tadas/integrations/identity/deliveries.py`,
    `payments/deliveries.py`, and `slack/requests.py` beside it), a
-   provider's token the platform holds (Slack's, in
+   provider's token the system holds (Slack's, in
    `om/src/tadas/om/slack/`), and the identity provider's own session
    behind a sign-in (ended at sign-out, `provider_logout_url` in
    `om/src/tadas/om/tenancy/impl/shared.py`). Each goes in the row of
@@ -119,15 +119,15 @@ no cloud credential, reads no environment, and reads no env file.
 
    ```bash
    uv run python ops/audit/auditdb.py create audit_credential_lifetimes_<yyyymmdd>
-   uv run python ops/audit/dbcalls.py run audit_credential_lifetimes_<yyyymmdd> --only sign_in,events \
+   uv run python ops/audit/dbcalls.py run audit_credential_lifetimes_<yyyymmdd> --only sign_in,change_events \
      --out ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json \
      [--flows ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/more_flows.py]
    uv run python ops/audit/dbcalls.py summary ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json
    ```
 
-   The built-in `sign_in` flow measures the session and the API key on
+   The built-in `sign_in` flow measures the auth session and the API key on
    `GET /v1/me` (area `baseline`) and the sign-in credential on
-   `GET /v1/auth/memberships` (area `auth`); `events` measures the
+   `GET /v1/auth/memberships` (area `auth`); `change_events` measures the
    ticket's redemption and the socket's recheck (area `realtime`). The
    check's cost is the credential's own transactions in each call's
    `detail`, apart from what the route reads after it; tally

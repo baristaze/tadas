@@ -10,8 +10,8 @@ tasks as it happens.
 uv run tadas login --org acme        # confirm the code in the browser
 uv run tadas login --dev-email bob@example.test --org acme   # local stack only
 uv run tadas whoami
-uv run tadas orgs                    # * marks the session's org
-uv run tadas switch fabrikam         # the old session ends
+uv run tadas orgs                    # * marks the auth session's org
+uv run tadas switch fabrikam         # the old auth session ends
 uv run tadas add "Migrate DB" --assignee me
 uv run tadas add "Call the bank" --due 2026-10-01  # a date, never a time; reminded at 9:00 that day
 uv run tadas edit 8b949fce --no-due  # clear the due date; --due moves it
@@ -37,7 +37,7 @@ uv run tadas logout
   an admin, in the portal, under Settings, Billing.
 - Exit codes: 0 done, 1 the API refused, 2 usage, 3 not signed in, 4 the
   API is unreachable. A setting the environment got wrong is usage.
-- The session lives in `$TADAS_HOME/session.json` (default `~/.config/tadas`,
+- The auth session lives in `$TADAS_HOME/auth_session.json` (default `~/.config/tadas`,
   mode 600) and goes only to the API that issued it. `TADAS_TOKEN` wins over
   it. `TADAS_API_URL` or `--api` names the API. `TADAS_HTTP_TIMEOUT_SECONDS`,
   `TADAS_HTTP_RETRIES`, and `TADAS_HTTP_RETRY_BACKOFF_SECONDS` tune the client.

@@ -1,5 +1,5 @@
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import type { TaskPageView, TaskScope, TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keys } from "../../queries/keys";
 import { placeTask, refreshTaskLists, removeTask } from "../../queries/taskCache";
@@ -93,13 +93,13 @@ export function useTasksVm() {
   );
   const leavingIds = useMemo(() => new Set(leaving.map((l) => l.task.id)), [leaving]);
 
-  type Pages = InfiniteData<TaskPageView> | undefined;
+  type Pages = InfiniteData<tasks.TaskPageView> | undefined;
   const editOpen = (edit: (data: Pages) => Pages) =>
-    queryClient.setQueryData<InfiniteData<TaskPageView>>(keys.tasks.open(scope), edit);
+    queryClient.setQueryData<InfiniteData<tasks.TaskPageView>>(keys.tasks.open(scope), edit);
   // The server is the truth, and every write answers with the task as it
   // wrote it: the answer is placed into every cached list, in every scope,
   // and no list is read again. A write the server refused reads them again.
-  const place = (task: TaskView) => placeTask(queryClient, task);
+  const place = (task: tasks.TaskView) => placeTask(queryClient, task);
   const refresh = () => refreshTaskLists(queryClient);
   // Every write names the version of the task as held here; a write the
   // server refused because the task changed since is said as such. Every
@@ -136,8 +136,8 @@ export function useTasksVm() {
   };
 
   // Struck through at once; fades out of Open in place while it fades in at the top of Done.
-  const complete = async (task: TaskView) => {
-    const doneTask: TaskView = { ...task, status: "done", updated_at: new Date().toISOString() };
+  const complete = async (task: tasks.TaskView) => {
+    const doneTask: tasks.TaskView = { ...task, status: "done", updated_at: new Date().toISOString() };
     const index = openView.findIndex((t) => t.id === task.id);
     setLeaving((current) => [...current.filter((l) => l.task.id !== task.id), { task: doneTask, index }]);
     placeTask(queryClient, doneTask, { optimistic: true });
@@ -159,7 +159,7 @@ export function useTasksVm() {
     }
   };
 
-  const reopen = async (task: TaskView) => {
+  const reopen = async (task: tasks.TaskView) => {
     // The server puts a reopened task on top of the open list.
     placeTask(
       queryClient,
@@ -184,7 +184,7 @@ export function useTasksVm() {
   // on Save, or a double click) sends a second write naming the version the
   // first is already bumping, and the answer is a refusal that reads as
   // someone else's change when nobody else touched the task.
-  const save = async (task: TaskView, edit: TaskEdit) => {
+  const save = async (task: tasks.TaskView, edit: TaskEdit) => {
     if (!canAdd(edit.title) || savingNow.current) return;
     savingNow.current = true;
     setSaving(true);
@@ -214,7 +214,7 @@ export function useTasksVm() {
     }
   };
 
-  const destroy = async (task: TaskView) => {
+  const destroy = async (task: tasks.TaskView) => {
     removeTask(queryClient, task.id, { optimistic: true });
     setEditingId(null);
     try {
@@ -244,7 +244,7 @@ export function useTasksVm() {
       (cause) => errorMessage(cause, "The task was not moved; the list was reloaded."),
     );
 
-  const changeScope = (next: TaskScope) => {
+  const changeScope = (next: tasks.TaskScope) => {
     setScope(next);
     setEditingId(null);
     setExtraOpen(0);
@@ -252,7 +252,7 @@ export function useTasksVm() {
   };
 
   // Only the open copy of a completed task leaves; the done copy is arriving.
-  const rowOf = (task: TaskView, group: "open" | "done") => ({
+  const rowOf = (task: tasks.TaskView, group: "open" | "done") => ({
     task,
     row: taskRow(task, usersById, meId),
     leaving: group === "open" && leavingIds.has(task.id),

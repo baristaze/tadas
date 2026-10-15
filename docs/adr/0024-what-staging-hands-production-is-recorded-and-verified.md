@@ -1,6 +1,6 @@
 # ADR 0024: What staging hands production is recorded outside the cloud and verified
 
-**Status**: accepted (2026-09-22)
+**Status**: accepted (2026-09-28)
 
 ## Context
 

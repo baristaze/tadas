@@ -3,7 +3,7 @@
 // a deadline on every call, and the app's one retry. Every browser app sends
 // through it, and nothing outside this package calls fetch.
 
-import type { LastOwnerDetail, OwnedOrgRef } from "./types";
+import type { LastOwnerDetail, OwnedOrgRef, PlanLimitDetail } from "./types/common";
 import {
   DEFAULT_RETRY_ATTEMPTS,
   DEFAULT_RETRY_BASE_DELAY_MS,
@@ -24,12 +24,7 @@ export interface StreamTruncated {
 export type OwnedOrg = OwnedOrgRef;
 
 /** What a `plan_limit_reached` refusal carries: the bound it met and the plan that lifts it. */
-export interface PlanLimit {
-  lever: string;
-  plan: string;
-  limit: number | null;
-  suggested_plan: string | null;
-}
+export type PlanLimit = PlanLimitDetail;
 
 export interface ErrorEnvelope {
   error: {

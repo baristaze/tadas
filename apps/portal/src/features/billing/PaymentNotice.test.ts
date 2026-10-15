@@ -5,11 +5,11 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { BillingView } from "@tadas/client";
+import type { billing } from "@tadas/client";
 import { PaymentNotice } from "./PaymentNotice";
 
 const state = vi.hoisted(() => ({
-  billing: null as Partial<BillingView> | null,
+  billing: null as Partial<billing.BillingView> | null,
   mutateAsync: vi.fn<(flow?: string) => Promise<{ url: string }>>(() => Promise.resolve({ url: "https://billing.test/p" })),
 }));
 
@@ -19,7 +19,7 @@ vi.mock("../../queries/billing", () => ({
 }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
-const PAST_DUE: Partial<BillingView> = {
+const PAST_DUE: Partial<billing.BillingView> = {
   plan: "team",
   paid_plan: "team",
   status: "past_due",
@@ -31,7 +31,7 @@ let root: ReturnType<typeof createRoot>;
 const container = document.createElement("div");
 document.body.append(container);
 
-async function draw(billing: Partial<BillingView> | null) {
+async function draw(billing: Partial<billing.BillingView> | null) {
   state.billing = billing;
   await act(async () => root.render(createElement(PaymentNotice)));
 }

@@ -7,21 +7,17 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of, request
-from contracts.factories import make_org
-from contracts.outbox_storage import claim_all
-from contracts.plans import ON_TEAM
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import PROVENANCE_FIELDS, new_id, utcnow
+from tadas.om.change_events.impl.manager import ChangeEventsManagerImpl, ChangeEventsOptions
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import (
     Role,
     TenantContext,
 )
-from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, NotFound, PreconditionFailed, ValidationFailed
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
@@ -34,6 +30,11 @@ from tadas.om.tasks.rules import Place, needs_respace
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+
+from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of, request
+from contracts.factories import make_org
+from contracts.outbox_storage import claim_all
+from contracts.plans import ON_TEAM
 
 
 def make_task(ctx: TenantContext, title: str = "Ship it", assignee_id: UUID | None = None) -> Task:
@@ -55,13 +56,15 @@ def infra(tmp_path: Path) -> InfraLocalImpl:
 
 
 @pytest.fixture
-def events_storage() -> EventStorageMemoryImpl:
-    return EventStorageMemoryImpl()
+def events_storage() -> ChangeEventStorageMemoryImpl:
+    return ChangeEventStorageMemoryImpl()
 
 
 @pytest.fixture
-def events(events_storage: EventStorageMemoryImpl, members: Members) -> EventsManagerImpl:
-    return EventsManagerImpl(events_storage, members, EventsOptions())
+def events(
+    events_storage: ChangeEventStorageMemoryImpl, members: Members
+) -> ChangeEventsManagerImpl:
+    return ChangeEventsManagerImpl(events_storage, members, ChangeEventsOptions())
 
 
 @pytest.fixture
@@ -77,7 +80,7 @@ def outbox() -> OutboxStorageMemoryImpl:
 @pytest.fixture
 def manager(
     infra: InfraLocalImpl,
-    events_storage: EventStorageMemoryImpl,
+    events_storage: ChangeEventStorageMemoryImpl,
     members: Members,
     outbox: OutboxStorageMemoryImpl,
 ) -> TasksManagerInterface:
@@ -130,7 +133,7 @@ async def delete(manager: TasksManagerInterface, ctx: TenantContext, task_id: UU
 
 async def test_create_update_delete_record_and_push(
     manager: TasksManagerInterface,
-    events: EventsManagerImpl,
+    events: ChangeEventsManagerImpl,
     infra: InfraLocalImpl,
     outbox: OutboxStorageMemoryImpl,
 ) -> None:
@@ -170,7 +173,7 @@ async def test_create_update_delete_record_and_push(
     # Every push is a record: the event carries the row's id and the caller's
     # provenance, and the version, never a field's value; the outbox row
     # behind it is done.
-    recorded = await events.get_events(ctx, after_seq=0, limit=10)
+    recorded = await events.get_change_events(ctx, after_seq=0, limit=10)
     assert [e.id for e in recorded] == [p.idempotency_key for p in pushes]
     assert [e.payload for e in recorded] == [{"version": 1}, {"version": 2}, {"version": 3}]
     assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
@@ -433,7 +436,7 @@ async def test_a_delete_racing_an_edit_cannot_be_undone_by_the_edit(
 
 
 async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
-    infra: InfraLocalImpl, members: Members, events_storage: EventStorageMemoryImpl
+    infra: InfraLocalImpl, members: Members, events_storage: ChangeEventStorageMemoryImpl
 ) -> None:
     # The window the version closes: the manager read the task, and before its
     # write reaches storage another writer's delete lands. The write names the
@@ -484,7 +487,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
 
 async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> None:
     outbox = OutboxStorageMemoryImpl()
-    events_storage = EventStorageMemoryImpl()
+    events_storage = ChangeEventStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     manager = build_tasks(
         TasksStorageMemoryImpl(outbox),
@@ -545,8 +548,8 @@ async def test_a_client_paging_at_the_clamp_sees_every_task(manager: TasksManage
 async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     infra: InfraLocalImpl,
     members: Members,
-    events: EventsManagerImpl,
-    events_storage: EventStorageMemoryImpl,
+    events: ChangeEventsManagerImpl,
+    events_storage: ChangeEventStorageMemoryImpl,
 ) -> None:
     # The request succeeds on the core write; the push is the row's job, and a
     # bus that is down at that moment is caught by the sweep's relay_pending.
@@ -579,7 +582,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     )
     assert await working.relay_pending(10) == 1
     assert await claim_all(outbox) == []
-    assert [e.seq for e in await events.get_events(ctx, after_seq=0, limit=10)] == [1]
+    assert [e.seq for e in await events.get_change_events(ctx, after_seq=0, limit=10)] == [1]
 
 
 async def split_one_gap(
@@ -600,7 +603,7 @@ async def split_one_gap(
 
 
 async def test_a_move_writes_its_one_row_however_often_a_gap_is_split(
-    manager: TasksManagerInterface, events: EventsManagerImpl, outbox: OutboxStorageMemoryImpl
+    manager: TasksManagerInterface, events: ChangeEventsManagerImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
     """A hundred and fifty moves into one gap, twice as many as a float had
     room for: every move lands where it was asked to, writes the moved task
@@ -610,7 +613,7 @@ async def test_a_move_writes_its_one_row_however_often_a_gap_is_split(
     a = await manager.create_task(ctx, make_task(ctx, "a"))
     b = await manager.create_task(ctx, make_task(ctx, "b"))
     bystander = await manager.create_task(ctx, make_task(ctx, "bystander"))
-    seen = len(await events.get_events(ctx, after_seq=0, limit=1000))
+    seen = len(await events.get_change_events(ctx, after_seq=0, limit=1000))
     for index in range(150):
         moved, other, expected = (
             (a, c, ["bystander", "b", "a", "c"])
@@ -623,7 +626,7 @@ async def test_a_move_writes_its_one_row_however_often_a_gap_is_split(
         after = {t.id: t.version for t in await open_page(manager, ctx)}
         assert [task_id for task_id in after if after[task_id] != before[task_id]] == [moved.id]
         assert after[other.id] == before[other.id]
-        recorded = await events.get_events(ctx, after_seq=0, limit=1000)
+        recorded = await events.get_change_events(ctx, after_seq=0, limit=1000)
         assert [(e.kind, e.target_id) for e in recorded[seen:]] == [
             ("tasks.task.updated", moved.id)
         ]
@@ -711,7 +714,7 @@ async def test_a_move_after_one_of_two_tasks_that_share_a_rank_goes_after_both(
 
 
 async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
-    manager: TasksManagerInterface, events: EventsManagerImpl
+    manager: TasksManagerInterface, events: ChangeEventsManagerImpl
 ) -> None:
     """Past the bound, the sweep gives the run short ranks again: the same
     order, one write, each task of the run a version on and announced, the
@@ -725,7 +728,7 @@ async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
     before = {t.id: t for t in await open_page(manager, ctx)}
     order = await open_titles(manager, ctx, TaskScope.TEAM)
     assert order == ["top", *expected, "below"]
-    seen = len(await events.get_events(ctx, after_seq=0, limit=1000))
+    seen = len(await events.get_change_events(ctx, after_seq=0, limit=1000))
 
     respaced = await manager.respace_ranks(ctx)
 
@@ -737,7 +740,7 @@ async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
     assert len(changed) == respaced
     assert all(after[task_id].version == before[task_id].version + 1 for task_id in changed)
     assert top.id not in changed and below.id not in changed and b.id not in changed
-    recorded = await events.get_events(ctx, after_seq=0, limit=1000)
+    recorded = await events.get_change_events(ctx, after_seq=0, limit=1000)
     assert sorted(e.target_id for e in recorded[seen:]) == sorted(changed)
     assert await storage.read_long_place(ctx.org_id) is None
     assert await manager.respace_ranks(ctx) == 0

@@ -19,11 +19,13 @@ from tadas.integrations.exceptions import PaymentsKeyRefused, PaymentsRefused, P
 from tadas.integrations.payments.deliveries import delivery_of
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.billing.kinds import BillingKind
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import Role, TenantContext
+from tadas.om.root import KINDS
 from tadas.om.tenancy.rules import ROLE_PERMISSIONS
 from tadas.om.work.types.handler import WorkParked, WorkRefused
-from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, WorkKind
+from tadas.om.work.types.work_item import WorkItem
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import SyncSeatsHandlerImpl
@@ -153,7 +155,7 @@ async def seats_to_sync(
         updated_at=now,
         created_by=ctx.user_id,
         updated_by=ctx.user_id,
-        kind=WorkKind.SYNC_SEATS,
+        kind=BillingKind.SYNC_SEATS,
         target_id=ctx.org_id,
         idempotency_key=new_id(),
         request_id=ctx.request_id,
@@ -218,4 +220,6 @@ async def test_a_seat_count_the_processor_refuses_fails_and_one_that_may_pass_pa
 
 @pytest.mark.parametrize("role", [Role.MEMBER, Role.VIEWER])
 def test_a_role_that_does_not_manage_members_never_asks_for_the_seat_count(role: Role) -> None:
-    assert WORK_ENQUEUE_PERMISSIONS[WorkKind.SYNC_SEATS] not in ROLE_PERMISSIONS[role]
+    spec = KINDS.get(BillingKind.SYNC_SEATS)
+    assert spec is not None
+    assert spec.permission not in ROLE_PERMISSIONS[role]

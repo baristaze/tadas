@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ImportView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import { ImportStatus } from "./ImportStatus";
 import { useImportVm } from "./useImportVm";
 
@@ -32,7 +32,7 @@ const net = vi.hoisted(() => {
 vi.mock("../../app/api", () => ({ api: { get: net.get, post: net.post } }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
-function view(fields: Partial<ImportView>): ImportView {
+function view(fields: Partial<tasks.ImportView>): tasks.ImportView {
   return {
     id: "i1",
     file_id: "f1",

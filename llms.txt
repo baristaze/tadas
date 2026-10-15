@@ -1,31 +1,29 @@
 # Tadas
 
-> A multi-tenant to-do application for teams of people and the agents that work alongside them, and the reference implementation of the Software Design and Architecture Guidelines: one object model at the center, one infrastructure toolkit, an API process and a maintenance worker around them, and a portal, a command line, and a TypeScript and a Python client at the edge.
+> A multi-tenant to-do application for teams of people and the agents that work alongside them, and the reference implementation of the Software Design and Architecture Guidelines: one object model at the center, one infrastructure toolkit beside it, the processes around them, and the apps and clients at the edge.
 
 This file is the knowledge map. Each section lists the documents one
 audience is served; a document not listed under an audience is not
 served to it. Exposure is by listing, never by folder.
 
-## Platform developers
+## System developers
 
-- [README](README.md): what Tadas is, the quick start with the local URLs and sign-ins, set up and check, deploy and operate, and the layout
+- [README](README.md): what Tadas is, the quick start, set up and check, deploy and operate, and the layout
 - [Architecture](specs/architecture.md): the guideline's pin, the substitutions, and the deviations, each linking its decision record under docs/adr/
+- [Decisions](docs/adr/README.md): how a decision is recorded and numbered, and how a copy extends one the scaffold gave
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
-- [Tenancy](om/src/tadas/om/tenancy/README.md): orgs, identities, users, memberships, invitations, sessions, API keys, socket tickets, the operator plane, and deletion
-- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, their rank and version, the due date and its reminder, attachments, the import, and the archive
-- [Slack](om/src/tadas/om/slack/README.md): the app an org installs, its bot token, its channel, and the record of every post
-- [Billing](om/src/tadas/om/billing/README.md): plans and their bounds, the org's account at the payment processor, deliveries applied once, and grants
-- [Events](om/src/tadas/om/events/README.md): the org's stream, its gapless sequence above a floor, and audit entries
+- [Tenancy](om/src/tadas/om/tenancy/README.md): orgs, identities, users, memberships, invitations, auth sessions, API keys, socket tickets, the operator plane, and deletion
+- [Change events](om/src/tadas/om/change_events/README.md): the org's stream, its gapless sequence above a floor, and audit entries
 - [Outbox rows](om/src/tadas/om/outbox/README.md): the note written beside every change, and its relay
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): the outcome of a request that may arrive twice
 - [Work items](om/src/tadas/om/work/README.md): background jobs, the claim, the lease, and the dead letter
-- [Orchestrations](om/src/tadas/om/orchestrations/README.md): long-running records, a step at a time, that park or fail: the import and the daily cleanup
-- [Leases](om/src/tadas/om/leases/README.md): a resource one holder uses at a time, its lease under a fencing token, and the line in front of it
+- [Orchestrations](om/src/tadas/om/orchestrations/README.md): long-running records, a step at a time, that park or fail
+- [Leases](om/src/tadas/om/leases/README.md): a leasable resource one holder uses at a time, its lease under a fencing token, and the wait line in front of it
 - [Files](om/src/tadas/om/media/README.md): files as references, the bounded upload straight to the store, and the sweep
-- [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, flags, outages, observability; what each promises and which twin runs where
-- [Integrations](integrations/README.md): the identity provider, its twin, the absent provider, and the webhook check; Slack and Stripe, each an interface, a client, and a twin
-- [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
-- [The maintenance worker](workers/maintenance/README.md): the work queue's loop, the provider deliveries, the Slack posts, and the sweep
+- [Infrastructure](infra/README.md): the capabilities the system asks for, what each promises, and which twin runs where
+- [Integrations](integrations/README.md): the outside providers, their twins, the absent provider, and the webhook check
+- [The API process](services/api/README.md): where each namespace's routes are, the gateway's guarantees, the subcommands
+- [The maintenance worker](workers/maintenance/README.md): the work queue's loop, the provider deliveries, and the sweep
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention
 - [The local stack](deployment/local/README.md): every URL and port, one service at a time
 - [Terraform](deployment/terraform/modules/README.md): the roots, the modules, the state, and the credentials
@@ -34,13 +32,17 @@ served to it. Exposure is by listing, never by folder.
 - [Audit tools](ops/audit/README.md): what the audit skills run
 - [Stress tests](ops/stress/README.md): what a good one is and the scenario file
 - [Runbooks](docs/runbooks/README.md): one file per operational procedure
-- [The portal](apps/portal/README.md): the browser app, which calls the API on its own origin
+- [The portal](apps/portal/README.md): the browser app shell
 - [The company site](apps/site/README.md): the static page and where it is served
 - [The command line](apps/cli/README.md): the terminal client and its exit codes
 - [The TypeScript client](clients/typescript/README.md): the one client every browser app imports
 - [The Python client](clients/python/README.md): the one client every Python caller goes through
+<!-- A copy adds its entries below this line. -->
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, their rank and version, the due date and its reminder, attachments, the import, and the archive
+- [Slack](om/src/tadas/om/slack/README.md): the app an org installs, its bot token, its channel, and the record of every post
+- [Billing](om/src/tadas/om/billing/README.md): plans and their bounds, the org's account at the payment processor, deliveries applied once, and grants
 
-## Platform operators
+## System operators
 
 - [Operations](ops/README.md): roles, profiles, credentials, signals, the ops binary, the skills, the audits, what an operator never does
 - [Audit tools](ops/audit/README.md): what the audit skills run
@@ -54,19 +56,21 @@ served to it. Exposure is by listing, never by folder.
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [WorkOS runbook](docs/runbooks/providers/workos.md): the identity provider for a newcomer: its environments, the application and its key, the redirects, the webhook, the bootstrap, and rotation
-- [Stripe runbook](docs/runbooks/providers/stripe.md): the payment processor: its accounts, keys, bootstrap, webhook secret, local deliveries, rotation, and what breaks
-- [Slack runbook](docs/runbooks/providers/slack.md): the Slack app: one per environment, its secrets, the install, the twin, rotation, and what breaks
 - [LaunchDarkly runbook](docs/runbooks/providers/launchdarkly.md): the flag provider: how a rule reaches an org or a person, the SDK key, the switch from none, and what breaks
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention
+<!-- A copy adds its entries below this line. -->
+- [Stripe runbook](docs/runbooks/providers/stripe.md): the payment processor: its accounts, keys, bootstrap, webhook secret, local deliveries, rotation, and what breaks
+- [Slack runbook](docs/runbooks/providers/slack.md): the Slack app: one per environment, its secrets, the install, the twin, rotation, and what breaks
 
 ## Tenant users and admins
 
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
 - [Tenancy](om/src/tadas/om/tenancy/README.md): orgs, people, roles, invitations, single sign-on, credentials, deleting a team org you own, and deleting your account
+- [Files](om/src/tadas/om/media/README.md): the files an org keeps, their bounds, and the storage used
+- [Change events](om/src/tadas/om/change_events/README.md): the org's diary
+- [The command line](apps/cli/README.md): the terminal client and its exit codes
+<!-- A copy adds its entries below this line. -->
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, their due dates, and their rules
 - [Orchestrations](om/src/tadas/om/orchestrations/README.md): importing tasks from a file, and the archive of old done tasks
 - [Slack](om/src/tadas/om/slack/README.md): adding Tadas to Slack, picking its channel, what it posts, and its commands
 - [Billing](om/src/tadas/om/billing/README.md): the plans, what each allows, and how an org pays
-- [Files](om/src/tadas/om/media/README.md): the files an org keeps, their bounds, and the storage used
-- [Events](om/src/tadas/om/events/README.md): the org's diary
-- [The command line](apps/cli/README.md): the terminal client and its exit codes

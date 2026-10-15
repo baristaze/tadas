@@ -8,7 +8,9 @@ payment processor delivers to `/webhooks/stripe`. Slack calls three URLs,
 each named in the app's manifest: `/webhooks/slack/commands` for `/tadas`,
 `/webhooks/slack/events` for the Events API, and `/webhooks/slack/oauth`,
 where Slack sends a person's browser back at the end of an install. The
-last is not signed: the one-time state it carries is its check."""
+last is not signed: the one-time state it carries is its check. A route's
+tag names the namespace whose provider delivers to it, so its operation is
+in that namespace's document."""
 
 from typing import Annotated
 
@@ -18,20 +20,20 @@ from fastapi.responses import RedirectResponse
 from tadas.services.api.gateway.auth import Rctx
 from tadas.services.api.gateway.resolve import SlackService, WebhooksService
 from tadas.services.api.gateway.webhooks import IdentityDelivery, SlackCall, StripeDelivery
+from tadas.services.api.types.common import DeliveryReceivedView
 from tadas.services.api.types.slack import SlackEventAnswerView
-from tadas.services.api.types.webhooks import DeliveryReceivedView
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/webhooks")
 
 
-@router.post("/identity", response_model=DeliveryReceivedView)
+@router.post("/identity", response_model=DeliveryReceivedView, tags=["tenancy"])
 async def identity_delivery(
     rctx: Rctx, webhooks: WebhooksService, delivery: IdentityDelivery
 ) -> DeliveryReceivedView:
     return await webhooks.receive_identity(rctx, delivery)
 
 
-@router.post("/stripe", response_model=DeliveryReceivedView)
+@router.post("/stripe", response_model=DeliveryReceivedView, tags=["billing"])
 async def stripe_delivery(
     rctx: Rctx, webhooks: WebhooksService, delivery: StripeDelivery
 ) -> DeliveryReceivedView:
@@ -40,17 +42,22 @@ async def stripe_delivery(
 
 # An empty 200 is the acknowledgement Slack waits three seconds for; the
 # answer reaches the person through the command's response_url.
-@router.post("/slack/commands", status_code=200, response_class=Response)
+@router.post("/slack/commands", status_code=200, response_class=Response, tags=["slack"])
 async def slack_command(rctx: Rctx, slack: SlackService, call: SlackCall) -> None:
     return await slack.receive_command(rctx, call)
 
 
-@router.post("/slack/events", response_model=SlackEventAnswerView, response_model_exclude_none=True)
+@router.post(
+    "/slack/events",
+    response_model=SlackEventAnswerView,
+    response_model_exclude_none=True,
+    tags=["slack"],
+)
 async def slack_event(rctx: Rctx, slack: SlackService, call: SlackCall) -> SlackEventAnswerView:
     return await slack.receive_event(rctx, call)
 
 
-@router.get("/slack/oauth", status_code=302, response_class=RedirectResponse)
+@router.get("/slack/oauth", status_code=302, response_class=RedirectResponse, tags=["slack"])
 async def slack_oauth(
     rctx: Rctx,
     slack: SlackService,

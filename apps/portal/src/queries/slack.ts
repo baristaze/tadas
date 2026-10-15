@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SlackInstallStartView, SlackStatusView } from "@tadas/client";
+import type { slack } from "@tadas/client";
 import { api } from "../app/api";
 import type { Go } from "./billing";
 import { keys } from "./keys";
@@ -10,7 +10,7 @@ const leave: Go = (url) => window.location.assign(url);
 export function useSlackStatus() {
   return useQuery({
     queryKey: keys.slack.installation,
-    queryFn: ({ signal }) => api.get<SlackStatusView>("/v1/slack/installation", { signal }),
+    queryFn: ({ signal }) => api.get<slack.SlackStatusView>("/v1/slack/installation", { signal }),
   });
 }
 
@@ -21,7 +21,7 @@ export function useSlackStatus() {
 export function useStartSlackInstall(go: Go = leave) {
   return useMutation({
     mutationFn: () =>
-      api.post<SlackInstallStartView>("/v1/slack/installation", undefined, {
+      api.post<slack.SlackInstallStartView>("/v1/slack/installation", undefined, {
         idempotencyKey: crypto.randomUUID(),
       }),
     onSuccess: (start) => {
@@ -34,7 +34,7 @@ export function useStartSlackInstall(go: Go = leave) {
 export function useUninstallSlack() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.del<SlackStatusView>("/v1/slack/installation"),
+    mutationFn: () => api.del<slack.SlackStatusView>("/v1/slack/installation"),
     onSuccess: (status) => queryClient.setQueryData(keys.slack.installation, status),
   });
 }

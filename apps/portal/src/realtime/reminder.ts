@@ -7,13 +7,13 @@
 // announced, without its title. What one replay hands over is one notice
 // each, by title, up to MISSED_REMINDERS_NAMED of them, and past that one
 // notice that counts them, which reads nothing.
-import type { TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 import type { ChannelDeps } from "./channel";
 import { reminderOf } from "./router";
 
 export interface ReminderEffects {
   /** Reads the task the push names. */
-  readTask: (id: string) => Promise<TaskView>;
+  readTask: (id: string) => Promise<tasks.TaskView>;
   /** Shows one notice. */
   notify: (message: string) => void;
 }

@@ -1,7 +1,7 @@
 from tadas.infra.flags import FlagsInterface
 from tadas.om.context import TenantContext
 from tadas.services.api.services.flags import FlagsServiceInterface
-from tadas.services.api.types.flags import FlagsView
+from tadas.services.api.types.tenancy import FlagsView
 
 
 class FlagsServiceImpl(FlagsServiceInterface):

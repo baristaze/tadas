@@ -1,17 +1,16 @@
 # ADR 0029: A local sign-in by address alone, refused in a deployed environment
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
 Sign-in is the identity provider's
 ([ADR 0028](0028-sign-in-is-the-identity-providers.md)): a person goes
 through a hosted page in a browser and comes back with a code. Several
-callers need a person without that round trip: `make seed`, the demo
-recorders, which sign two of them in and drive the portal and the
-command line, the traffic generator, and the unit, API, and integration
-tests, which sign in hundreds of people. None of them has a browser, a
-mailbox, or a WorkOS account, and CI has no WorkOS key.
+callers need a person without that round trip: `make seed`, the traffic
+generator, and the unit, API, and integration tests, which sign in
+hundreds of people. None of them has a browser, a mailbox, or a WorkOS
+account, and CI has no WorkOS key.
 
 What a Process Refuses has a setting that is only safe locally refused
 by the process at boot, not by a checklist.

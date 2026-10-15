@@ -3,13 +3,15 @@ from uuid import UUID
 
 from tadas.om.exceptions import PreconditionFailed
 from tadas.om.orchestrations.rules import is_settled
-from tadas.om.orchestrations.storage import OrchestrationsStorageInterface, StepLandingInterface
+from tadas.om.orchestrations.storage import (
+    OrchestrationsStorageInterface,
+    OrchestrationStepLandingInterface,
+)
 from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
+    OrchestrationStep,
     ParkReason,
-    Step,
 )
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
@@ -17,7 +19,7 @@ from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 
 
 class OrchestrationsStorageMemoryImpl(
-    MemoryStorageBase, OrchestrationsStorageInterface, StepLandingInterface
+    MemoryStorageBase, OrchestrationsStorageInterface, OrchestrationStepLandingInterface
 ):
     def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
         super().__init__(outbox)
@@ -37,9 +39,7 @@ class OrchestrationsStorageMemoryImpl(
     async def read_orchestration(self, org_id: UUID, record_id: UUID) -> Orchestration | None:
         return self._get(self._records, org_id, record_id)
 
-    async def read_recent(
-        self, org_id: UUID, kind: OrchestrationKind, limit: int
-    ) -> list[Orchestration]:
+    async def read_recent(self, org_id: UUID, kind: str, limit: int) -> list[Orchestration]:
         found = [r for r in self._rows(self._records, org_id) if r.kind == kind]
         return sorted(found, key=lambda r: r.id, reverse=True)[:limit]
 
@@ -89,10 +89,10 @@ class OrchestrationsStorageMemoryImpl(
     # Postgres. Both are synchronous, so nothing runs between the check and
     # the write.
 
-    def check_step(self, org_id: UUID, step: Step) -> None:
+    def check_orchestration_step(self, org_id: UUID, step: OrchestrationStep) -> None:
         self._check(org_id, step.record.id, step.expected_version)
 
-    def land_step(self, org_id: UUID, step: Step, applied: int) -> None:
+    def land_orchestration_step(self, org_id: UUID, step: OrchestrationStep, applied: int) -> None:
         record = step.record.model_copy(update={"applied": step.record.applied + applied})
         self._records[record.id] = (org_id, record)
 

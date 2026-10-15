@@ -38,7 +38,7 @@ same check. No process holds a socket to Slack.
 v5 over its `event_id`, which Slack keeps across its retries; a command's
 is over its `trigger_id`, which names one invocation. A task
 `/tadas add` creates takes an id derived from that key
-([ADR 0027](0027-a-task-slack-creates-takes-an-id-derived-from-the-delivery.md)).
+([ADR 1008](1008-a-task-slack-creates-takes-an-id-derived-from-the-delivery.md)).
 The reply to a mention is recorded under the key. So Slack's retries and
 the queue's redeliveries each do one thing.
 

@@ -1,14 +1,14 @@
 # ADR 0033: The WorkOS key is the application's, never the environment's
 
-**Status**: accepted (2026-09-23)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
 A WorkOS environment holds several applications: the default one
 WorkOS makes with the environment, and the "Tadas App" that Tadas signs
-people in through (staging `client_01M3640D8WBF9KC0P89YW4E72N`,
-production `client_01M363XVP5FGF2P45FHK9B7MJD`). Each application has
-its own client id, redirect list, session settings, and API keys.
+people in through (staging `client_STAGING_PLACEHOLDER`, production
+`client_PRODUCTION_PLACEHOLDER`). Each application has its own client
+id, redirect list, session settings, and API keys.
 
 The key on the environment's API Keys page is the default
 application's. As the Tadas App's client secret, it makes the code

@@ -8,7 +8,8 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from uuid import UUID
 
-from tadas.om.orchestrations.types.orchestration import Step
+from tadas.om.context import tenantless
+from tadas.om.orchestrations.types.orchestration import OrchestrationStep
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.rules import Place
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -125,6 +126,7 @@ class TasksStorageInterface(ABC):
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None: ...
 
     @abstractmethod
+    @tenantless
     async def count_created_since(self, since: datetime) -> int:
         """Global: how many tasks were created at or after `since`, across every
         tenant and whatever became of them since; the traffic the operator
@@ -132,6 +134,7 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def read_deleted(self, before: datetime, limit: int) -> list[tuple[UUID, UUID]]:
         """Cross-tenant, for the sweep, in the system scope: at most `limit`
         tasks soft-deleted before `before`, the longest deleted first, across
@@ -142,6 +145,7 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def read_tenants_with_chores(
         self, archivable_before: datetime, after: UUID | None, limit: int
     ) -> list[UUID]:
@@ -156,6 +160,7 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
         """Cross-tenant, for the sweep, in the system scope: the one hard
         delete removes those of `task_ids` still soft-deleted before
@@ -220,14 +225,14 @@ class TasksStorageInterface(ABC):
         self,
         org_id: UUID,
         tasks: Sequence[tuple[Task, tuple[OutboxRow, ...]]],
-        step: Step,
-        step_rows: tuple[OutboxRow, ...],
+        step: OrchestrationStep,
+        orchestration_step_rows: tuple[OutboxRow, ...],
     ) -> tuple[bool, ...]:
         """One step of an import, one commit: every task an id not written yet
         (a row stepped twice meets its task already there), each with the rows
         that announce it, and the record as the step left it with the rows
         that announce it and ask for its next step. The record is a
-        compare-and-set on the version the step read (`Step`), and its
+        compare-and-set on the version the step read (`OrchestrationStep`), and its
         `applied` grows by the tasks this commit wrote. A record that moved
         raises `PreconditionFailed` and lands nothing. Answers, per task and in
         order, whether this commit wrote it (and landed its rows) or found it
@@ -242,8 +247,8 @@ class TasksStorageInterface(ABC):
         before: datetime,
         archived_at: datetime,
         actor: UUID,
-        step: Step,
-        step_rows: tuple[OutboxRow, ...],
+        step: OrchestrationStep,
+        orchestration_step_rows: tuple[OutboxRow, ...],
     ) -> tuple[bool, ...]:
         """One step of a cleanup, one commit: one conditional write archives
         the candidates that are still archivable before `before`

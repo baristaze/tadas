@@ -8,15 +8,13 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.plans import ON_TEAM
-from contracts.second_factor import TOTP_KEY
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.twin import TWIN_LOGOUT, IdentityProviderTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role, TenantContext
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     LastOwner,
     NotAuthorized,
@@ -31,6 +29,7 @@ from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.root import build_tenancy
+from tadas.om.tasks.kinds import TasksKind
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.manager import (
     TenancyOptions,
@@ -39,6 +38,9 @@ from tadas.om.tenancy.impl.org import DELETED_PERSONAL_ORG_NAME
 from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.work.types.work_item import WorkKind, asks_for_work, work_row_kind
+
+from contracts.plans import ON_TEAM
+from contracts.second_factor import TOTP_KEY
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 SIGNED_OUT = "http://localhost:5173/signed-out"
@@ -102,7 +104,9 @@ def twin() -> IdentityProviderTwinImpl:
 def relay(storage: TenancyStorageMemoryImpl, tmp_path: Path) -> SpyRelay:
     infra = InfraLocalImpl(tmp_path)
     return SpyRelay(
-        OutboxRelayImpl(OutboxStorageMemoryImpl(), EventStorageMemoryImpl(), infra.get_topics())
+        OutboxRelayImpl(
+            OutboxStorageMemoryImpl(), ChangeEventStorageMemoryImpl(), infra.get_topics()
+        )
     )
 
 
@@ -149,10 +153,10 @@ async def test_the_typed_email_must_be_the_accounts(
     ann = await dev(manager, "ann@example.test")
     with pytest.raises(ValidationFailed):
         await manager.org.delete_account(ann, "someone@example.test")
-    assert await storage.read_session(ann.org_id, ann.security.credential_id) is not None
+    assert await storage.read_auth_session(ann.org_id, ann.security.credential_id) is not None
     # Space and letter case are forgiven, as an address is read everywhere.
     await manager.org.delete_account(ann, "  Ann@Example.TEST ")
-    assert await storage.read_session(ann.org_id, ann.security.credential_id) is None
+    assert await storage.read_auth_session(ann.org_id, ann.security.credential_id) is None
     with pytest.raises(NotFound):
         await manager.org.get_identity(ann)
 
@@ -179,7 +183,7 @@ async def test_the_last_owner_of_a_team_org_is_refused_and_told_which(
     )
     assert "Ajax" in refused.value.message and "Globex" in refused.value.message
     assert refused.value.http_status == 409
-    assert await storage.read_session(ajax.id, ann.security.credential_id) is not None
+    assert await storage.read_auth_session(ajax.id, ann.security.credential_id) is not None
 
     # Another owner in each, and the refusal is gone.
     for org in (ajax, globex):
@@ -231,20 +235,20 @@ async def test_the_account_goes_in_one_commit_and_asks_for_the_rest(
     assert await storage.read_user(ajax.id, bob_in_ajax.id) is None
     assert await storage.read_membership_for_user(ajax.id, bob_in_ajax.id) is None
     for ctx in (bob, at_home):
-        assert await storage.read_session(ctx.org_id, ctx.security.credential_id) is None
+        assert await storage.read_auth_session(ctx.org_id, ctx.security.credential_id) is None
     assert await storage.read_api_key(personal.id, key.api_key.id) is None
     # Nothing a row says names who they were.
     for row in relay.rows:
         assert "bob" not in str(row.payload).lower()
     kinds = {(row.org_id, row.kind, row.target_id) for row in relay.rows}
     assert (ajax.id, "tenancy.user.deleted", bob_in_ajax.id) in kinds
-    assert (ajax.id, "tenancy.session.revoked", bob.security.credential_id) in kinds
+    assert (ajax.id, "tenancy.auth_session.revoked", bob.security.credential_id) in kinds
     assert (personal.id, "tenancy.api_key.deleted", key.api_key.id) in kinds
     # The unassignment of his open tasks runs as Bob in Ajax, and the rest in
     # his personal org: the work the commit asks for is those two.
     work = [r for r in relay.rows if asks_for_work(r.kind)]
     assert [r.kind for r in work] == [
-        work_row_kind(WorkKind.UNASSIGN_TASKS),
+        work_row_kind(TasksKind.UNASSIGN_TASKS),
         work_row_kind(WorkKind.DELETE_ACCOUNT),
     ]
     unassign, rest = work

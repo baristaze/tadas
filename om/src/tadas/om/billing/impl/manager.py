@@ -9,7 +9,7 @@ from tadas.infra.cache import CacheInterface
 from tadas.infra.cache.read import ReadCache
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.types import ProviderDelivery, ProviderSubscription
-from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.base import OmBase, new_id, utcnow
 from tadas.om.billing.manager import BillingManagerInterface
 from tadas.om.billing.rules import (
     LIVE_STATUSES,
@@ -83,7 +83,7 @@ def wake_rows(
     return (outbox_row(ctx, WAKE_KIND, org_id, wake_payload()),)
 
 
-class BillingOptions(Platform):
+class BillingOptions(OmBase):
     retention: timedelta = timedelta(days=30)
     """A delivery's mark is kept this long: past every retry the processor
     makes of one event, which stops after three days."""

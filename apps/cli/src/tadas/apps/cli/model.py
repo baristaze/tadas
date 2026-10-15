@@ -8,7 +8,9 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from uuid import UUID
 
-from tadas.client.types import FileView, MembershipChoiceView, OrgKind, TaskStatus, TaskView
+from tadas.client.types.media import FileView
+from tadas.client.types.tasks import TaskStatus, TaskView
+from tadas.client.types.tenancy import MembershipChoiceView, OrgKind
 
 SHORT_ID = 8
 NameOf = Callable[[UUID | None], str]

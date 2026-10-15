@@ -9,21 +9,24 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
-from tadas.client.client import (
+from tadas.client.client import ApiClient
+from tadas.client.realtime import Channel
+from tadas.client.transport import (
     DEFAULT_BACKOFF_SECONDS,
     DEFAULT_RETRIES,
     DEFAULT_TIMEOUT_SECONDS,
     MAX_BACKOFF_SECONDS,
     UNSET,
-    ApiClient,
     ApiError,
     may_retry,
     retry_after_seconds,
     retry_delay_seconds,
     retry_wait_seconds,
 )
-from tadas.client.realtime import Channel
-from tadas.client.types import BulkAction, FileView, OrgKind, Role, TaskScope, TaskStatus
+from tadas.client.types.common import Role
+from tadas.client.types.media import FileView
+from tadas.client.types.tasks import BulkAction, TaskScope, TaskStatus
+from tadas.client.types.tenancy import OrgKind
 
 ORG = {
     "id": "0199a4c0-0000-7000-8000-0000000000bb",
@@ -240,7 +243,7 @@ async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:
     )
     async with client_over(recorder, token=None) as client:
         issued = await client.dev_sign_in("ann@example.test")
-        exchanged = await client.exchange_session(issued.token, issued.memberships[0].org.id)
+        exchanged = await client.exchange_auth_session(issued.token, issued.memberships[0].org.id)
     assert exchanged.token == "ses_2" and exchanged.org.slug == "ajax"
     assert "authorization" not in recorder.requests[0].headers
     assert recorder.requests[1].headers["authorization"] == "Bearer lgn_1"
@@ -416,14 +419,14 @@ async def test_a_switch_presents_the_session_and_carries_the_new_one() -> None:
     }
     recorder = Recorder({"/v1/auth/sessions": httpx.Response(200, json=switched)})
     async with client_over(recorder, token="ses_1") as client:
-        issued = await client.switch_session(UUID(ORG["id"]))
+        issued = await client.switch_auth_session(UUID(ORG["id"]))
         assert client.token == "ses_2" and issued.role.value == "member"
         await client.me()
     assert recorder.requests[0].headers["authorization"] == "Bearer ses_1"
     assert recorder.requests[1].headers["authorization"] == "Bearer ses_2"
     async with client_over(recorder, token=None) as client:
         with pytest.raises(ApiError) as refused:
-            await client.switch_session(UUID(ORG["id"]))
+            await client.switch_auth_session(UUID(ORG["id"]))
     assert refused.value.status == 401
 
 
@@ -731,19 +734,20 @@ async def test_the_bytes_go_through_the_api_when_the_store_cannot_sign() -> None
 # bearer the client holds (an operator's own sign-in), and types the answer.
 
 
-async def test_admin_size_reads_the_platforms_size() -> None:
+async def test_admin_size_reads_the_systems_size() -> None:
     size = {
         "tenants": 2,
         "users": 3,
         "tasks_last_24h": 4,
-        "events_last_24h": 5,
+        "change_events_last_24h": 5,
         "since": "2026-09-17T12:00:00Z",
         "counted_at": "2026-09-18T12:00:00Z",
     }
     recorder = Recorder({"/v1/admin/size": httpx.Response(200, json=size)})
     async with client_over(recorder, token="lgn_1") as client:
         read = await client.admin_size()
-    assert (read.tenants, read.users, read.tasks_last_24h, read.events_last_24h) == (2, 3, 4, 5)
+    counts = (read.tenants, read.users, read.tasks_last_24h, read.change_events_last_24h)
+    assert counts == (2, 3, 4, 5)
     assert read.counted_at - read.since == timedelta(hours=24)
     sent = recorder.requests[0]
     assert sent.method == "GET" and sent.url.path == "/v1/admin/size"
@@ -838,11 +842,11 @@ async def test_admin_tasks_names_the_list_and_pages_it() -> None:
 
 async def test_admin_events_replays_one_tenants_stream() -> None:
     org_id = UUID(ORG["id"])
-    path = f"/v1/admin/orgs/{org_id}/events"
+    path = f"/v1/admin/orgs/{org_id}/change-events"
     operator_event = {**EVENT, "request_id": str(uuid4()), "app": "portal"}
     recorder = Recorder({path: httpx.Response(200, json=[operator_event])})
     async with client_over(recorder, token="lgn_1") as client:
-        events = await client.admin_events(org_id, after_seq=3, limit=10)
+        events = await client.admin_change_events(org_id, after_seq=3, limit=10)
     assert [e.seq for e in events] == [1] and events[0].kind == "tenancy.invitation.created"
     assert str(events[0].request_id) == operator_event["request_id"] and events[0].app == "portal"
     sent = recorder.requests[0]
@@ -914,7 +918,7 @@ async def test_a_truncated_stream_names_its_head_on_the_error() -> None:
         "http://test", app="cli", app_version="cli@test", transport=httpx.MockTransport(respond)
     ) as client:
         with pytest.raises(ApiError) as refused:
-            await client.events_after(1)
+            await client.change_events_after(1)
     assert (refused.value.status, refused.value.code) == (410, "stream_truncated")
     assert refused.value.stream_head == 9
 

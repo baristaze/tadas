@@ -1,10 +1,11 @@
-"""Every kind of work the tree asks for is one the permission table names.
+"""Every kind of work the tree asks for is one the root registers.
 
-`WorkManagerImpl.enqueue` refuses a kind `WORK_ENQUEUE_PERMISSIONS` lacks,
-and asks its caller for the permission the table gives. So a kind the code
-asks for and the table does not name is work nobody can start. The code asks
-in two ways: an outbox row of the kind, `work_row_kind(WorkKind.X)`, which
-the relay enqueues with no context, and a direct `enqueue` under a context.
+`WorkManagerImpl.enqueue` refuses a kind the registry (`root.KINDS`) does
+not hold, and asks its caller for the permission the kind's spec gives; the
+relay refuses a row of such a kind. So a kind the code asks for and the
+registry does not hold is work nobody can start. The code asks in two ways:
+an outbox row of the kind, `work_row_kind(<Namespace>Kind.X)`, which the
+relay enqueues with no context, and a direct `enqueue` under a context.
 This test reads both out of the source, outside the tests.
 """
 
@@ -13,7 +14,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
-from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkKind
+from tadas.om.root import KINDS
 
 ROOT = Path(__file__).resolve().parents[3]
 LEFT_OUT = {"tests", ".venv", "node_modules", ".git"}
@@ -41,29 +42,28 @@ def called(call: ast.Call) -> str:
 
 
 def kind_named(call: ast.Call) -> str | None:
-    """The `X` of a `WorkKind.X` the call is handed, when it names one."""
+    """The `X` of a `<Namespace>Kind.X` the call is handed, when it names one:
+    a kind of work is named in capitals, its member's name and its value
+    alike."""
     for argument in call.args:
         if (
             isinstance(argument, ast.Attribute)
             and isinstance(argument.value, ast.Name)
-            and argument.value.id == "WorkKind"
+            and argument.value.id.endswith("Kind")
         ):
             return argument.attr
     return None
 
 
-def test_every_kind_the_code_asks_for_is_in_the_permission_table() -> None:
+def test_every_kind_the_code_asks_for_is_registered() -> None:
     rows = {where: call for where, call in calls() if called(call) == "work_row_kind"}
     asked = {where: kind_named(call) for where, call in rows.items() if THE_QUEUE not in where}
     assert len(asked) >= 5, "the scan no longer sees the rows that ask for work"
     assert [where for where, name in asked.items() if name is None] == [], "a kind not named"
-    unnamed = {
-        where: name
-        for where, name in asked.items()
-        if name is not None and WorkKind[name] not in WORK_ENQUEUE_PERMISSIONS
+    unregistered = {
+        where: name for where, name in asked.items() if name is not None and name not in KINDS
     }
-    assert unnamed == {}
-    assert set(WORK_ENQUEUE_PERMISSIONS) == set(WorkKind)
+    assert unregistered == {}
 
 
 def test_the_code_asks_for_work_through_the_outbox_alone() -> None:

@@ -3,8 +3,8 @@ from datetime import date, datetime
 from uuid import UUID
 
 from tadas.om.exceptions import PreconditionFailed, TenantMismatch
-from tadas.om.orchestrations.storage import StepLandingInterface
-from tadas.om.orchestrations.types.orchestration import Step
+from tadas.om.orchestrations.storage import OrchestrationStepLandingInterface
+from tadas.om.orchestrations.types.orchestration import OrchestrationStep
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
@@ -25,7 +25,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     def __init__(
         self,
         outbox: OutboxLandingInterface | None = None,
-        steps: StepLandingInterface | None = None,
+        steps: OrchestrationStepLandingInterface | None = None,
     ) -> None:
         """`steps` is where a step of a long-running record lands beside the
         tasks it changes, the twin of the statement Postgres runs in the same
@@ -111,18 +111,18 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         self,
         org_id: UUID,
         tasks: Sequence[tuple[Task, tuple[OutboxRow, ...]]],
-        step: Step,
-        step_rows: tuple[OutboxRow, ...],
+        step: OrchestrationStep,
+        orchestration_step_rows: tuple[OutboxRow, ...],
     ) -> tuple[bool, ...]:
         # The record's check first, then every write, one step under the lock,
         # as the statements share one transaction in Postgres.
         async with self._lock:
-            self._landing().check_step(org_id, step)
+            self._landing().check_orchestration_step(org_id, step)
             written = tuple(
                 self._insert(self._tasks, org_id, task, outbox_rows) for task, outbox_rows in tasks
             )
-            self._land(org_id, step_rows)
-            self._landing().land_step(org_id, step, sum(written))
+            self._land(org_id, orchestration_step_rows)
+            self._landing().land_orchestration_step(org_id, step, sum(written))
             return written
 
     async def update_archived_in_step(
@@ -132,11 +132,11 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         before: datetime,
         archived_at: datetime,
         actor: UUID,
-        step: Step,
-        step_rows: tuple[OutboxRow, ...],
+        step: OrchestrationStep,
+        orchestration_step_rows: tuple[OutboxRow, ...],
     ) -> tuple[bool, ...]:
         async with self._lock:
-            self._landing().check_step(org_id, step)
+            self._landing().check_orchestration_step(org_id, step)
             archived: list[bool] = []
             for task_id, outbox_rows in candidates:
                 task = self._get(self._tasks, org_id, task_id)
@@ -153,11 +153,11 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
                 )
                 self._put(self._tasks, org_id, written, outbox_rows)
                 archived.append(True)
-            self._land(org_id, step_rows)
-            self._landing().land_step(org_id, step, sum(archived))
+            self._land(org_id, orchestration_step_rows)
+            self._landing().land_orchestration_step(org_id, step, sum(archived))
             return tuple(archived)
 
-    def _landing(self) -> StepLandingInterface:
+    def _landing(self) -> OrchestrationStepLandingInterface:
         if self._steps is None:
             raise RuntimeError("this memory storage was built without the records to land steps in")
         return self._steps

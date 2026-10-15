@@ -32,7 +32,7 @@ told, live or missed (`reminderNotices` in `reminder.ts`). The channel
 hands a live push over at once, and what a replay or the first catch-up
 read when it ends, in stream order, however it ends. `route` refreshes
 the task and tells nothing, so no reminder is told twice. A switch of
-org and a sign-out stop the channel, so a replay from the old session
+org and a sign-out stop the channel, so a replay from the old auth session
 announces nothing in the new one.
 
 **Three by name, then a count.** What the channel hands over at once is
@@ -45,7 +45,7 @@ counts once. A live push hands over one.
 **The window is the replay's own.** Nothing is read to find missed
 reminders. What the replay reads after the cursor is what is announced.
 A stream trimmed past the cursor is a resync that reads no record
-([ADR 0040](0040-the-event-stream-has-a-floor.md)), so it announces
+([ADR 0040](0040-the-change-event-stream-has-a-floor.md)), so it announces
 nothing.
 
 ## Consequences

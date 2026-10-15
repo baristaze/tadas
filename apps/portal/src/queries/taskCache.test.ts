@@ -1,11 +1,11 @@
 import { QueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, type MeView, type TaskPageView, type TaskView } from "@tadas/client";
+import { ApiError, type tasks, type tenancy } from "@tadas/client";
 import { createHints, HINT_BURST, HINT_WINDOW_MS } from "../realtime/hints";
 import { keys } from "./keys";
 import { heldTask, placeTask, refreshTaskLists, removeTask, taskHintEffects, taskStamp } from "./taskCache";
 
-const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
+const task = (id: string, overrides: Partial<tasks.TaskView> = {}): tasks.TaskView => ({
   id,
   title: `task ${id}`,
   notes: "",
@@ -23,8 +23,8 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   ...overrides,
 });
 
-const me = { user: { id: "u1" } } as MeView;
-const listOf = (...items: TaskView[]): InfiniteData<TaskPageView> => ({
+const me = { user: { id: "u1" } } as tenancy.MeView;
+const listOf = (...items: tasks.TaskView[]): InfiniteData<tasks.TaskPageView> => ({
   pages: [{ items, next_cursor: null }],
   pageParams: [null],
 });
@@ -42,7 +42,7 @@ function cache() {
   queryClient.setQueryData(keys.tasks.open("mine"), listOf(task("a", { rank: "0" })));
   queryClient.setQueryData(keys.tasks.done("mine"), listOf());
   const ids = (key: QueryKey) =>
-    queryClient.getQueryData<InfiniteData<TaskPageView>>(key)!.pages.flatMap((p) => p.items.map((t) => t.id));
+    queryClient.getQueryData<InfiniteData<tasks.TaskPageView>>(key)!.pages.flatMap((p) => p.items.map((t) => t.id));
   return { queryClient, invalidated, ids };
 }
 
@@ -105,18 +105,18 @@ describe("the task cache", () => {
 
   it("takes a restored task out of the archive and puts it in done", () => {
     const { queryClient, ids } = cache();
-    queryClient.setQueryData<TaskPageView>(keys.tasks.archived("team"), {
+    queryClient.setQueryData<tasks.TaskPageView>(keys.tasks.archived("team"), {
       items: [task("r", { status: "done", archived_at: "2026-06-01T00:00:00Z" })],
       next_cursor: null,
     });
     placeTask(queryClient, task("r", { status: "done", version: 2, updated_at: "2026-09-20T12:00:00Z" }));
-    expect(queryClient.getQueryData<TaskPageView>(keys.tasks.archived("team"))!.items).toEqual([]);
+    expect(queryClient.getQueryData<tasks.TaskPageView>(keys.tasks.archived("team"))!.items).toEqual([]);
     expect(ids(keys.tasks.done("team"))).toEqual(["r"]);
   });
 
   it("asks the archive to be read again when a task is archived", () => {
     const { queryClient, invalidated, ids } = cache();
-    queryClient.setQueryData<TaskPageView>(keys.tasks.archived("team"), { items: [], next_cursor: null });
+    queryClient.setQueryData<tasks.TaskPageView>(keys.tasks.archived("team"), { items: [], next_cursor: null });
     placeTask(queryClient, task("a", { status: "done", archived_at: "2026-09-20T12:00:00Z", version: 2 }));
     expect(invalidated).toEqual([keys.tasks.archived("team")]);
     expect(ids(keys.tasks.open("team"))).toEqual(["b"]);
@@ -125,18 +125,18 @@ describe("the task cache", () => {
   it("places a change again once a list read in flight lands, since it may predate the change", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(keys.me, me);
-    let answer!: (data: TaskPageView) => void;
+    let answer!: (data: tasks.TaskPageView) => void;
     const read = queryClient.fetchInfiniteQuery({
       queryKey: keys.tasks.open("team"),
       initialPageParam: null as string | null,
-      queryFn: () => new Promise<TaskPageView>((resolve) => (answer = resolve)),
+      queryFn: () => new Promise<tasks.TaskPageView>((resolve) => (answer = resolve)),
     });
     placeTask(queryClient, task("n", { rank: "-1" }));
     // The list's answer was read before the task was created.
     answer({ items: [task("a")], next_cursor: null });
     await read;
     const ids = queryClient
-      .getQueryData<InfiniteData<TaskPageView>>(keys.tasks.open("team"))!
+      .getQueryData<InfiniteData<tasks.TaskPageView>>(keys.tasks.open("team"))!
       .pages.flatMap((p) => p.items.map((t) => t.id));
     expect(ids).toEqual(["n", "a"]);
   });
@@ -181,7 +181,7 @@ describe("tasks through the hint reader", () => {
 
   const settle = () => vi.advanceTimersByTimeAsync(HINT_WINDOW_MS);
 
-  function reader(answer: (id: string) => Promise<TaskView> = async (id) => task(id, { rank: "2", version: 2 })) {
+  function reader(answer: (id: string) => Promise<tasks.TaskView> = async (id) => task(id, { rank: "2", version: 2 })) {
     const c = cache();
     const read = vi.fn(answer);
     const hints = createHints(taskHintEffects(c.queryClient, read));

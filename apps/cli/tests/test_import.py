@@ -18,7 +18,7 @@ from tadas.apps.cli import imports, main
 from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import State
-from tadas.client.types import ImportView
+from tadas.client.types.tasks import ImportView
 from tadas.om.base import new_id
 from tadas.om.billing.types.plan import Plan
 from tadas.om.orchestrations.types.orchestration import OrchestrationStatus
@@ -37,7 +37,7 @@ def worker_steps(stack: Stack) -> imports.OpenChannel:
         await on_first_open()
         managers = stack.container.managers
         owner = await managers.tenancy.authenticate(
-            seed_request(), stack.session_token(OWNER["email"])
+            seed_request(), stack.auth_session_token(OWNER["email"])
         )
         ctx = await managers.tenancy.service_context(seed_request(), owner.org_id, owner.user_id)
         seq = 0

@@ -1,6 +1,6 @@
 # ADR 0001: The root package is `tadas`
 
-**Status**: accepted (2026-09-16)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -18,5 +18,5 @@ root.
 
 ## Consequences
 
-Imports read `from tadas.om.base import Platform`. Every new distribution
+Imports read `from tadas.om.base import OmBase`. Every new distribution
 uses the `src/tadas/...` layout and never adds `tadas/__init__.py`.

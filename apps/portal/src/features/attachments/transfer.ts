@@ -8,7 +8,7 @@
 // bytes go through the API instead, held to the same bounds. A download
 // follows the link the API signed, or reads the bytes through the API when
 // there is no link.
-import type { AddFileRequest, FileView, IssuedDownloadView, IssuedUploadView } from "@tadas/client";
+import type { media } from "@tadas/client";
 import { contentTypeOf } from "./attachmentsModel";
 
 /** The store answered, and not with a success: the form refused the body
@@ -25,11 +25,11 @@ export class StoreRefused extends Error {
 }
 
 export interface UploadEffects {
-  start(taskId: string, body: AddFileRequest): Promise<FileView>;
-  issueUpload(fileId: string): Promise<IssuedUploadView>;
+  start(taskId: string, body: media.AddFileRequest): Promise<media.FileView>;
+  issueUpload(fileId: string): Promise<media.IssuedUploadView>;
   postToStore(url: string, form: FormData): Promise<{ ok: boolean; status: number }>;
-  putContent(fileId: string, bytes: Blob, contentType: string): Promise<FileView>;
-  confirm(fileId: string): Promise<FileView>;
+  putContent(fileId: string, bytes: Blob, contentType: string): Promise<media.FileView>;
+  confirm(fileId: string): Promise<media.FileView>;
 }
 
 export interface Picked {
@@ -39,7 +39,7 @@ export interface Picked {
   bytes: Blob;
 }
 
-export function storeForm(upload: IssuedUploadView, file: Picked, contentType: string): FormData {
+export function storeForm(upload: media.IssuedUploadView, file: Picked, contentType: string): FormData {
   const form = new FormData();
   for (const field of upload.fields) form.append(field.name, field.value);
   // The file is the last field: the store reads the fields before it and
@@ -48,7 +48,7 @@ export function storeForm(upload: IssuedUploadView, file: Picked, contentType: s
   return form;
 }
 
-export async function uploadAttachment(taskId: string, file: Picked, effects: UploadEffects): Promise<FileView> {
+export async function uploadAttachment(taskId: string, file: Picked, effects: UploadEffects): Promise<media.FileView> {
   const contentType = contentTypeOf(file.name, file.type);
   const started = await effects.start(taskId, { name: file.name, content_type: contentType, size_bytes: file.size });
   const upload = await effects.issueUpload(started.id);
@@ -62,7 +62,7 @@ export async function uploadAttachment(taskId: string, file: Picked, effects: Up
 }
 
 export interface DownloadEffects {
-  issueDownload(fileId: string): Promise<IssuedDownloadView>;
+  issueDownload(fileId: string): Promise<media.IssuedDownloadView>;
   fetchFromStore(url: string): Promise<{ ok: boolean; status: number; blob(): Promise<Blob> }>;
   getContent(fileId: string): Promise<Blob>;
   save(blob: Blob, name: string): void;
@@ -71,7 +71,7 @@ export interface DownloadEffects {
 /** The bytes are fetched and saved under the file's own name: a link to
  * another origin cannot name the file it saves, and the store names the
  * object by its id. */
-export async function downloadAttachment(file: FileView, effects: DownloadEffects): Promise<void> {
+export async function downloadAttachment(file: media.FileView, effects: DownloadEffects): Promise<void> {
   const link = await effects.issueDownload(file.id);
   let blob: Blob;
   if (link.url === null) {

@@ -1,5 +1,4 @@
 import pytest
-from contracts.lease_storage import LeaseStorageContract
 
 from tadas.om.leases.storage import LeasesStorageInterface
 from tadas.om.leases.storage.impl.postgres import LeasesStoragePostgresImpl
@@ -7,6 +6,8 @@ from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.storage.impl.postgres import OrchestrationsStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole
+
+from contracts.lease_storage import LeaseStorageContract
 
 pytestmark = pytest.mark.integration
 

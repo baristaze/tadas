@@ -18,7 +18,7 @@ function recording() {
 function pushOf(kind: string, extra: Record<string, unknown> = {}) {
   const envelope = parseEnvelope(
     JSON.stringify({
-      type: "event",
+      type: "change_event",
       sent_at: null,
       topic: "entity_changed",
       payload: { kind, target_id: "x", seq: 3, actor_id: "u1", ...extra },
@@ -56,7 +56,7 @@ const SERVER_KINDS = [
   "tenancy.invitation.created",
   "tenancy.invitation.updated",
   "tenancy.membership.updated",
-  "tenancy.session.revoked",
+  "tenancy.auth_session.revoked",
   "tenancy.user.created",
   "tenancy.user.updated",
   "tenancy.user.deleted",
@@ -78,7 +78,7 @@ describe("routeEnvelope", () => {
     const { queryClient, seen } = recording();
     const envelope = parseEnvelope(
       JSON.stringify({
-        type: "event",
+        type: "change_event",
         sent_at: null,
         topic: "entity_changed",
         payload: { kind: "tenancy.api_key.created", target_id: "x", seq: 3, added_later: 1 },
@@ -157,10 +157,10 @@ describe("routeEnvelope", () => {
     }
   });
 
-  it("invalidates nothing for a revoked session, which no query reads", () => {
-    // This session's own revocation arrives as a 4401 close, not as a push.
+  it("invalidates nothing for a revoked auth session, which no query reads", () => {
+    // This auth session's own revocation arrives as a 4401 close, not as a push.
     const { queryClient, seen } = recording();
-    expect(routeEnvelope(queryClient, pushOf("tenancy.session.revoked"))).toEqual({ invalidated: [] });
+    expect(routeEnvelope(queryClient, pushOf("tenancy.auth_session.revoked"))).toEqual({ invalidated: [] });
     expect(seen).toEqual([]);
   });
 
@@ -245,7 +245,7 @@ describe("routeEnvelope", () => {
     expect(parseEnvelope("not json")).toBeNull();
     expect(parseEnvelope(JSON.stringify({ type: "mystery" }))).toBeNull();
     const bare = parseEnvelope(
-      JSON.stringify({ type: "event", sent_at: null, topic: "entity_changed", payload: {} }),
+      JSON.stringify({ type: "change_event", sent_at: null, topic: "entity_changed", payload: {} }),
     );
     expect(routeEnvelope(queryClient, bare!)).toEqual({ invalidated: [] });
   });
@@ -262,7 +262,7 @@ describe("reminderOf", () => {
     expect(reminderOf(parseEnvelope(JSON.stringify({ type: "pong", sent_at: null, seq: 1 }))!)).toBeNull();
     const other = parseEnvelope(
       JSON.stringify({
-        type: "event",
+        type: "change_event",
         sent_at: null,
         topic: "presence",
         payload: { kind: "tasks.task.reminded", target_id: "x", seq: 3 },
@@ -299,7 +299,7 @@ describe("replayKey", () => {
     const reader: Hints = { hint: () => undefined, stop: () => undefined };
     const of = (kind: string, target: string) => {
       const envelope = pushOf(kind, { target_id: target });
-      if (envelope.type !== "event") throw new Error("not a push");
+      if (envelope.type !== "change_event") throw new Error("not a push");
       return envelope;
     };
     const readers = { user: reader };

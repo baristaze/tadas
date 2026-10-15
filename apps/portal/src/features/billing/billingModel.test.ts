@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, type BillingView, type PlanOfferView } from "@tadas/client";
+import { ApiError, type billing } from "@tadas/client";
 import {
   billingActions,
   boundSentence,
@@ -20,15 +20,15 @@ import {
 
 const GIB = 1024 ** 3;
 
-const PLANS: PlanOfferView[] = [
+const PLANS: billing.PlanOfferView[] = [
   { plan: "free", flat_cents: 0, included_seats: null, per_seat_cents: 0, limits: { members: 1, api_keys: false, active_tasks: 10, storage_bytes: GIB } },
   { plan: "pro", flat_cents: 500, included_seats: null, per_seat_cents: 0, limits: { members: 1, api_keys: true, active_tasks: null, storage_bytes: 10 * GIB } },
   { plan: "team", flat_cents: 1000, included_seats: null, per_seat_cents: 0, limits: { members: 5, api_keys: true, active_tasks: null, storage_bytes: 50 * GIB } },
   { plan: "max", flat_cents: 3000, included_seats: 10, per_seat_cents: 300, limits: { members: null, api_keys: true, active_tasks: null, storage_bytes: 200 * GIB } },
 ];
-const [FREE, PRO, TEAM, MAX] = PLANS as [PlanOfferView, PlanOfferView, PlanOfferView, PlanOfferView];
+const [FREE, PRO, TEAM, MAX] = PLANS as [billing.PlanOfferView, billing.PlanOfferView, billing.PlanOfferView, billing.PlanOfferView];
 
-function billing(overrides: Partial<BillingView> = {}): BillingView {
+function billingOf(overrides: Partial<billing.BillingView> = {}): billing.BillingView {
   return {
     plan: "free",
     limits: FREE.limits,
@@ -103,36 +103,36 @@ describe("the billing page", () => {
   });
 
   it("says where the plan comes from", () => {
-    expect(sourceText(billing())).toBe("Every org starts here");
-    expect(sourceText(billing({ ...PAYING }))).toBe("Paid");
-    expect(sourceText(billing({ plan: "max", comped_plan: "max" }))).toBe("Granted by Tadas");
+    expect(sourceText(billingOf())).toBe("Every org starts here");
+    expect(sourceText(billingOf({ ...PAYING }))).toBe("Paid");
+    expect(sourceText(billingOf({ plan: "max", comped_plan: "max" }))).toBe("Granted by Tadas");
   });
 
   it("says when a paid plan renews, or when it ends and what follows", () => {
-    expect(renewsText(billing({ ...PAYING }))).toBe("Renews on 2026-10-22.");
-    const ending = billing({ ...PAYING, cancel_at_period_end: true, ends_at: "2026-10-22T10:00:00Z", plan_after: "free" });
+    expect(renewsText(billingOf({ ...PAYING }))).toBe("Renews on 2026-10-22.");
+    const ending = billingOf({ ...PAYING, cancel_at_period_end: true, ends_at: "2026-10-22T10:00:00Z", plan_after: "free" });
     expect(renewsText(ending)).toBeNull();
     expect(endsOnSentence(ending)).toBe(
       "Your Pro plan ends on 2026-10-22. After that the org is on Free: nothing is deleted, creating past Free's bounds is refused until you upgrade, and API keys are refused while on Free.",
     );
-    expect(endsOnSentence(billing({ ...PAYING }))).toBeNull();
+    expect(endsOnSentence(billingOf({ ...PAYING }))).toBeNull();
   });
 
   it("offers a manager of a Free org the plans, and nothing to manage or cancel", () => {
-    expect(billingActions(billing())).toEqual({ choose: true, manage: false, cancel: false, keep: false });
+    expect(billingActions(billingOf())).toEqual({ choose: true, manage: false, cancel: false, keep: false });
   });
 
   it("offers a manager of a paying org the processor's page and a cancel, not a second checkout", () => {
-    expect(billingActions(billing({ ...PAYING }))).toEqual({ choose: false, manage: true, cancel: true, keep: false });
+    expect(billingActions(billingOf({ ...PAYING }))).toEqual({ choose: false, manage: true, cancel: true, keep: false });
   });
 
   it("offers a manager of an ending plan to keep it, and no second cancel", () => {
-    const ending = billing({ ...PAYING, ends_at: "2026-10-22T10:00:00Z", cancel_at_period_end: true });
+    const ending = billingOf({ ...PAYING, ends_at: "2026-10-22T10:00:00Z", cancel_at_period_end: true });
     expect(billingActions(ending)).toEqual({ choose: false, manage: true, cancel: false, keep: true });
   });
 
   it("offers a member nothing to change", () => {
-    expect(billingActions(billing({ ...PAYING, can_manage: false }))).toEqual({
+    expect(billingActions(billingOf({ ...PAYING, can_manage: false }))).toEqual({
       choose: false,
       manage: false,
       cancel: false,
@@ -163,7 +163,7 @@ describe("the billing page", () => {
 
 describe("a payment that failed", () => {
   it("tells an owner or an admin while the processor retries, naming the plan kept", () => {
-    const sentence = paymentFailedSentence(billing({ ...PAYING, status: "past_due", payment_failed: true }));
+    const sentence = paymentFailedSentence(billingOf({ ...PAYING, status: "past_due", payment_failed: true }));
     expect(sentence).toBe(
       "The last payment for your Pro plan did not go through. It is being tried again, and the org " +
         "keeps the plan while it is. Update the payment method to keep it.",
@@ -171,7 +171,7 @@ describe("a payment that failed", () => {
   });
 
   it("tells them the org is on what is left once the retries stop", () => {
-    const sentence = paymentFailedSentence(billing({ status: "unpaid", payment_failed: true }));
+    const sentence = paymentFailedSentence(billingOf({ status: "unpaid", payment_failed: true }));
     expect(sentence).toBe(
       "The last payment did not go through and the retries have stopped, so the org is on " +
         "Free until it is paid. Update the payment method to pay it.",
@@ -179,7 +179,7 @@ describe("a payment that failed", () => {
   });
 
   it("tells a member nothing, and nobody anything once it is paid", () => {
-    expect(paymentFailedSentence(billing({ ...PAYING, status: "past_due", payment_failed: true, can_manage: false }))).toBeNull();
-    expect(paymentFailedSentence(billing({ ...PAYING }))).toBeNull();
+    expect(paymentFailedSentence(billingOf({ ...PAYING, status: "past_due", payment_failed: true, can_manage: false }))).toBeNull();
+    expect(paymentFailedSentence(billingOf({ ...PAYING }))).toBeNull();
   });
 });

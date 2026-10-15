@@ -6,8 +6,8 @@ from uuid import UUID
 
 from tadas.om.context import OperatorContext
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.tasks.types.task import TaskStatus
-from tadas.services.api.types.admin import (
+from tadas.services.api.types.change_events import OperatorChangeEventView
+from tadas.services.api.types.tenancy import (
     AddMemberRequest,
     ConfirmTotpRequest,
     CreateOrgRequest,
@@ -17,16 +17,14 @@ from tadas.services.api.types.admin import (
     OperatorTokenPageView,
     OperatorTokenView,
     OperatorView,
-    OperatorWorkItemView,
-    PlatformSizeView,
-    SetTenantCapRequest,
-    TenantCapView,
+    OrgPageView,
+    OrgView,
+    SystemSizeView,
     TotpConfirmedView,
+    UserPageView,
+    UserView,
 )
-from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
-from tadas.services.api.types.events import OperatorEventView
-from tadas.services.api.types.tasks import TaskPageView
-from tadas.services.api.types.tenancy import OrgPageView, OrgView, UserPageView, UserView
+from tadas.services.api.types.work import OperatorWorkItemView, SetTenantCapRequest, TenantCapView
 
 
 class AdminServiceInterface(ABC):
@@ -63,7 +61,7 @@ class AdminServiceInterface(ABC):
     async def revoke_token(self, admin: OperatorContext, token_id: UUID) -> OperatorTokenView: ...
 
     @abstractmethod
-    async def size(self, admin: OperatorContext) -> PlatformSizeView: ...
+    async def size(self, admin: OperatorContext) -> SystemSizeView: ...
 
     @abstractmethod
     async def create_org(
@@ -84,32 +82,12 @@ class AdminServiceInterface(ABC):
     ) -> UserView: ...
 
     @abstractmethod
-    async def get_tasks(
-        self,
-        admin: OperatorContext,
-        org_id: UUID,
-        status: TaskStatus,
-        cursor: str | None,
-        limit: int,
-    ) -> TaskPageView: ...
-
-    @abstractmethod
-    async def get_events(
+    async def get_change_events(
         self, admin: OperatorContext, org_id: UUID, after_seq: int, limit: int
-    ) -> list[OperatorEventView]: ...
+    ) -> list[OperatorChangeEventView]: ...
 
     @abstractmethod
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> OrgView: ...
-
-    @abstractmethod
-    async def get_org_billing(
-        self, admin: OperatorContext, org_id: UUID
-    ) -> OperatorBillingView: ...
-
-    @abstractmethod
-    async def comp_plan(
-        self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
-    ) -> OperatorBillingView: ...
 
     @abstractmethod
     async def requeue_work(

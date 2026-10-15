@@ -15,9 +15,9 @@
 // would now show, it asks for that one list to be read again rather than
 // guess.
 import type { InfiniteData } from "@tanstack/react-query";
-import type { TaskPageView, TaskScope, TaskStatus, TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 
-export type TaskPages = InfiniteData<TaskPageView>;
+export type TaskPages = InfiniteData<tasks.TaskPageView>;
 
 /** The page each list asks for: the open list is the one on screen whole,
  * the done list its most recent few. */
@@ -25,14 +25,14 @@ export const OPEN_PAGE_SIZE = 200;
 export const DONE_PAGE_SIZE = 10;
 
 /** What the server said: the task as it now is, or that it is gone (a 404). */
-export type TaskChange = { task: TaskView } | { gone: string };
+export type TaskChange = { task: tasks.TaskView } | { gone: string };
 
 export interface PlacementRules {
-  scope: TaskScope;
+  scope: tasks.TaskScope;
   /** The person the page is for; `mine` cannot be decided without it. */
   meId: string | null;
   /** The page size each list asks for. */
-  limits: Record<TaskStatus, number>;
+  limits: Record<tasks.TaskStatus, number>;
 }
 
 export interface PlacementOptions {
@@ -50,13 +50,13 @@ export interface ListPlacement {
   outcome: ListOutcome;
 }
 
-export type ScopePlacement = Record<TaskStatus, ListPlacement>;
+export type ScopePlacement = Record<tasks.TaskStatus, ListPlacement>;
 
-export type ScopeLists = Partial<Record<TaskStatus, TaskPages>>;
+export type ScopeLists = Partial<Record<tasks.TaskStatus, TaskPages>>;
 
 /** The server's `is_visible`; null when the scope is `mine` and the person
  * is not known yet. */
-export function isVisible(task: TaskView, scope: TaskScope, meId: string | null): boolean | null {
+export function isVisible(task: tasks.TaskView, scope: tasks.TaskScope, meId: string | null): boolean | null {
   if (scope === "team") return true;
   if (meId === null) return null;
   const assignee = task.assignee_id ?? null;
@@ -64,12 +64,12 @@ export function isVisible(task: TaskView, scope: TaskScope, meId: string | null)
 }
 
 /** Whether the task belongs in the list of `status`; null when it cannot be told. */
-export function belongsIn(task: TaskView, status: TaskStatus, rules: PlacementRules): boolean | null {
+export function belongsIn(task: tasks.TaskView, status: tasks.TaskStatus, rules: PlacementRules): boolean | null {
   if (task.deleted_at || task.archived_at || task.status !== status) return false;
   return isVisible(task, rules.scope, rules.meId);
 }
 
-const byId = (a: TaskView, b: TaskView) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+const byId = (a: tasks.TaskView, b: tasks.TaskView) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** A rank as the exact decimal it is: its digits as one integer, and how
  * many of them are after the point. */
@@ -98,7 +98,7 @@ export function compareRank(a: string, b: string): number {
 export const ON_TOP = `-1${"0".repeat(40)}`;
 
 /** The open list's order: rank, then id, ascending. */
-export function compareOpen(a: TaskView, b: TaskView): number {
+export function compareOpen(a: tasks.TaskView, b: tasks.TaskView): number {
   return compareRank(a.rank, b.rank) || byId(a, b);
 }
 
@@ -111,20 +111,20 @@ export function microsOf(stamp: string): number {
 }
 
 /** The done list's order: updated_at, then id, descending. */
-export function compareDone(a: TaskView, b: TaskView): number {
+export function compareDone(a: tasks.TaskView, b: tasks.TaskView): number {
   const at = microsOf(b.updated_at) - microsOf(a.updated_at);
   return at || byId(b, a);
 }
 
-const ORDER: Record<TaskStatus, (a: TaskView, b: TaskView) => number> = { open: compareOpen, done: compareDone };
+const ORDER: Record<tasks.TaskStatus, (a: tasks.TaskView, b: tasks.TaskView) => number> = { open: compareOpen, done: compareDone };
 
-export function flatten(data: TaskPages): TaskView[] {
+export function flatten(data: TaskPages): tasks.TaskView[] {
   return data.pages.flatMap((page) => page.items);
 }
 
 /** The whole window on the first page; the pages after it are emptied and
  * keep their cursors, so the last page still names the window's edge. */
-function withItems(data: TaskPages, items: TaskView[]): TaskPages {
+function withItems(data: TaskPages, items: tasks.TaskView[]): TaskPages {
   const [first, ...rest] = data.pages;
   if (!first) return data;
   return { ...data, pages: [{ ...first, items }, ...rest.map((page) => ({ ...page, items: [] }))] };
@@ -139,7 +139,7 @@ const invalidate = (data: TaskPages | undefined): ListPlacement => ({ data, outc
 
 /** Whether the lists hold this task at a version as new as the one given:
  * then the change is not news, whatever order it arrived in. */
-export function heldAtOrAbove(lists: ScopeLists, task: TaskView): boolean {
+export function heldAtOrAbove(lists: ScopeLists, task: tasks.TaskView): boolean {
   return [lists.open, lists.done].some(
     (data) => data !== undefined && flatten(data).some((t) => t.id === task.id && t.version >= task.version),
   );
@@ -147,7 +147,7 @@ export function heldAtOrAbove(lists: ScopeLists, task: TaskView): boolean {
 
 function placeIn(
   data: TaskPages | undefined,
-  status: TaskStatus,
+  status: tasks.TaskStatus,
   change: TaskChange,
   rules: PlacementRules,
   options: PlacementOptions,

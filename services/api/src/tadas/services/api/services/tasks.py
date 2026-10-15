@@ -1,9 +1,11 @@
-"""The tasks service: what the wire can do with tasks, in views."""
+"""The tasks service: what the wire can do with tasks, in views. Its one
+operator method reads a tenant's tasks under OperatorContext, by the org's
+id, in the tenant's own views and cursors."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from tadas.om.context import TenantContext
+from tadas.om.context import OperatorContext, TenantContext
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
@@ -131,3 +133,16 @@ class TasksServiceInterface(ABC):
     async def remove_attachment(
         self, ctx: TenantContext, task_id: UUID, file_id: UUID
     ) -> FileView: ...
+
+    @abstractmethod
+    async def get_org_tasks(
+        self,
+        admin: OperatorContext,
+        org_id: UUID,
+        status: TaskStatus,
+        cursor: str | None,
+        limit: int,
+    ) -> TaskPageView:
+        """One page of the org's tasks in `status`, every task of the team;
+        `cursor` is one the tenant's own list of that status hands out."""
+        ...

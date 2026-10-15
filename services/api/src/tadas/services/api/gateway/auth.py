@@ -11,7 +11,7 @@ from starlette.requests import HTTPConnection
 
 from tadas.infra.observability import current_trace_id, current_traceparent
 from tadas.om.context import AppContext, AppType, IdentityContext, RequestContext, TenantContext
-from tadas.om.exceptions import NotAuthenticated, NotFound, PlatformException, ValidationFailed
+from tadas.om.exceptions import NotAuthenticated, NotFound, OmException, ValidationFailed
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.admission import deadline_of
 from tadas.services.api.gateway.observability import request_id_of
@@ -143,7 +143,7 @@ async def socket_principal(
     tenancy = container_of(websocket).managers.tenancy
     try:
         return await tenancy.redeem_ticket(rctx, ticket)
-    except PlatformException as error:
+    except OmException as error:
         log.info("socket refused: %s", error.message)
         raise WebSocketException(code=CLOSE_UNAUTHENTICATED, reason=error.code) from None
 

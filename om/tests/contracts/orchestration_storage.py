@@ -13,11 +13,14 @@ from tadas.om.exceptions import PreconditionFailed
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
     ParkReason,
 )
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tasks.kinds import TasksOrchestrationKind
+
+INTERFACE = OrchestrationsStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
@@ -34,7 +37,7 @@ case in this module that presents another tenant's."""
 
 
 def make_record(
-    kind: OrchestrationKind = OrchestrationKind.TASK_IMPORT,
+    kind: str = TasksOrchestrationKind.TASK_IMPORT,
     *,
     period: str | None = None,
     status: OrchestrationStatus = OrchestrationStatus.RUNNING,
@@ -112,14 +115,18 @@ class OrchestrationStorageContract:
         self, storage: OrchestrationsStorageInterface
     ) -> None:
         org, other = new_id(), new_id()
-        first = make_record(OrchestrationKind.TASK_CLEANUP, period="2026-09-25")
+        first = make_record(TasksOrchestrationKind.TASK_CLEANUP, period="2026-09-25")
         await seed(storage, org, first)
-        second = make_record(OrchestrationKind.TASK_CLEANUP, period="2026-09-25")
+        second = make_record(TasksOrchestrationKind.TASK_CLEANUP, period="2026-09-25")
         assert await storage.create_orchestration(org, second, ()) is False
         assert await storage.read_orchestration(org, second.id) is None
         # Another day, and another org's same day, are records of their own.
-        await seed(storage, org, make_record(OrchestrationKind.TASK_CLEANUP, period="2026-09-26"))
-        await seed(storage, other, make_record(OrchestrationKind.TASK_CLEANUP, period="2026-09-25"))
+        await seed(
+            storage, org, make_record(TasksOrchestrationKind.TASK_CLEANUP, period="2026-09-26")
+        )
+        await seed(
+            storage, other, make_record(TasksOrchestrationKind.TASK_CLEANUP, period="2026-09-25")
+        )
 
     async def test_create_orchestration_under_another_tenant_is_not_read_here(
         self, storage: OrchestrationsStorageInterface
@@ -138,14 +145,16 @@ class OrchestrationStorageContract:
         older, newer = make_record(), make_record()
         await seed(storage, org, older)
         await seed(storage, org, newer)
-        await seed(storage, org, make_record(OrchestrationKind.TASK_CLEANUP, period="2026-09-25"))
+        await seed(
+            storage, org, make_record(TasksOrchestrationKind.TASK_CLEANUP, period="2026-09-25")
+        )
         await seed(storage, other, make_record())
-        found = await storage.read_recent(org, OrchestrationKind.TASK_IMPORT, 10)
+        found = await storage.read_recent(org, TasksOrchestrationKind.TASK_IMPORT, 10)
         assert [r.id for r in found] == [newer.id, older.id]
-        assert [r.id for r in await storage.read_recent(org, OrchestrationKind.TASK_IMPORT, 1)] == [
-            newer.id
-        ]
-        assert await storage.read_recent(new_id(), OrchestrationKind.TASK_IMPORT, 10) == []
+        assert [
+            r.id for r in await storage.read_recent(org, TasksOrchestrationKind.TASK_IMPORT, 1)
+        ] == [newer.id]
+        assert await storage.read_recent(new_id(), TasksOrchestrationKind.TASK_IMPORT, 10) == []
 
     async def test_read_parked_names_the_reason_and_the_tenant(
         self, storage: OrchestrationsStorageInterface

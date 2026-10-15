@@ -8,7 +8,7 @@
 // query, or through none.
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { keys } from "../queries/keys";
-import { entityOf, isEntityChanged, type Envelope, type EventEnvelope } from "./envelopes";
+import { entityOf, isEntityChanged, type Envelope, type ChangeEventEnvelope } from "./envelopes";
 import type { Hints } from "./hints";
 
 export interface RouteOutcome {
@@ -26,16 +26,17 @@ export type HintReaders = Readonly<Record<string, Hints>>;
 // Settings; a user is read twice, as a row of the member list and as the name
 // and the email in `me`, so a user push reaches both: its reader places the
 // member in both (`userCache.ts`). A task push is read the same way: its
-// reader places the task in every list (`taskCache.ts`). A revoked session is
-// nobody's query: this session's own revocation arrives as a 4401 close, not
-// as a push. A billing account is read as the org's plan, with the seats and
-// the active tasks beside it. An orchestration's record is an import's, read
-// under its own entity (`keys.imports`).
+// reader places the task in every list (`taskCache.ts`). A revoked auth
+// session is nobody's query: this auth session's own revocation arrives as a
+// 4401 close, not as a push. A billing account is read as the org's plan,
+// with the seats and the active tasks beside it. An orchestration's record is
+// an import's, read under its own entity (`keys.imports`).
 const CARRIED_BY: Readonly<Record<string, readonly QueryKey[]>> = {
-  account: [keys.billing],
+  auth_session: [],
   membership: [keys.me, keys.myMemberships.all, keys.memberships.all],
   user: [keys.users.all, keys.me],
-  session: [],
+  // A copy adds its entries below this line.
+  account: [keys.billing],
 };
 
 function targetsOf(entity: string): readonly QueryKey[] {
@@ -45,16 +46,17 @@ function targetsOf(entity: string): readonly QueryKey[] {
 // Every entity the server pushes on the channel. The router test holds it to
 // the kinds the service sends.
 export const PUSHED_ENTITIES = [
-  "account",
   "api_key",
+  "auth_session",
   "file",
-  "installation",
   "invitation",
   "membership",
   "orchestration",
-  "session",
-  "task",
   "user",
+  // A copy adds its entries below this line.
+  "account",
+  "installation",
+  "task",
 ] as const;
 
 const KEPT_FRESH = new Set(PUSHED_ENTITIES.flatMap((entity) => targetsOf(entity).map((key) => key[0])));
@@ -92,7 +94,7 @@ export function routeEnvelope(
 /** What a page read back from the stream keeps one push of, the last: the
  * record, for an entity whose reader reads each record, and the entity for
  * any other, since one invalidation reads all of it again. */
-export function replayKey(envelope: EventEnvelope, readers: HintReaders = {}): string {
+export function replayKey(envelope: ChangeEventEnvelope, readers: HintReaders = {}): string {
   const entity = entityOf(envelope.payload.kind);
   return readers[entity] ? `${entity}/${envelope.payload.target_id}` : entity;
 }

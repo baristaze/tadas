@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import Platform, utcnow
+from tadas.om.base import OmBase, utcnow
 from tadas.om.context import Permission, TenantContext
 from tadas.om.exceptions import (
     NotFound,
@@ -14,15 +14,23 @@ from tadas.om.exceptions import (
     TenantMismatch,
     ValidationFailed,
 )
+from tadas.om.orchestrations.kinds import OrchestrationKinds
 from tadas.om.orchestrations.manager import OrchestrationsManagerInterface
-from tadas.om.orchestrations.rules import cancelled, failed, is_settled, outcome, resumed, stagger
-from tadas.om.orchestrations.steps import step_rows
+from tadas.om.orchestrations.rules import (
+    advanced,
+    cancelled,
+    failed,
+    is_settled,
+    outcome,
+    resumed,
+    stagger,
+)
+from tadas.om.orchestrations.steps import orchestration_step_rows
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.types.orchestration import (
-    ORCHESTRATION_INPUTS,
     FailReason,
+    NoopInput,
     Orchestration,
-    OrchestrationKind,
     OrchestrationPage,
     OrchestrationStatus,
     ParkReason,
@@ -34,7 +42,7 @@ from tadas.om.tenancy import TenancyManagerInterface
 log = logging.getLogger(__name__)
 
 
-class OrchestrationsOptions(Platform):
+class OrchestrationsOptions(OmBase):
     max_limit: int = 50
     # The steps one wake resumes start this far apart.
     stagger: timedelta = timedelta(seconds=2)
@@ -50,20 +58,26 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         tenancy: TenancyManagerInterface,
         relay: OutboxRelayInterface,
         options: OrchestrationsOptions,
+        kinds: OrchestrationKinds,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
         self._relay = relay
         self._options = options
+        # Every kind this process knows, each with its input shape.
+        self._kinds = kinds
         self._clock = clock
 
     async def start(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
         ctx.require(Permission.WRITE)
+        kind = self._kinds.get(record.kind)
+        if kind is None:
+            raise ValidationFailed(f"no orchestration kind {record.kind} is registered")
         try:
-            ORCHESTRATION_INPUTS[record.kind].model_validate(dict(record.input))
+            kind.input.model_validate(dict(record.input))
         except ValidationError as error:
-            raise ValidationFailed(f"a {record.kind.value} input is not {error}") from None
+            raise ValidationFailed(f"a {record.kind} input is not {error}") from None
         now = self._clock()
         created = record.model_copy(
             update={
@@ -84,7 +98,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
                 "version": 1,
             }
         )
-        rows = step_rows(ctx, created, created=True)
+        rows = orchestration_step_rows(ctx, created, created=True)
         if not await self._storage.create_orchestration(ctx.org_id, created, rows):
             # A retry under the same id, or the period's record opened already.
             existing = await self._storage.read_orchestration(ctx.org_id, created.id)
@@ -92,7 +106,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
                 raise TenantMismatch(f"orchestration {created.id} is not in {ctx.org_id}")
             return existing
         await self._relay_all(ctx, rows)
-        log.info("started %s %s in org %s", created.kind.value, created.id, ctx.org_id)
+        log.info("started %s %s in org %s", created.kind, created.id, ctx.org_id)
         OUTCOMES.labels(subsystem="orchestrations", outcome=outcome(created)).inc()
         return created
 
@@ -103,9 +117,17 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
             raise NotFound(f"orchestration {record_id} not found")
         return record
 
-    async def get_recent(
-        self, ctx: TenantContext, kind: OrchestrationKind, limit: int
-    ) -> OrchestrationPage:
+    async def step_noop(self, ctx: TenantContext, record: Orchestration) -> Orchestration:
+        ctx.require(Permission.WRITE)
+        steps = NoopInput.model_validate(dict(record.input)).steps
+        cursor = record.cursor + 1
+        stepped = advanced(
+            record, self._clock(), ctx.user_id, cursor=cursor, total=steps, finished=cursor >= steps
+        )
+        await self._write(ctx, stepped, record.version)
+        return stepped
+
+    async def get_recent(self, ctx: TenantContext, kind: str, limit: int) -> OrchestrationPage:
         ctx.require(Permission.READ)
         limit = max(1, min(limit, self._options.max_limit))
         rows = await self._storage.read_recent(ctx.org_id, kind, limit + 1)
@@ -162,7 +184,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         why = " ".join(reason.split())[:500]
         log.info(
             "%s %s in org %s cancelled by %s at %d: %s",
-            record.kind.value,
+            record.kind,
             record.id,
             ctx.org_id,
             ctx.user_id,
@@ -187,7 +209,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         log.log(
             level,
             "%s %s in org %s failed: %s %s",
-            record.kind.value,
+            record.kind,
             record.id,
             ctx.org_id,
             reason.value,
@@ -234,7 +256,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
     ) -> Orchestration:
         running = resumed(record, now, ctx.user_id)
         await self._write(ctx, running, record.version, not_before)
-        OUTCOMES.labels(subsystem="orchestrations", outcome=f"{record.kind.value}_resumed").inc()
+        OUTCOMES.labels(subsystem="orchestrations", outcome=f"{record.kind}_resumed").inc()
         return running
 
     async def _write(
@@ -246,7 +268,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
     ) -> None:
         """The record and its rows in one compare-and-set, then the relay at
         once; the sweep relays what a crash left behind."""
-        rows = step_rows(ctx, record, not_before=not_before)
+        rows = orchestration_step_rows(ctx, record, not_before=not_before)
         await self._storage.write_orchestration(ctx.org_id, record, expected_version, rows)
         await self._relay_all(ctx, rows)
 

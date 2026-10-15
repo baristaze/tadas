@@ -19,7 +19,7 @@ throttles, or does not answer, is unavailable too.
 
 A call a request makes (the customer, the checkout, the portal, the cancel
 and its undo) carries the request's `deadline`, which every call it makes
-shares (ADR 0069), and ends by then, unavailable, as when the processor does
+shares (ADR 1020), and ends by then, unavailable, as when the processor does
 not answer. The rest are a worker's, bounded by the item's lease."""
 
 from abc import ABC, abstractmethod

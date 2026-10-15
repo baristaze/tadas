@@ -1,6 +1,6 @@
 # ADR 0044: The queue is fenced by one policy per login
 
-**Status**: accepted (2026-09-25)
+**Status**: accepted (2026-09-28)
 
 ## Context
 

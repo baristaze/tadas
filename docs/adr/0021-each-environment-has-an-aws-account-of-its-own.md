@@ -1,13 +1,13 @@
 # ADR 0021: Each environment has an AWS account of its own
 
-**Status**: accepted (2026-09-21)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
 Staging and production are two environments. Cloud: AWS makes the
 account the boundary, not a set of fences inside one account. People
 sign in through IAM Identity Center, and an agent works inside a
-session a person opened.
+auth session a person opened.
 
 ## Decision
 

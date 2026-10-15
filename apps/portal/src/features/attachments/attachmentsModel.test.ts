@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { FileView } from "@tadas/client";
+import type { media } from "@tadas/client";
 import { attachmentRow, contentTypeOf, extensionOf, previewKind } from "./attachmentsModel";
 
-function file(overrides: Partial<FileView> = {}): FileView {
+function file(overrides: Partial<media.FileView> = {}): media.FileView {
   return {
     id: "f1",
     name: "Quarterly plan.docx",

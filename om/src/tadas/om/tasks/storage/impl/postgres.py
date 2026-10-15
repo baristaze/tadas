@@ -28,8 +28,8 @@ from sqlalchemy.sql.dml import ReturningUpdate
 
 from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import PreconditionFailed, TenantMismatch
-from tadas.om.orchestrations.storage.impl.postgres import land_step
-from tadas.om.orchestrations.types.orchestration import Step
+from tadas.om.orchestrations.storage.impl.postgres import land_orchestration_step
+from tadas.om.orchestrations.types.orchestration import OrchestrationStep
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PLAN_WITH_VALUES, PgStorageBase, delete_batch, deleted
@@ -237,8 +237,8 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         self,
         org_id: UUID,
         tasks: Sequence[tuple[Task, tuple[OutboxRow, ...]]],
-        step: Step,
-        step_rows: tuple[OutboxRow, ...],
+        step: OrchestrationStep,
+        orchestration_step_rows: tuple[OutboxRow, ...],
     ) -> tuple[bool, ...]:
         # One transaction: the tasks whose id is not written yet, the rows
         # that announce them, the record's compare-and-set, and its rows. A
@@ -257,8 +257,8 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
                 if task.id in written:
                     for outbox_row in outbox_rows:
                         session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
-            await land_step(session, org_id, step, len(written))
-            for outbox_row in step_rows:
+            await land_orchestration_step(session, org_id, step, len(written))
+            for outbox_row in orchestration_step_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
             return tuple(task.id in written for task, _ in tasks)
@@ -270,8 +270,8 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         before: datetime,
         archived_at: datetime,
         actor: UUID,
-        step: Step,
-        step_rows: tuple[OutboxRow, ...],
+        step: OrchestrationStep,
+        orchestration_step_rows: tuple[OutboxRow, ...],
     ) -> tuple[bool, ...]:
         # The condition is the statement's: a candidate reopened, edited, or
         # deleted since it was read no longer matches it and is left alone.
@@ -297,8 +297,8 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
                 if task_id in archived:
                     for outbox_row in outbox_rows:
                         session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
-            await land_step(session, org_id, step, len(archived))
-            for outbox_row in step_rows:
+            await land_orchestration_step(session, org_id, step, len(archived))
+            for outbox_row in orchestration_step_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
             return tuple(task_id in archived for task_id, _ in candidates)

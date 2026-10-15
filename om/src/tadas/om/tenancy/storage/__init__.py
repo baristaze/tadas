@@ -8,17 +8,17 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.billing.types.account import BillingAccount
-from tadas.om.context import Role
+from tadas.om.context import Role, tenantless
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.auth_session import AuthSession
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.sign_in_delay import SignInDelay
-from tadas.om.tenancy.types.size import PlatformSize
+from tadas.om.tenancy.types.size import SystemSize
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -26,11 +26,13 @@ from tadas.om.tenancy.types.user import User
 class TenancyStorageInterface(ABC):
     # Identities are global: a person exists before and across tenants.
     @abstractmethod
+    @tenantless
     async def read_identity(self, identity_id: UUID) -> Identity | None:
         """Global table: identities have no tenant."""
         ...
 
     @abstractmethod
+    @tenantless
     async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
         """Global table: identities have no tenant. The sign-in lookup: it runs
         before any identity is known, so it takes the system scope, on the
@@ -38,6 +40,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def read_identity_by_issuer_subject(self, issuer: str, subject: str) -> Identity | None:
         """Global table: identities have no tenant. The identity provider's
         sign-in lookup, by the issuer and the subject the provider vouched
@@ -46,6 +49,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def write_identity(
         self, identity: Identity, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -57,6 +61,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def disable_operator(
         self, identity: Identity, outbox_rows: tuple[OutboxRow, ...], at: datetime
     ) -> int:
@@ -70,6 +75,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def write_totp_secret(self, identity_id: UUID, sealed: str, at: datetime) -> bool:
         """Global table: identities have no tenant. Puts a new sealed TOTP
         secret on the identity, replacing one that was never confirmed, in one
@@ -78,6 +84,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def write_time_zone(self, identity_id: UUID, time_zone: str, at: datetime) -> bool:
         """Global table: identities have no tenant. Sets the person's time
         zone in one statement, and only that column; False when there is no
@@ -85,6 +92,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
         """Global table: identities have no tenant. Confirms the secret the
         identity holds and records `step` as the last one used, in one
@@ -93,6 +101,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def use_totp_step(self, identity_id: UUID, step: int) -> bool:
         """Global table: identities have no tenant. Records `step` as the last
         one a code was accepted for, only when it is later than the last one,
@@ -102,11 +111,13 @@ class TenancyStorageInterface(ABC):
 
     # The sign-in delay, keyed on the email's digest, is a system row.
     @abstractmethod
+    @tenantless
     async def read_sign_in_delay(self, email_digest: str) -> SignInDelay | None:
         """Global table: a delay belongs to an email, known or not."""
         ...
 
     @abstractmethod
+    @tenantless
     async def record_failed_sign_in(self, email_digest: str, at: datetime) -> None:
         """Global table: a delay belongs to an email, known or not. One more
         failed sign-in in the email's run, counted in the statement itself, so
@@ -114,12 +125,14 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def clear_failed_sign_ins(self, email_digest: str) -> None:
         """Global table: a delay belongs to an email, known or not. Ends the
         run on a sign-in that succeeded."""
         ...
 
     @abstractmethod
+    @tenantless
     async def purge_sign_in_delays(self, before: datetime, limit: int) -> int:
         """Global table: a delay belongs to an email, known or not. The sweep
         deletes at most `limit` runs whose last failure is older than
@@ -131,38 +144,44 @@ class TenancyStorageInterface(ABC):
     async def read_org(self, org_id: UUID) -> Org | None: ...
 
     @abstractmethod
+    @tenantless
     async def read_org_by_slug(self, slug: str) -> Org | None:
         """Cross-tenant lookup: the slug is resolved before a tenant is known.
         The living org with that slug; a deleted org has given it up."""
         ...
 
     @abstractmethod
+    @tenantless
     async def count_orgs(self) -> int:
         """Global: how many orgs are live (not soft-deleted), the tenant count
-        of the sweep's tally of the platform's size."""
+        of the sweep's tally of the system's size."""
         ...
 
     @abstractmethod
+    @tenantless
     async def count_orgs_and_users(self) -> tuple[int, int]:
         """Global, one statement: the live orgs, as `count_orgs` counts them,
         and the live users across every tenant, the two counts of the sweep's
-        tally of the platform's size; a person in two orgs counts twice."""
+        tally of the system's size; a person in two orgs counts twice."""
         ...
 
     @abstractmethod
-    async def write_platform_size(self, size: PlatformSize) -> None:
-        """Global: the sweep's count of the platform's size becomes the one
+    @tenantless
+    async def write_system_size(self, size: SystemSize) -> None:
+        """Global: the sweep's count of the system's size becomes the one
         tally row, in the `admin` role. A count older than the row's never
         replaces it, so two workers counting at once leave the newer."""
         ...
 
     @abstractmethod
-    async def read_platform_size(self) -> PlatformSize | None:
-        """Global: the platform's size as the sweep last counted it, the one
+    @tenantless
+    async def read_system_size(self) -> SystemSize | None:
+        """Global: the system's size as the sweep last counted it, the one
         row read by its key; None until the first count."""
         ...
 
     @abstractmethod
+    @tenantless
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         """Cross-tenant sweep: every tenant, for the operator plane and for sweeps,
         in id order; `after_id` pages, so a sweep reaches every tenant and not
@@ -241,7 +260,7 @@ class TenancyStorageInterface(ABC):
         user holds in the tenant, and the outbox rows, in one commit or not at
         all. So a failure never leaves a live user without a membership, and a
         removed member never keeps a credential. Each revoked credential lands
-        with the row `revocation_row(kind, id)` builds, `tenancy.session.revoked`
+        with the row `revocation_row(kind, id)` builds, `tenancy.auth_session.revoked`
         or `tenancy.api_key.deleted`, stamped with the user's `deleted_at` and
         `deleted_by`; those rows come back, for the caller to relay after the
         ones it passed. Both rows must exist in the tenant."""
@@ -264,13 +283,14 @@ class TenancyStorageInterface(ABC):
         `updated_at` and `updated_by`. Each user it ends lands the row
         `member_row(user)` builds, `tenancy.user.deleted`, so their sockets
         close; each credential lands the row `revocation_row(kind, id,
-        user_id)` builds, `tenancy.session.revoked` or
+        user_id)` builds, `tenancy.auth_session.revoked` or
         `tenancy.api_key.deleted`. Those rows come back, the users' first,
         for the caller to relay after the ones it passed. NotFound, and
         nothing lands, when the org is not live in `org_id`."""
         ...
 
     @abstractmethod
+    @tenantless
     async def delete_person(
         self,
         identity_id: UUID,
@@ -290,7 +310,7 @@ class TenancyStorageInterface(ABC):
         who accepted it. The outbox rows land in the same commit, each under the
         tenant it names. A session or an api key that was still live when it
         went lands the row `revocation_row(org_id, kind, id)` builds,
-        `tenancy.session.revoked` or `tenancy.api_key.deleted`, so a socket
+        `tenancy.auth_session.revoked` or `tenancy.api_key.deleted`, so a socket
         it opened closes; those rows come back, for the caller to relay
         after the ones it passed.
 
@@ -313,6 +333,7 @@ class TenancyStorageInterface(ABC):
     async def read_user(self, org_id: UUID, user_id: UUID) -> User | None: ...
 
     @abstractmethod
+    @tenantless
     async def read_users_by_identity(
         self, identity_id: UUID, limit: int
     ) -> list[tuple[UUID, User]]:
@@ -323,6 +344,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def read_memberships_by_identity(
         self, identity_id: UUID, limit: int, after_user_id: UUID | None = None
     ) -> list[OrgMembership]:
@@ -398,38 +420,43 @@ class TenancyStorageInterface(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def read_sessions(
+    async def read_auth_sessions(
         self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
-    ) -> list[Session]:
+    ) -> list[AuthSession]:
         """One user's sessions live at `live_at` (not revoked, not yet expired),
         newest first, clamped after the filter so a live session is never
         pushed out of the page by dead ones."""
         ...
 
     @abstractmethod
-    async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None: ...
+    async def read_auth_session(
+        self, org_id: UUID, auth_session_id: UUID
+    ) -> AuthSession | None: ...
 
     @abstractmethod
-    async def read_session_by_digest(self, token_hash: str) -> tuple[UUID, Session] | None:
+    @tenantless
+    async def read_auth_session_by_digest(self, token_hash: str) -> tuple[UUID, AuthSession] | None:
         """Cross-tenant lookup: the gateway holds a token, not a tenant; the
         tenant travels back. A login credential and an operator token are
         rows of the system scope; a session token is its tenant's."""
         ...
 
     @abstractmethod
-    async def read_session_with_identity_by_digest(
+    @tenantless
+    async def read_auth_session_with_identity_by_digest(
         self, token_hash: str
-    ) -> tuple[UUID, Session, Identity | None] | None:
-        """Cross-tenant lookup, as `read_session_by_digest`, with the identity
+    ) -> tuple[UUID, AuthSession, Identity | None] | None:
+        """Cross-tenant lookup, as `read_auth_session_by_digest`, with the identity
         the credential proves beside it, from one statement under the system
         scope: the identity stage reads both on every use. The identity is
         None when it is gone."""
         ...
 
     @abstractmethod
+    @tenantless
     async def read_operator_tokens(
         self, identity_id: UUID, live_at: datetime, after: UUID | None, limit: int
-    ) -> list[Session]:
+    ) -> list[AuthSession]:
         """Global: an operator token is a row of the system scope, which no
         tenant holds. One identity's operator tokens live at `live_at` (not
         revoked, not yet expired), newest first, clamped after the filter;
@@ -440,52 +467,57 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
+    @tenantless
+    async def read_auth_session_by_id(
+        self, auth_session_id: UUID
+    ) -> tuple[UUID, AuthSession] | None:
         """Cross-tenant lookup: the identity stage holds the id of the session it
         was proven by, not its tenant; the tenant travels back."""
         ...
 
     @abstractmethod
-    async def create_session(self, org_id: UUID, session: Session) -> bool:
-        """The create of a credential kept as a session row: a sign-in, an
-        operator token, or a session with no sign-in to end. False when the
+    async def create_auth_session(self, org_id: UUID, auth_session: AuthSession) -> bool:
+        """The create of a credential kept as an auth session row: a sign-in, an
+        operator token, or an auth session with no sign-in to end. False when the
         id is already written, which changes nothing. A token hash another
         row holds is UniqueKeyTaken, and nothing lands."""
         ...
 
     @abstractmethod
-    async def write_session(
-        self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
+    async def write_auth_session(
+        self, org_id: UUID, auth_session: AuthSession, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        """The update by copy. A revocation is a session write with a handoff:
-        the row announcing it lands beside the session, so the socket it
+        """The update by copy. A revocation is an auth session write with a handoff:
+        the row announcing it lands beside the auth session, so the socket it
         opened hears of it."""
         ...
 
     @abstractmethod
-    async def replace_session(
+    async def replace_auth_session(
         self,
         org_id: UUID,
-        session: Session,
+        auth_session: AuthSession,
         ended_org_id: UUID,
-        ended: Session,
+        ended: AuthSession,
         outbox_rows: tuple[OutboxRow, ...],
     ) -> None:
-        """A named atomic write: the new session lands in `org_id` and the one it
+        """A named atomic write: the new auth session lands in `org_id` and the one it
         replaces, revoked, lands in `ended_org_id` with the outbox rows that
         announce the revocation, in one commit or not at all, so a tab that
-        switches tenants never holds two live sessions. The ended session must
+        switches tenants never holds two live sessions. The ended auth session must
         be in `ended_org_id` and still live as stored (not revoked); otherwise
-        nothing lands: NotFound for a session that is not in that tenant,
+        nothing lands: NotFound for an auth session that is not in that tenant,
         Conflict for one another write already ended. Two switches racing on
-        one session admit one."""
+        one auth session admit one."""
         ...
 
     @abstractmethod
-    async def exchange_sign_in(self, org_id: UUID, session: Session, ended: Session) -> None:
-        """A named atomic write: the new session lands in `org_id` and the
+    async def exchange_sign_in(
+        self, org_id: UUID, auth_session: AuthSession, ended: AuthSession
+    ) -> None:
+        """A named atomic write: the new auth session lands in `org_id` and the
         sign-in it was exchanged from, ended, in one commit or not at all, so
-        a sign-in makes one session. A sign-in is a row of the system scope,
+        a sign-in makes one auth session. A sign-in is a row of the system scope,
         which only the system scope writes, so this is one of the enumerated
         transactions that open it; the insert runs under `org_id`. With
         `EMPTY_UUID` as `org_id` the new row is the system scope's too: the
@@ -493,7 +525,7 @@ class TenancyStorageInterface(ABC):
         with one mints, each ending the sign-in it came from. The
         sign-in must be in the system scope and still live as stored (not
         revoked); otherwise nothing lands: NotFound for a credential that is
-        not in the system scope (a tenant's session among them), Conflict for
+        not in the system scope (a tenant's auth session among them), Conflict for
         one another exchange already ended. Two exchanges racing on one
         sign-in admit one."""
         ...
@@ -511,6 +543,7 @@ class TenancyStorageInterface(ABC):
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None: ...
 
     @abstractmethod
+    @tenantless
     async def read_api_key_by_digest(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
         """Cross-tenant lookup: the gateway holds a key, not a tenant; the tenant travels back."""
         ...
@@ -593,6 +626,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def purge_deleted(self, before: datetime, tickets_before: datetime, limit: int) -> int:
         """Cross-tenant, for the sweep, in the system scope: the one hard
         delete, one transaction a pass for every tenant and the system scope
@@ -625,6 +659,7 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    @tenantless
     async def redeem_socket_ticket(
         self, ticket_hash: str, redeemed_at: datetime
     ) -> tuple[UUID, SocketTicket] | None:

@@ -1,10 +1,11 @@
 from urllib.parse import urlsplit
+from uuid import UUID
 
-from tadas.om.billing import BillingManagerInterface
+from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
 from tadas.om.billing.rules import PLAN_LIMITS, PLAN_PRICES, monthly_price_cents
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
-from tadas.om.context import Permission, TenantContext
+from tadas.om.context import OperatorContext, Permission, TenantContext
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media import MediaManagerInterface
 from tadas.om.tasks import TasksManagerInterface
@@ -12,7 +13,9 @@ from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.services.billing import BillingServiceInterface
 from tadas.services.api.types.billing import (
     BillingView,
+    CompPlanRequest,
     OpenPortalRequest,
+    OperatorBillingView,
     PlanLimitsView,
     PlanOfferView,
     RedirectView,
@@ -52,17 +55,19 @@ def with_query(url: str, pair: str) -> str:
 class BillingServiceImpl(BillingServiceInterface):
     """Composes the billing manager with the counts a plan reads, the
     members, the active tasks, and the files kept, each from the namespace
-    that owns it."""
+    that owns it. The operator's methods go to the billing operator manager."""
 
     def __init__(
         self,
         billing: BillingManagerInterface,
+        billing_operator: BillingOperatorManagerInterface,
         tenancy: TenancyManagerInterface,
         tasks: TasksManagerInterface,
         media: MediaManagerInterface,
         portal_origins: list[str],
     ) -> None:
         self._billing = billing
+        self._billing_operator = billing_operator
         self._tenancy = tenancy
         self._tasks = tasks
         self._media = media
@@ -96,6 +101,14 @@ class BillingServiceImpl(BillingServiceInterface):
     async def resume(self, ctx: TenantContext) -> BillingView:
         return await self._view(ctx, await self._billing.resume(ctx))
 
+    async def get_org_billing(self, admin: OperatorContext, org_id: UUID) -> OperatorBillingView:
+        return operator_billing(await self._billing_operator.get_billing(admin, org_id))
+
+    async def comp_plan(
+        self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
+    ) -> OperatorBillingView:
+        return operator_billing(await self._billing_operator.comp_plan(admin, org_id, body.plan))
+
     async def _view(self, ctx: TenantContext, billing: Billing) -> BillingView:
         account = billing.account
         seats = await self._tenancy.members.count_members(ctx)
@@ -119,3 +132,13 @@ class BillingServiceImpl(BillingServiceInterface):
             can_manage=ctx.has(Permission.MANAGE_BILLING),
             plans=PLANS,
         )
+
+
+def operator_billing(billing: Billing) -> OperatorBillingView:
+    return OperatorBillingView(
+        plan=billing.plan,
+        paid_plan=billing.paid_plan,
+        comped_plan=billing.comped_plan,
+        status=billing.account.status if billing.account else None,
+        ends_at=billing.ends_at,
+    )

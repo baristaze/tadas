@@ -6,8 +6,8 @@ from typing import Literal
 from uuid import UUID
 
 from tadas.services.api.realtime.timeouts import PING_INTERVAL_SECONDS
+from tadas.services.api.types.change_events import EntityChangedView
 from tadas.services.api.types.common import RequestBody, View
-from tadas.services.api.types.events import EntityChangedView
 
 
 class Envelope(View):
@@ -47,11 +47,11 @@ class UnsubscribedEnvelope(Envelope):
     topic: str
 
 
-class EventEnvelope(Envelope):
+class ChangeEventEnvelope(Envelope):
     """A push. The payload's `seq` is the tenant's stream position, so a
     client that sees a gap replays from storage rather than trusting the socket."""
 
-    type: Literal["event"] = "event"
+    type: Literal["change_event"] = "change_event"
     topic: str
     payload: EntityChangedView
 
@@ -65,11 +65,3 @@ class ErrorEnvelope(Envelope):
 class ClientCommand(RequestBody):
     op: Literal["subscribe", "unsubscribe", "ping"]
     topic: str | None = None
-
-
-class IssuedTicketView(View):
-    """Carries the freshly minted socket ticket in the clear, once; redeeming
-    it opens the channel and re-checks the credential behind it."""
-
-    ticket: str
-    expires_in_seconds: int

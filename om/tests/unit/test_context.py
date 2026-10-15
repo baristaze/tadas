@@ -6,7 +6,6 @@ import ast
 from pathlib import Path
 
 import pytest
-from contracts.plans import ON_TEAM
 from pydantic import ValidationError
 
 import tadas.om
@@ -14,6 +13,7 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import (
     ActorScope,
     AppContext,
@@ -32,7 +32,6 @@ from tadas.om.context import (
     TenantScope,
     build_context,
 )
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import InvalidCredential, NotAnOperator, NotAuthorized
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
@@ -41,6 +40,8 @@ from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.rules import operator_permissions_of, permissions_of
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
+
+from contracts.plans import ON_TEAM
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
@@ -58,7 +59,7 @@ def request() -> RequestContext:
 def manager(tmp_path: Path) -> TenancyManagerInterface:
     outbox = OutboxStorageMemoryImpl()
     infra = InfraLocalImpl(tmp_path)
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
     return build_tenancy(
         TenancyStorageMemoryImpl(outbox),
         relay,
@@ -120,7 +121,7 @@ async def test_authenticate_login_takes_a_session_token_and_refuses_an_api_key(
     # A live session proves the identity of its user as well as the tenant.
     by_session = await manager.authenticate_login(request(), session.token)
     assert by_session.identity_id == ictx.identity_id
-    assert by_session.credential_kind is CredentialKind.SESSION_TOKEN
+    assert by_session.credential_kind is CredentialKind.AUTH_SESSION_TOKEN
     ctx = await manager.authenticate(request(), session.token)
     key = await manager.credentials.create_api_key(ctx, "ci", Role.MEMBER)
     with pytest.raises(InvalidCredential):
@@ -153,7 +154,7 @@ async def test_authenticate_produces_the_tenant_stage_and_refuses_a_login_token(
     ctx = await manager.authenticate(rctx, issued.token)
     assert type(ctx) is TenantContext
     assert ctx.org_id == org.id and ctx.security.role is Role.OWNER
-    assert ctx.credential_kind is CredentialKind.SESSION_TOKEN
+    assert ctx.credential_kind is CredentialKind.AUTH_SESSION_TOKEN
     assert ctx.credential_id != EMPTY_UUID
     assert (ctx.request_id, ctx.app, ctx.trace_id, ctx.traceparent) == (
         rctx.request_id,
@@ -346,7 +347,7 @@ def test_every_stage_satisfies_the_scopes_it_carries() -> None:
         org_id=new_id(),
         role=Role.MEMBER,
         permissions=permissions_of(Role.MEMBER),
-        credential_kind=CredentialKind.SESSION_TOKEN,
+        credential_kind=CredentialKind.AUTH_SESSION_TOKEN,
         credential_id=new_id(),
     )
 
@@ -360,7 +361,7 @@ def test_every_stage_satisfies_the_scopes_it_carries() -> None:
     assert [s.credential_kind for s in credential_scopes] == [
         CredentialKind.LOGIN,
         CredentialKind.LOGIN,
-        CredentialKind.SESSION_TOKEN,
+        CredentialKind.AUTH_SESSION_TOKEN,
     ]
     assert credential_scopes[0].credential_id == ictx.credential_id
 

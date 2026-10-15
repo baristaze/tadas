@@ -1,5 +1,5 @@
 import type { InfiniteData } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskView, UserView } from "@tadas/client";
+import type { tasks, tenancy } from "@tadas/client";
 import { describe, expect, it } from "vitest";
 import {
   canAdd,
@@ -11,7 +11,7 @@ import {
   withLeaving,
 } from "./tasksModel";
 
-const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
+const task = (id: string, overrides: Partial<tasks.TaskView> = {}): tasks.TaskView => ({
   id,
   title: `task ${id}`,
   notes: "",
@@ -28,16 +28,16 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   ...overrides,
 });
 
-const user = (id: string, name: string): UserView => ({
+const user = (id: string, name: string): tenancy.UserView => ({
   id,
   email: `${id}@example.test`,
   display_name: name,
   created_at: "2026-09-01T00:00:00Z",
 });
 
-const ids = (tasks: TaskView[] | undefined) => (tasks ?? []).map((t) => t.id);
-const page = (...items: TaskView[]): TaskPageView => ({ items, next_cursor: null });
-const pages = (...pages: TaskPageView[]): InfiniteData<TaskPageView> => ({
+const ids = (tasks: tasks.TaskView[] | undefined) => (tasks ?? []).map((t) => t.id);
+const page = (...items: tasks.TaskView[]): tasks.TaskPageView => ({ items, next_cursor: null });
+const pages = (...pages: tasks.TaskPageView[]): InfiniteData<tasks.TaskPageView> => ({
   pages,
   pageParams: pages.map((_, index) => (index === 0 ? null : `cursor-${index}`)),
 });
@@ -58,9 +58,9 @@ describe("tasks model", () => {
   });
 
   it("gates writing and adding", () => {
-    const me = { permissions: ["read", "write"] } as unknown as MeView;
+    const me = { permissions: ["read", "write"] } as unknown as tenancy.MeView;
     expect(canWrite(me)).toBe(true);
-    expect(canWrite({ permissions: ["read"] } as unknown as MeView)).toBe(false);
+    expect(canWrite({ permissions: ["read"] } as unknown as tenancy.MeView)).toBe(false);
     expect(canWrite(undefined)).toBe(false);
     expect(canAdd("  migrate DB ")).toBe(true);
     expect(canAdd("   ")).toBe(false);

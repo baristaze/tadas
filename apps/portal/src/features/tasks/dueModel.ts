@@ -3,7 +3,7 @@
 // as that same date and takes it from a `date` input, whose value is the same
 // string. A date is never read through `new Date(iso)`, which would take it as
 // UTC midnight and shift it a day for anyone west of UTC.
-import type { TaskView } from "@tadas/client";
+import type { tasks } from "@tadas/client";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const LONG_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -57,14 +57,14 @@ export function formatDueLong(date: Date): string {
   return `${LONG_DAYS[date.getDay()]} ${date.getDate()} ${LONG_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function dueState(task: Pick<TaskView, "due_on" | "reminded_at">, now: Date): DueState | null {
+export function dueState(task: Pick<tasks.TaskView, "due_on" | "reminded_at">, now: Date): DueState | null {
   const due = parseDate(task.due_on);
   if (!due) return null;
   if (task.reminded_at) return "reminded";
   return daysFrom(due, now) < 0 ? "overdue" : "upcoming";
 }
 
-export function dueBadge(task: Pick<TaskView, "due_on" | "reminded_at">, now: Date): DueBadge | null {
+export function dueBadge(task: Pick<tasks.TaskView, "due_on" | "reminded_at">, now: Date): DueBadge | null {
   const state = dueState(task, now);
   const due = parseDate(task.due_on);
   if (!state || !due) return null;

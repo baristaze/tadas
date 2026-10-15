@@ -1,6 +1,6 @@
 # ADR 0016: Row-level security is the second fence, taken by default
 
-**Status**: accepted (2026-09-20)
+**Status**: accepted (2026-09-28)
 
 ## Context
 
@@ -8,9 +8,7 @@ Tenancy is a data boundary and lives in storage, and the fence is the
 predicate in the query. That fence fails one way: a predicate goes
 missing. A new list, a new `WHERE` beside an old one, or a helper
 reused where it does not fit, and one tenant reads another's rows with
-nothing to say so. A suite that has a case for one list and none for
-another stays green when the tenant leaves the second list's `WHERE`;
-`docs/runbooks/tenant-isolation.md` records such a run.
+nothing to say so.
 
 Postgres can hold the same boundary a second time, where a query cannot
 forget it. It costs two things. Setting the tenant is the same
@@ -43,7 +41,7 @@ never a default, spelled at the call site.
 it and is not an enumerated exception.
 
 **Three logins, none above the fence.** A superuser walks past every
-policy, and so does a role with `BYPASSRLS`. No login of the platform
+policy, and so does a role with `BYPASSRLS`. No login of the system
 is either, and `FORCE ROW LEVEL SECURITY` is on every fenced table, so
 the owner is held too.
 
@@ -80,16 +78,16 @@ Two choices go beyond the guideline's shape.
   identity is known. The tree also takes no tenant where a method reads
   or writes the two `system` tables (`identities`, `sign_in_delays`),
   reads across tenants for the operator plane, steps from an identity to
-  its tenants, keeps the platform's size, or erases a person
+  its tenants, keeps the system's size, or erases a person
   ([ADR 0041](0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md)).
-  Each says why in its docstring. `[tool.arch-check.options.CTX-12]` in
-  `pyproject.toml` and `om/tests/unit/test_storage_exceptions.py` hold
-  the same list.
-- **Sessions, API keys, and socket tickets are `both` tables**, where
+  Each says why in its docstring and is declared `@tenantless` beside
+  it, which arch-check and `om/tests/unit/test_storage_exceptions.py`
+  read.
+- **Auth sessions, API keys, and socket tickets are `both` tables**, where
   the guideline's scaffold makes them `identity` tables. Each belongs to
-  one person inside one org: a session is in one org at a time, and a
+  one person inside one org: an auth session is in one org at a time, and a
   switch ends it. So their policy is on `org_id`, narrowed by the
-  person. An operator token is a session under the system scope, which
+  person. An operator token is an auth session under the system scope, which
   only the system login finds.
 
 ## Consequences
@@ -113,13 +111,7 @@ raise a cast error instead of reading nothing.
 on the row, and under the policy that read returns nothing. The insert
 then meets the primary key: a key the read did not see is a row this
 transaction may not see, so it raises the same `TenantMismatch`.
-`TasksStoragePostgresImpl._why_not`, which tells the caller which of
-three conditions the bulk update missed, cannot: narrowed to the
-tenant, "another tenant holds it" and "nobody does" are one empty
-answer, and they are different refusals. It takes the system scope in a
-session of its own, named in `test_session_scope.py` with that reason.
-It reads two columns of one id.
 
 `app.user_id` narrows a `both` table to one person when a call names
-one: the idempotency markers, the session list, the key page, the
+one: the idempotency markers, the auth session list, the key page, the
 membership read. Everywhere else only the tenant holds.

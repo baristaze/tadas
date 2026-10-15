@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.storage.impl.postgres import BillingStoragePostgresImpl
-from tadas.om.events.storage import EventStorageInterface
-from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
+from tadas.om.change_events.storage import ChangeEventStorageInterface
+from tadas.om.change_events.storage.impl.postgres import ChangeEventStoragePostgresImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
 from tadas.om.leases.storage import LeasesStorageInterface
@@ -139,50 +139,18 @@ class StoragePostgresImpl(StorageInterface):
         sessions, engines = login_sessions(urls, pools, system_urls=system_urls)
         self._engines = engines
         self._sessions = sessions
+        self._change_events = ChangeEventStoragePostgresImpl(sessions)
+        self._idempotency = IdempotencyStoragePostgresImpl(sessions)
+        self._leases = LeasesStoragePostgresImpl(sessions)
+        self._media = MediaStoragePostgresImpl(sessions)
+        self._orchestrations = OrchestrationsStoragePostgresImpl(sessions)
+        self._outbox = OutboxStoragePostgresImpl(sessions)
         self._tenancy = TenancyStoragePostgresImpl(sessions)
         self._work = WorkStoragePostgresImpl(sessions)
-        self._tasks = TasksStoragePostgresImpl(sessions)
-        self._media = MediaStoragePostgresImpl(sessions)
-        self._idempotency = IdempotencyStoragePostgresImpl(sessions)
-        self._events = EventStoragePostgresImpl(sessions)
-        self._outbox = OutboxStoragePostgresImpl(sessions)
+        # A copy adds its entries below this line.
         self._billing = BillingStoragePostgresImpl(sessions)
         self._slack = SlackStoragePostgresImpl(sessions)
-        self._orchestrations = OrchestrationsStoragePostgresImpl(sessions)
-        self._leases = LeasesStoragePostgresImpl(sessions)
-
-    def get_tenancy_storage(self) -> TenancyStorageInterface:
-        return self._tenancy
-
-    def get_work_storage(self) -> WorkStorageInterface:
-        return self._work
-
-    def get_tasks_storage(self) -> TasksStorageInterface:
-        return self._tasks
-
-    def get_media_storage(self) -> MediaStorageInterface:
-        return self._media
-
-    def get_idempotency_storage(self) -> IdempotencyStorageInterface:
-        return self._idempotency
-
-    def get_event_storage(self) -> EventStorageInterface:
-        return self._events
-
-    def get_outbox_storage(self) -> OutboxStorageInterface:
-        return self._outbox
-
-    def get_billing_storage(self) -> BillingStorageInterface:
-        return self._billing
-
-    def get_slack_storage(self) -> SlackStorageInterface:
-        return self._slack
-
-    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
-        return self._orchestrations
-
-    def get_lease_storage(self) -> LeasesStorageInterface:
-        return self._leases
+        self._tasks = TasksStoragePostgresImpl(sessions)
 
     async def healthcheck(self) -> bool:
         """A connect and a `SELECT 1` on every engine, each under the bounds its
@@ -204,3 +172,38 @@ class StoragePostgresImpl(StorageInterface):
     async def close(self) -> None:
         for engine in self._engines.values():
             await engine.dispose()
+
+    def get_change_event_storage(self) -> ChangeEventStorageInterface:
+        return self._change_events
+
+    def get_idempotency_storage(self) -> IdempotencyStorageInterface:
+        return self._idempotency
+
+    def get_lease_storage(self) -> LeasesStorageInterface:
+        return self._leases
+
+    def get_media_storage(self) -> MediaStorageInterface:
+        return self._media
+
+    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
+        return self._orchestrations
+
+    def get_outbox_storage(self) -> OutboxStorageInterface:
+        return self._outbox
+
+    def get_tenancy_storage(self) -> TenancyStorageInterface:
+        return self._tenancy
+
+    def get_work_storage(self) -> WorkStorageInterface:
+        return self._work
+
+    # A copy adds its entries below this line.
+
+    def get_billing_storage(self) -> BillingStorageInterface:
+        return self._billing
+
+    def get_slack_storage(self) -> SlackStorageInterface:
+        return self._slack
+
+    def get_tasks_storage(self) -> TasksStorageInterface:
+        return self._tasks

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { FileView, ImportView, IssuedUploadView } from "@tadas/client";
+import type { media, tasks } from "@tadas/client";
 import { StoreRefused } from "../attachments/transfer";
 import { CSV_TYPE, startImport, type ImportEffects } from "./importFlow";
 
-const FILE: FileView = {
+const FILE: media.FileView = {
   id: "f1",
   name: "tasks.csv",
   extension: "csv",
@@ -17,7 +17,7 @@ const FILE: FileView = {
   deleted_at: null,
 };
 
-const STARTED: ImportView = {
+const STARTED: tasks.ImportView = {
   id: "i1",
   file_id: "f1",
   status: "running",
@@ -37,7 +37,7 @@ const STARTED: ImportView = {
 // Windows names a CSV file as Excel's; the import sends the one type it takes.
 const picked = { name: "tasks.csv", type: "application/vnd.ms-excel", size: 12, bytes: new Blob(["title\nShip\n"]) };
 
-function effectsFor(form: IssuedUploadView, storeStatus = 204) {
+function effectsFor(form: media.IssuedUploadView, storeStatus = 204) {
   const calls: string[] = [];
   const effects: ImportEffects = {
     startFile: vi.fn(async (body) => {
@@ -68,7 +68,7 @@ function effectsFor(form: IssuedUploadView, storeStatus = 204) {
   return { effects, calls };
 }
 
-const signed: IssuedUploadView = {
+const signed: media.IssuedUploadView = {
   url: "https://store.example.test/bucket",
   fields: [{ name: "key", value: "org/media/task_import/f1" }],
   expires_at: "2026-09-25T10:15:00Z",

@@ -6,11 +6,11 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from tadas.om.base import Platform
+from tadas.om.base import OmBase
 from tadas.om.tasks.types.task import TaskScope
 
 
-class TaskFilter(Platform):
+class TaskFilter(OmBase):
     """Which tasks a list shows: every task of the org, or the caller's own.
     `user_id` is the caller, the person `mine` is about."""
 
@@ -18,7 +18,7 @@ class TaskFilter(Platform):
     user_id: UUID
 
 
-class TaskCursor(Platform):
+class TaskCursor(OmBase):
     """Where the previous page of the done list ended: its last task's
     (updated_at, id). The next page is strictly before it."""
 
@@ -26,7 +26,7 @@ class TaskCursor(Platform):
     id: UUID
 
 
-class OpenTaskCursor(Platform):
+class OpenTaskCursor(OmBase):
     """Where the previous page of the open list ended: its last task's
     (rank, id). The next page is strictly after it."""
 

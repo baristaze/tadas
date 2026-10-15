@@ -8,7 +8,7 @@ from uuid import UUID
 
 def new_state() -> str:
     """A fresh install state: 256 bits, URL-safe, since it rides in Slack's
-    redirect back to the platform."""
+    redirect back to the system."""
     return secrets.token_urlsafe(32)
 
 

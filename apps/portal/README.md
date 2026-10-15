@@ -9,13 +9,13 @@ sign-in, the org chip and switch, settings, and one realtime channel.
 - `@tadas/client`, from [clients/typescript/](../../clients/typescript/README.md):
   the one transport client and the types generated from the API's document.
   The portal calls `fetch` nowhere and never reads the generated schema.
-- `src/app/`: routes, the nav, the query cache, the session, and the one
+- `src/app/`: routes, the nav, the query cache, the auth session, and the one
   client instance the app shares.
 - `src/features/<name>/`: one folder per screen, a pure model, a
   view-model hook, and a page. `tasks/` is the product's first screen, at
   `/`, with `attachments/`, `imports/`, and `billing/` beside it.
 - `src/queries/`: query keys and hooks, one file per API namespace.
-  `flags.ts` reads the session's flags as one snapshot from the API, and a
+  `flags.ts` reads the auth session's flags as one snapshot from the API, and a
   view-model reads a flag with `useFlag`. No flag vendor's SDK is in the
   bundle.
 - `src/realtime/`: the socket and its router. A push about a user reads
@@ -83,7 +83,7 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   about that answer. Any other tab reads that one task
   (`GET /v1/tasks/{id}`) and places it the same way; a 404 takes it
   out. A push that names no version (the reminder, the daily archive)
-  is always read (ADR 0061). Where it goes is one pure function
+  is always read (ADR 1018). Where it goes is one pure function
   (`src/queries/taskPlacement.ts`): the open list by rank then id, the
   done list newest first, the `mine` scope by the server's rule,
   archived and deleted tasks in neither. A list is the window the page

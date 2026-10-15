@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from tadas.om.context import RequestContext
-from tadas.services.api.types.webhooks import DeliveryReceivedView
+from tadas.services.api.types.common import DeliveryReceivedView
 
 
 @dataclass(frozen=True)

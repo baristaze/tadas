@@ -1,8 +1,9 @@
-"""The wire's leases: a resource and its anchor, a lease with the seconds it
-has left, a request with its place and estimate, a resource's line, and a
-history of leases, each with the request it answered. A
-lease's time travels as a duration as well as an instant: the holder's
-clock is not the server's, so it counts the seconds from when it asked."""
+"""The wire's leases: a leasable resource and its anchor, a lease with the
+seconds it has left, a request with its place and estimate, a leasable
+resource's wait line, and a history of leases, each with the request it
+answered. A lease's time travels as a duration as well as an instant: the
+holder's clock is not the server's, so it counts the seconds from when it
+asked."""
 
 from datetime import datetime
 from typing import Any
@@ -10,18 +11,19 @@ from uuid import UUID
 
 from pydantic import Field
 
+from tadas.om.base import SnakeName
+from tadas.om.leases.types.leasable_resource import MAX_LABELS, MAX_TERM_SECONDS, Label
 from tadas.om.leases.types.lease import LeaseStatus
-from tadas.om.leases.types.request import EndReason, RequestStatus, WaiterKind
-from tadas.om.leases.types.resource import MAX_LABELS, MAX_TERM_SECONDS, Label, ResourceKind
+from tadas.om.leases.types.request import EndReason, RequestStatus
 from tadas.services.api.types.common import RequestBody, View
 
 
-class ResourceView(View):
+class LeasableResourceView(View):
     """A resource and its anchor: the highest token granted on it, and the
     lease that holds it until when."""
 
     id: UUID
-    kind: ResourceKind
+    kind: SnakeName
     ref_id: UUID
     labels: list[str]
     max_term_seconds: int
@@ -41,7 +43,7 @@ class LeaseView(View):
     expires at the end of the window the job has to start in."""
 
     id: UUID
-    resource_id: UUID
+    leasable_resource_id: UUID
     request_id: UUID
     holder_id: UUID
     fencing_token: int
@@ -56,10 +58,10 @@ class LeaseView(View):
 
 class LeaseRequestView(View):
     id: UUID
-    kind: ResourceKind
-    resource_id: UUID | None
+    kind: SnakeName
+    leasable_resource_id: UUID | None
     labels: list[str] | None
-    waiter_kind: WaiterKind | None
+    waiter_kind: SnakeName | None
     waiter_id: UUID | None
     term_seconds: int
     start_seconds: int | None
@@ -92,11 +94,11 @@ class PlaceView(View):
     estimate_seconds: float | None
 
 
-class LineView(View):
-    """A resource and the requests in its line, first first, with each one's
-    place and estimate in the same order."""
+class WaitLineView(View):
+    """A leasable resource and the requests in its wait line, first first, with
+    each one's place and estimate in the same order."""
 
-    resource: ResourceView
+    leasable_resource: LeasableResourceView
     requests: list[LeaseRequestView]
     places: list[PlaceView]
 
@@ -125,8 +127,8 @@ class AskRequest(RequestBody):
     window the job has to start in, bounded the same way; none gives it the
     term."""
 
-    kind: ResourceKind
-    resource_id: UUID | None = None
+    kind: SnakeName
+    leasable_resource_id: UUID | None = None
     labels: list[Label] | None = Field(default=None, max_length=MAX_LABELS)
     payload: dict[str, Any] = Field(default_factory=dict)
     term_seconds: int = Field(default=60, ge=1, le=MAX_TERM_SECONDS)

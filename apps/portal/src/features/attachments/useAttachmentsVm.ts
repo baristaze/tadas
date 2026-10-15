@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { storeFetch, type FileView } from "@tadas/client";
+import { storeFetch, type media } from "@tadas/client";
 import { errorMessage } from "../../app/errorMessage";
 import { mediaCalls, useAttachments, useRemoveAttachment } from "../../queries/attachments";
 import { keys } from "../../queries/keys";
@@ -68,7 +68,7 @@ export function useAttachmentsVm(taskId: string) {
     );
   };
 
-  const byId = (id: string): FileView | undefined => files.find((f) => f.id === id);
+  const byId = (id: string): media.FileView | undefined => files.find((f) => f.id === id);
 
   const download = async (id: string) => {
     const file = byId(id);

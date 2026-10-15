@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from uuid import UUID
 
-from tadas.om.context import RequestContext, TenantContext
+from tadas.om.context import RequestContext, TenantContext, transition
 from tadas.om.tasks.attachments import TasksAttachmentsManagerInterface
 from tadas.om.tasks.cleanup import TasksCleanupManagerInterface
 from tadas.om.tasks.imports import TasksImportsManagerInterface
@@ -178,10 +178,11 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def tenants_with_chores(
         self, rctx: RequestContext, after: UUID | None, limit: int
     ) -> list[UUID]:
-        """Platform-internal: the sweep's one read a pass, across tenants in
+        """System-internal: the sweep's one read a pass, across tenants in
         the system scope, under the pass's request stage, of the tenants whose
         tasks have a chore due: a done task today's cleanup archives
         (`cleanup.open_cleanup`), or an open task whose rank grew long
@@ -191,8 +192,9 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    @transition
     async def purge_across_tenants(self, rctx: RequestContext) -> int:
-        """Platform-internal: the sweep, across tenants, once a pass: hard-deletes
+        """System-internal: the sweep, across tenants, once a pass: hard-deletes
         a batch of tasks soft-deleted longer ago than the retention period,
         whatever their tenant; returns how many. The attachments of each go
         first, under the service context of its tenant minted from `rctx`

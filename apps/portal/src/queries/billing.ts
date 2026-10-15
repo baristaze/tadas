@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BillingView, OpenPortalRequest, Plan, RedirectView } from "@tadas/client";
+import type { billing } from "@tadas/client";
 import { api } from "../app/api";
 import { keys } from "./keys";
 
@@ -10,7 +10,7 @@ export function billingReturnUrl(origin: string = window.location.origin): strin
 }
 
 /** A task the processor's page opens on. */
-export type PortalFlow = NonNullable<OpenPortalRequest["flow"]>;
+export type PortalFlow = NonNullable<billing.OpenPortalRequest["flow"]>;
 
 /** Where a hosted page is opened; a test hands in its own. */
 export type Go = (url: string) => void;
@@ -20,15 +20,15 @@ const leave: Go = (url) => window.location.assign(url);
 export function useBilling() {
   return useQuery({
     queryKey: keys.billing,
-    queryFn: ({ signal }) => api.get<BillingView>("/v1/billing", { signal }),
+    queryFn: ({ signal }) => api.get<billing.BillingView>("/v1/billing", { signal }),
   });
 }
 
 /** A checkout for `plan`, under an idempotency key, then off to the processor's page. */
 export function useStartCheckout(go: Go = leave) {
   return useMutation({
-    mutationFn: (plan: Plan) =>
-      api.post<RedirectView>(
+    mutationFn: (plan: billing.Plan) =>
+      api.post<billing.RedirectView>(
         "/v1/billing/checkout",
         { plan, return_url: billingReturnUrl() },
         { idempotencyKey: crypto.randomUUID() },
@@ -42,7 +42,7 @@ export function useStartCheckout(go: Go = leave) {
 export function useOpenBillingPortal(go: Go = leave) {
   return useMutation({
     mutationFn: (flow?: PortalFlow) =>
-      api.post<RedirectView>("/v1/billing/portal", { return_url: billingReturnUrl(), flow: flow ?? null }),
+      api.post<billing.RedirectView>("/v1/billing/portal", { return_url: billingReturnUrl(), flow: flow ?? null }),
     onSuccess: (redirect) => go(redirect.url),
   });
 }
@@ -50,7 +50,7 @@ export function useOpenBillingPortal(go: Go = leave) {
 function useBillingChange(path: "/v1/billing/cancel" | "/v1/billing/resume") {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<BillingView>(path),
+    mutationFn: () => api.post<billing.BillingView>(path),
     onSuccess: (billing) => queryClient.setQueryData(keys.billing, billing),
   });
 }

@@ -15,10 +15,11 @@ from api_support import OWNER, add_member
 from cli_support import BOB, Hop, Stack
 
 from tadas.apps.cli.listen import listen
-from tadas.client.client import DEFAULT_RETRIES, ApiClient, ApiError
+from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import State
-from tadas.client.types import TaskStatus, TaskView
+from tadas.client.transport import DEFAULT_RETRIES, ApiError
+from tadas.client.types.tasks import TaskStatus, TaskView
 from tadas.om.context import Role
 
 CLOCK = datetime(2026, 9, 18, 9, 30, 0)
@@ -56,8 +57,8 @@ def is_users_read(request: httpx.Request) -> bool:
 
 
 def test_every_change_becomes_one_line(stack: Stack) -> None:
-    owner = stack.session_token(OWNER["email"])
-    bob = stack.session_token(BOB["email"])
+    owner = stack.auth_session_token(OWNER["email"])
+    bob = stack.auth_session_token(BOB["email"])
     out, err = io.StringIO(), io.StringIO()
 
     async def scripted(
@@ -77,7 +78,7 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
 
             async def latest() -> EntityChanged:
                 nonlocal seq
-                event = (await as_owner.events_after(seq))[-1]
+                event = (await as_owner.change_events_after(seq))[-1]
                 seq = event.seq
                 return EntityChanged.of_event(event)
 
@@ -126,7 +127,7 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
 
 
 def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack: Stack) -> None:
-    owner = stack.session_token(OWNER["email"])
+    owner = stack.auth_session_token(OWNER["email"])
     out = io.StringIO()
 
     async def scripted(
@@ -138,11 +139,11 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
         await on_first_open()
         async with stack.client(owner) as as_owner:
             await as_owner.delete_task(old.id, old.version)
-            deleted = (await as_owner.events_after(0))[-1]
+            deleted = (await as_owner.change_events_after(0))[-1]
             # Created and deleted before the listener could read it: no title to tell.
             gone = await as_owner.create_task("Gone at once")
             await as_owner.delete_task(gone.id, gone.version)
-            created, deleted_again = (await as_owner.events_after(deleted.seq))[-2:]
+            created, deleted_again = (await as_owner.change_events_after(deleted.seq))[-2:]
         for event in (deleted, created, deleted_again):
             yield EntityChanged.of_event(event)
 
@@ -170,7 +171,7 @@ def test_a_stream_trimmed_past_the_listener_is_said_and_every_task_read_again(
     """What happened in the trimmed stretch is not told, and stderr says so.
     The tasks are read again there, so a task made in that stretch and
     deleted after it still has its title."""
-    owner = stack.session_token(OWNER["email"])
+    owner = stack.auth_session_token(OWNER["email"])
     out, err = io.StringIO(), io.StringIO()
 
     async def scripted(
@@ -184,7 +185,7 @@ def test_a_stream_trimmed_past_the_listener_is_said_and_every_task_read_again(
             unseen = await as_owner.create_task("Made while trimmed")
             await on_resync()
             await as_owner.delete_task(unseen.id, unseen.version)
-            deleted = (await as_owner.events_after(0))[-1]
+            deleted = (await as_owner.change_events_after(0))[-1]
         yield EntityChanged.of_event(deleted)
 
     async def drive() -> None:
@@ -207,8 +208,8 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
     or with a 5xx on every attempt the client makes is this change's failure,
     told on stderr, and the next change to the task shows its state. An actor
     who cannot be looked up is told as someone."""
-    owner = stack.session_token(OWNER["email"])
-    bob = stack.session_token(BOB["email"])
+    owner = stack.auth_session_token(OWNER["email"])
+    bob = stack.auth_session_token(BOB["email"])
     out, err = io.StringIO(), io.StringIO()
     # The client sends a read again on a wire failure and on an unavailable
     # answer, so a change is skipped only once every attempt has failed.
@@ -234,7 +235,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
 
             async def latest() -> EntityChanged:
                 nonlocal seq
-                event = (await as_owner.events_after(seq))[-1]
+                event = (await as_owner.change_events_after(seq))[-1]
                 seq = event.seq
                 return EntityChanged.of_event(event)
 
@@ -245,7 +246,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
             await as_owner.update_task(first.id, version=first.version, status=TaskStatus.done)
             yield await latest()  # read fine, told
             await add_member(stack.container, stack.org_id, CAROL["email"], Role.MEMBER)
-            async with stack.client(stack.session_token(**CAROL)) as as_carol:
+            async with stack.client(stack.auth_session_token(**CAROL)) as as_carol:
                 await as_carol.create_task("Onboard")
             yield await latest()  # the members read for the new actor times out
 
@@ -278,7 +279,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
 def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
     """A dead credential is not a change's failure: it ends the listener,
     which the command turns into exit 3."""
-    owner = stack.session_token(OWNER["email"])
+    owner = stack.auth_session_token(OWNER["email"])
 
     async def scripted(
         client: ApiClient,
@@ -289,7 +290,7 @@ def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
         await on_first_open()
         async with stack.client(owner) as as_owner:
             await as_owner.create_task("Migrate DB")
-            yield EntityChanged.of_event((await as_owner.events_after(0))[-1])
+            yield EntityChanged.of_event((await as_owner.change_events_after(0))[-1])
 
     async def drive() -> None:
         async with ApiClient(
@@ -312,8 +313,8 @@ def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
     """A task edited and deleted inside one read's latency: the read of the
     edit answers 404, and the delete that follows still has the title and is
     still Ann's, so `--mine` prints it."""
-    owner = stack.session_token(OWNER["email"])
-    bob = stack.session_token(BOB["email"])
+    owner = stack.auth_session_token(OWNER["email"])
+    bob = stack.auth_session_token(BOB["email"])
     out = io.StringIO()
     flaky = Flaky(stack, [(is_task_read, 404)])
 
@@ -330,11 +331,11 @@ def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
     ) -> AsyncIterator[EntityChanged]:
         await on_first_open()
         async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
-            seq = (await as_owner.events_after(0))[-1].seq
+            seq = (await as_owner.change_events_after(0))[-1].seq
 
             async def latest() -> EntityChanged:
                 nonlocal seq
-                event = (await as_owner.events_after(seq))[-1]
+                event = (await as_owner.change_events_after(seq))[-1]
                 seq = event.seq
                 return EntityChanged.of_event(event)
 

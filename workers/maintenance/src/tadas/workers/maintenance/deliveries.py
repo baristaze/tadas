@@ -26,11 +26,11 @@ from tadas.infra.observability import OUTCOMES, current_traceparent, request_id_
 from tadas.infra.queues import QueueMessage, Queues, QueuesInterface
 from tadas.integrations.identity import ProvidedDelivery
 from tadas.integrations.payments import ProviderDelivery
-from tadas.om.base import EMPTY_UUID, Platform, derived_id, new_id
+from tadas.om.base import EMPTY_UUID, OmBase, derived_id, new_id
 from tadas.om.billing import BillingManagerInterface
+from tadas.om.change_events import ChangeEventsManagerInterface
+from tadas.om.change_events.manager import audit_change_event
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
-from tadas.om.events import EventsManagerInterface
-from tadas.om.events.manager import audit_event
 from tadas.om.exceptions import InvalidCredential
 from tadas.om.tenancy import TenancyManagerInterface
 
@@ -67,8 +67,8 @@ class IdentityDeliveriesImpl(DeliveryProviderInterface[ProvidedDelivery]):
 
     KIND = "identity.event.received"
 
-    def __init__(self, events: EventsManagerInterface) -> None:
-        self._events = events
+    def __init__(self, change_events: ChangeEventsManagerInterface) -> None:
+        self._change_events = change_events
 
     def read(self, delivery: object) -> ProvidedDelivery:
         return ProvidedDelivery.model_validate(delivery)
@@ -82,14 +82,14 @@ class IdentityDeliveriesImpl(DeliveryProviderInterface[ProvidedDelivery]):
             return None
 
     async def apply(self, ctx: TenantContext, delivery: ProvidedDelivery) -> bool:
-        event = audit_event(
+        event = audit_change_event(
             ctx,
             derived_id(delivery.key, delivery.created),
             self.KIND,
             ctx.org_id,
             {"event_id": delivery.event_id, "event_type": delivery.event_type},
         )
-        stored = await self._events.append_event(ctx, event)
+        stored = await self._change_events.append_change_event(ctx, event)
         # A copy meets the event a first handling stored, which names the
         # request of that handling and not this one.
         return stored.request_id == ctx.request_id
@@ -114,7 +114,7 @@ class StripeDeliveriesImpl(DeliveryProviderInterface[ProviderDelivery]):
         return await self._billing.apply_delivery(ctx, delivery)
 
 
-class DeliveryOptions(Platform):
+class DeliveryOptions(OmBase):
     worker_id: str
     batch: int = 10
     wait: timedelta = timedelta(seconds=10)

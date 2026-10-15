@@ -4,6 +4,7 @@ whether the plan has api keys. The manager and its delegates each reach
 these, so each is written once, as `shared.py` holds the rest. `plans` is
 what the levers ask: the org's plan is read from it."""
 
+from tadas.om.billing.kinds import BillingKind
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import refuse_past, seats_metered
 from tadas.om.billing.types.billing import Entitlements
@@ -11,7 +12,7 @@ from tadas.om.billing.types.plan import Lever
 from tadas.om.context import TenantContext
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
-from tadas.om.work.types.work_item import WorkKind, work_row_kind
+from tadas.om.work.types.work_item import work_row_kind
 
 
 async def seat_rows(plans: EntitlementsInterface, ctx: TenantContext) -> tuple[OutboxRow, ...]:
@@ -21,7 +22,7 @@ async def seat_rows(plans: EntitlementsInterface, ctx: TenantContext) -> tuple[O
     entitlements = await plans.get_entitlements(ctx)
     if not seats_metered(entitlements.plan):
         return ()
-    return (outbox_row(ctx, work_row_kind(WorkKind.SYNC_SEATS), ctx.org_id, {}),)
+    return (outbox_row(ctx, work_row_kind(BillingKind.SYNC_SEATS), ctx.org_id, {}),)
 
 
 async def refuse_past_seats(

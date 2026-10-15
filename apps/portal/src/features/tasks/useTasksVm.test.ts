@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiError, type MeView, type TaskPageView, type TaskView, type UserPageView } from "@tadas/client";
+import { ApiError, type tasks, type tenancy } from "@tadas/client";
 import { taskHintEffects } from "../../queries/taskCache";
 import { fetchTask } from "../../queries/tasks";
 import { parseEnvelope } from "../../realtime/envelopes";
@@ -58,7 +58,7 @@ vi.mock("../../app/api", () => ({
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 let root: ReturnType<typeof createRoot>;
 
-const me: MeView = {
+const me: tenancy.MeView = {
   app: "portal",
   role: "owner",
   permissions: ["read", "write"],
@@ -66,7 +66,7 @@ const me: MeView = {
   org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z", deleted_at: null },
 };
 
-const taskOf = (id: string, title: string): TaskView => ({
+const taskOf = (id: string, title: string): tasks.TaskView => ({
   id,
   title,
   notes: "",
@@ -123,9 +123,9 @@ beforeEach(() => {
   net.writes.length = 0;
   net.log.length = 0;
   net.reads.set("/v1/me", me);
-  net.reads.set("/v1/users", { items: [me.user], next_cursor: null } satisfies UserPageView);
-  net.reads.set("/v1/tasks?status=open", { items: [alpha, beta], next_cursor: null } satisfies TaskPageView);
-  net.reads.set("/v1/tasks?status=done", { items: [], next_cursor: null } satisfies TaskPageView);
+  net.reads.set("/v1/users", { items: [me.user], next_cursor: null } satisfies tenancy.UserPageView);
+  net.reads.set("/v1/tasks?status=open", { items: [alpha, beta], next_cursor: null } satisfies tasks.TaskPageView);
+  net.reads.set("/v1/tasks?status=done", { items: [], next_cursor: null } satisfies tasks.TaskPageView);
 });
 
 afterEach(async () => {
@@ -224,7 +224,7 @@ function hintsOver(client: QueryClient) {
 function pushAbout(kind: string, id: string, version?: number) {
   return parseEnvelope(
     JSON.stringify({
-      type: "event",
+      type: "change_event",
       sent_at: null,
       topic: "entity_changed",
       payload: { kind, target_id: id, seq: 9, actor_id: "u1", ...(version === undefined ? {} : { version }) },
@@ -245,7 +245,7 @@ it("ticks with one PATCH and reads nothing on its own push, which names the vers
   const hints = hintsOver(queryClient);
   await act(async () => void vm().complete(alpha));
   await tick();
-  const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
+  const completed: tasks.TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
   await act(async () => void net.writes[0]!.resolve(completed));
   await tick();
   routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), { task: hints });
@@ -263,7 +263,7 @@ it("reads nothing when its own push arrives before the write's answer, within th
   await act(async () => void vm().complete(alpha));
   await tick();
   routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), { task: hints });
-  const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
+  const completed: tasks.TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
   await act(async () => void net.writes[0]!.resolve(completed));
   await windowPasses();
   expect(net.log).toEqual([]);
@@ -277,7 +277,7 @@ it("ticks with one PATCH, reads that one task on a push that names no version, a
   const hints = hintsOver(queryClient);
   await act(async () => void vm().complete(alpha));
   await tick();
-  const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
+  const completed: tasks.TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
   await act(async () => void net.writes[0]!.resolve(completed));
   await tick();
   // The answer is in the done list before any push arrives.
@@ -316,7 +316,7 @@ it("writes create, edit, reopen, move, and delete answers into the lists without
   await tick();
   expect(vm().open.map((r) => r.task.id)).toEqual(["t1", "t2", "t3"]);
 
-  const doneBeta: TaskView = { ...beta, title: "Beta edited", status: "done", version: 3, updated_at: "2026-09-20T10:06:00Z" };
+  const doneBeta: tasks.TaskView = { ...beta, title: "Beta edited", status: "done", version: 3, updated_at: "2026-09-20T10:06:00Z" };
   queryClient.setQueryData(["task", "done", "team"], { pages: [{ items: [doneBeta], next_cursor: null }], pageParams: [null] });
   queryClient.setQueryData(["task", "open", "team"], {
     pages: [{ items: [alpha, { ...taskOf("t3", "Gamma"), rank: "1", version: 2 }], next_cursor: null }],

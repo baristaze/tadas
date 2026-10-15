@@ -15,11 +15,11 @@ from tadas.om.orchestrations.rules import advanced
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.types.orchestration import (
     Orchestration,
-    OrchestrationKind,
     OrchestrationStatus,
-    Step,
+    OrchestrationStep,
 )
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tasks.kinds import TasksOrchestrationKind
 from tadas.om.tasks.rules import RANK_SCALE_BOUND, needs_respace
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -35,6 +35,9 @@ async def drained(storage: TasksStorageInterface) -> datetime:
         await storage.purge_deleted(cut, [task_id for _, task_id in left])
     return cut
 
+
+INTERFACE = TasksStorageInterface
+"""The storage interface whose cross-tenant cases this suite holds."""
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
@@ -141,7 +144,7 @@ def make_task(
     )
 
 
-def make_record(kind: OrchestrationKind = OrchestrationKind.TASK_IMPORT) -> Orchestration:
+def make_record(kind: str = TasksOrchestrationKind.TASK_IMPORT) -> Orchestration:
     now = utcnow()
     actor = new_id()
     return Orchestration(
@@ -155,13 +158,13 @@ def make_record(kind: OrchestrationKind = OrchestrationKind.TASK_IMPORT) -> Orch
     )
 
 
-def step_of(record: Orchestration, cursor: int, *, finished: bool = False) -> Step:
+def step_of(record: Orchestration, cursor: int, *, finished: bool = False) -> OrchestrationStep:
     """The step a worker writes after `record`: the next cursor, conditioned
     on the version it read."""
     after = advanced(
         record, utcnow(), record.created_by, cursor=cursor, total=None, finished=finished
     )
-    return Step(record=after, expected_version=record.version)
+    return OrchestrationStep(record=after, expected_version=record.version)
 
 
 def record_row(org_id: UUID, record: Orchestration) -> OutboxRow:
@@ -230,7 +233,9 @@ class TaskStorageContract:
         org = new_id()
         record = await self._open(orchestrations, org)
         task = make_task()
-        stale = Step(record=step_of(record, 1).record, expected_version=record.version + 5)
+        stale = OrchestrationStep(
+            record=step_of(record, 1).record, expected_version=record.version + 5
+        )
         with pytest.raises(PreconditionFailed):
             await storage.create_tasks_in_step(org, [(task, (make_row(org, task),))], stale, ())
         assert await storage.read_task(org, task.id) is None
@@ -454,7 +459,7 @@ class TaskStorageContract:
     async def test_the_created_count_spans_every_tenant_and_every_state(
         self, storage: TasksStorageInterface
     ) -> None:
-        """The traffic figure the platform's size reads: tasks created at or
+        """The traffic figure the system's size reads: tasks created at or
         after the cut, in whichever tenant and whatever became of them since;
         a task created before the cut is not traffic of the window."""
         cut = utcnow()

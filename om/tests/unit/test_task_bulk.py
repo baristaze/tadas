@@ -8,17 +8,14 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of
-from contracts.factories import make_org
-from contracts.plans import ON_TEAM, FixedPlan
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.types.plan import Plan
+from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import Role, TenantContext
-from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, ValidationFailed
 from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
@@ -32,6 +29,10 @@ from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.bulk import BulkAction, PlanBound, SkippedTask, SkipReason
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+
+from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of
+from contracts.factories import make_org
+from contracts.plans import ON_TEAM, FixedPlan
 
 
 class CountingStorage(TasksStorageMemoryImpl):
@@ -57,7 +58,7 @@ class Stack:
         self.outbox = OutboxStorageMemoryImpl()
         self.storage = CountingStorage(self.outbox)
         self.members = Members()  # pyright: ignore[reportAbstractUsage] (a partial double)
-        relay = OutboxRelayImpl(self.outbox, EventStorageMemoryImpl(), infra.get_topics())
+        relay = OutboxRelayImpl(self.outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
         self.manager = build_tasks(
             self.storage,
             self.members,

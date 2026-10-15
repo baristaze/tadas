@@ -1,14 +1,14 @@
 ---
 name: ops-investigate
-description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes and the work items that failed for good, the pool, the queues and their dead letters, the providers (the sign-in and its webhook, billing, Slack), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
+description: "Investigate one environment of the system with a read-only credential: the alarms, the error rate, the latency, the outcomes, gauges, queues, and log lines each namespace's signals file names, the pool, the cost against the budget, and the system's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
 allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run tadas-ops size:*), Bash(sleep:*)
 ---
 
 # ops-investigate
 
 One environment, one window, one credential that can only read. The
-skill looks at every signal the platform emits and says what is wrong,
-how big the platform is, and which skill runs next. It changes
+skill looks at every signal the system emits and says what is wrong,
+how big the system is, and which skill runs next. It changes
 nothing.
 
 Read `../_shared/ops-preamble.md`, a path from this skill's folder,
@@ -22,7 +22,7 @@ file are there.
 `--env` is required; ask for it when missing. `--since` is the window,
 a duration ending now, one hour by default. `--request-id` narrows the
 look to one request across every signal. `--alarm` starts from one
-alarm by name and reads the platform's size before anything else.
+alarm by name and reads the system's size before anything else.
 
 `local` reads the compose stack's twins (Prometheus, Jaeger, GlitchTip,
 `docker compose logs`) and needs no cloud. The skill is testable with
@@ -52,18 +52,20 @@ the token has expired: stop, and name the refresh the preamble gives.
 The processes are `api` and `maintenance`, as
 `deployment/README.md` lists them. Each is an ECS service of that
 name in the cluster `tadas-<env>`, with the log group
-`/tadas/<env>/<process>`. The queues are `tadas-<env>-webhooks` (the
-identity provider's deliveries, which the API checked at
-`/webhooks/identity` and queued, and the payment processor's, checked
-at `/webhooks/stripe`) and `tadas-<env>-slack` (the calls from Slack
-the API checked and queued), each with a dead-letter queue named with
-`-dead` after it. The deliveries and Slack's calls come in through
-`/tadas/<env>/api`, and their handling is in `/tadas/<env>/maintenance`.
+`/tadas/<env>/<process>`.
+
+Before step 1, read every file in `../_shared/signals/`, a path from
+this skill's folder. Its `README.md` says what each heading holds, and
+each other file is one namespace or one process, the scaffold's and a
+copy's alike: a copy adds `<ns>.md` there for each namespace of its
+own. Step 3 reads their Alarms, step 5 their Outcomes, Gauges, and
+Queues, step 7 their Log lines, Kinds, and Commands, step 8 their
+Search, and the report their Report.
 
 1. Verify the credential as Role and credential states. Compute the
    window: `--since` back from now, as epoch seconds
    for the cloud and as a Prometheus range for local.
-2. Read the platform's size first:
+2. Read the system's size first:
 
    ```bash
    uv run tadas-ops size --env <env>
@@ -71,8 +73,8 @@ the API checked and queued), each with a dead-letter queue named with
 
    When it refuses the env file for holding the provisioner's token,
    stop, and give the person the line it printed: no later step runs,
-   and none sources the file. It prints tenants, users, and the tasks
-   and the events produced in the last day,
+   and none sources the file. It prints tenants, users, and the change events
+   produced in the last day,
    through `GET /v1/admin/size`
    with the env file's operator token (`uv run tadas-ops size --env <env>`,
    which leaves the traffic generator's own tenants out). The size is
@@ -80,7 +82,7 @@ the API checked and queued), each with a dead-letter queue named with
    the command prints how long ago it counted. A count older than ten
    minutes says the worker's sweep has stopped counting, which is a
    finding of its own; a `404` says no worker has counted in this
-   environment yet. A platform of one tenant and one user is the
+   environment yet. A system of one tenant and one user is the
    developer. Every finding below is read against this number and
    against whose traffic it was.
 3. Alarms. Cloud:
@@ -103,17 +105,11 @@ the API checked and queued), each with a dead-letter queue named with
    - running processes: the `up` targets again, one per process
    - the database's CPU and free storage: no local exporter; report
      them as not read
-   - work backlog: `max(tadas_work_oldest_ready_seconds)`, alarm above
-     600 (the item ready longest waited ten minutes: no worker claims)
-   - work dead letter: `max(tadas_work_failed_recently)`, alarm at 1 or
-     more (an item failed for good in the last fifteen minutes)
-   - outbox lag: `max(tadas_outbox_oldest_pending_seconds)`, alarm above
-     300 (the oldest row not yet relayed landed five minutes ago)
-   - outbox dead letter: `max(tadas_outbox_failed_recently)`, alarm at 1
-     or more (a row failed for good in the last fifteen minutes)
+   - each signals file's Alarms, by the condition and the threshold it
+     gives
 
-   The last four are the worker's sweep reads, one per pass; a local
-   stack whose worker is not running has none, which is "not read".
+   A gauge is a read of the worker's sweep, one per pass; a local stack
+   whose worker is not running has none, which is "not read".
    With `--alarm <name>`, start here and apply the first responder
    rule of step 11 before reading anything else.
 4. Request rate, error ratio, p95, by route. Cloud, the queries of the
@@ -170,61 +166,35 @@ the API checked and queued), each with a dead-letter queue named with
    ```bash
    set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -sG "$TADAS_PROMETHEUS_URL/api/v1/query" \
-     --data-urlencode 'query=sum by (route, status) (rate(tadas_http_requests_total[5m]))'
+     --data-urlencode 'query=sum by (route, status) (rate(tadas_http_requests_total[<since>]))'
    curl -sG "$TADAS_PROMETHEUS_URL/api/v1/query" \
-     --data-urlencode 'query=histogram_quantile(0.95, sum by (le, route) (rate(tadas_http_request_seconds_bucket[5m])))'
+     --data-urlencode 'query=histogram_quantile(0.95, sum by (le, route) (rate(tadas_http_request_seconds_bucket[<since>])))'
    ```
 
-5. Workers, queue, pool, cache: one counter carries every outcome,
-   `tadas_outcomes_total{subsystem, outcome}` (subsystems `worker`,
-   `work`, `outbox`, `queue`, `deliveries`, `cache`, `rate_limit`,
-   `admission`, `idempotency`, `orchestrations`, `leases`), read as `sum by (subsystem, outcome)
-   (increase(tadas_outcomes_total[<since>]))`. A work item that failed
-   for good counts `work`/`dead_letter`: its attempts ran out
-   (`worker`/`failed` beside it), or its handler was refused, a failure
-   no retry changes (`worker`/`refused`, a provider refusing the call
-   itself). Each one is an `ERROR` line in `/tadas/<env>/maintenance`,
-   `work item <id> (<kind>) in org <org> failed for good: <reason>`,
-   which step 7 finds; `work`/`requeued` counts the ones an operator
-   sent back. The long-running records
-   are `orchestrations`, one outcome per kind and state,
-   `<kind>_<state>`: `_running` when a record starts, `_parked` when a
-   step waits, `_resumed`, `_succeeded`, `_failed`, and `_cancelled`, a
-   person's end. The kinds are an import (`task_import_*`, which parks
-   on the plan's bound) and the daily cleanup of old done tasks
-   (`task_cleanup_*`, whose `_running` is the sweep opening an org's
-   day). A park on the plan is a tenant's own limit, not a finding. A
-   parked record is woken by the event that clears its reason
-   (`WAKE_PARKED`) or by a person; one that stays parked is read beside
-   the billing lines of step 8. A `_failed` is a bound of the file (a
-   person's to fix; the worker log line says which), or `defect`, a
-   step that still failed
-   on its item's last attempt, which the maintenance log names at level
-   `ERROR` with the record's id and the org's (`<kind> <id> in org
-   <org> failed: defect ...`), so step 7 finds it. A running record
-   whose `_succeeded` never follows (a cleanup, within a day) is a step
-   the queue keeps retrying: read the worker's `failed` outcomes beside
-   it. A lease on a resource counts `leases`/`granted`, then
-   `released`, `expired`, or `revoked`; a request that left its line
-   without one counts `request_expired` or `request_<why>` (`asked`,
-   `waiter_gone`, `refused`). The work queue and the outbox are Postgres
-   tables, and each sweep pass reads four numbers of them across every
-   tenant: `tadas_work_oldest_ready_seconds` (how long the item ready
-   longest has waited), `tadas_work_failed_recently` (items failed in the
-   last fifteen minutes and still failed),
-   `tadas_outbox_oldest_pending_seconds` (how long ago the oldest row not
-   yet relayed landed), and `tadas_outbox_failed_recently` (rows failed
-   for good in the last fifteen minutes). Locally they are gauges on
-   Prometheus. In the cloud they are metrics of the same names in `Tadas`
-   with no dimension, which the alarms `tadas-<env>-work-backlog`,
-   `-work-dead-letter`, `-outbox-lag`, and `-outbox-dead-letter` read,
-   filtered from the worker's sweep line:
+5. Outcomes, gauges, queues, the pool: one counter carries every
+   outcome, `tadas_outcomes_total{subsystem, outcome}`, read as
+   `sum by (subsystem, outcome) (increase(tadas_outcomes_total[<since>]))`.
+   A signals file's Outcomes says what each outcome of its subsystems
+   means. Two subsystems are the infrastructure's, the report's Pool
+   and cache: `storage` counts the pool's `checkout_timeout` and
+   `statement_timeout`, and `cache` its `hit`, `miss`, and
+   `unreachable`.
+
+   The gauges are every signals file's Gauges. Locally they are gauges
+   on Prometheus, read as `max(<gauge>)`. In the cloud they are metrics
+   of the same names in `Tadas` with no dimension, filtered from the
+   worker's sweep line, which the alarms read. One call reads them all,
+   with one query per gauge:
 
    ```bash
    aws cloudwatch get-metric-data --profile tadas-<env>-investigate \
      --start-time <start> --end-time <end> \
-     --metric-data-queries '[{"Id":"ready","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_oldest_ready_seconds"},"Period":60,"Stat":"Maximum"}},{"Id":"failed","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_failed_recently"},"Period":60,"Stat":"Maximum"}},{"Id":"outbox","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_outbox_oldest_pending_seconds"},"Period":60,"Stat":"Maximum"}},{"Id":"dead","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_outbox_failed_recently"},"Period":60,"Stat":"Maximum"}}]'
+     --metric-data-queries '[{"Id":"<id>","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"<gauge>"},"Period":60,"Stat":"Maximum"}}]'
    ```
+
+   The list holds one such query for each gauge, each with an `Id` of
+   its own: lowercase letters, digits, and underscores, starting with
+   a letter.
 
    The outcomes and the pool are one more call in the cloud: the
    counter by the dashboard's schema, the twin of the `sum by` above,
@@ -244,21 +214,15 @@ the API checked and queued), each with a dead-letter queue named with
    is the window's count. `pool` is read by its highest minute: the
    most connections the database held.
 
-   A backlog with the maintenance service at its desired count is a
-   worker that claims nothing: read its log for `claim failed`. An
-   outbox lag is a relay that keeps failing: its log names each attempt,
-   `outbox relay of <row id> (<kind>) failed on attempt <n>: <error>`.
-   An outbox dead letter is the last of those attempts: the log says
-   `outbox row <row id> (<kind>) failed for good after <n> attempts:
-   <error>`, and the org's diary holds an `outbox.row.failed` event that
-   names the row's kind and target.
-   A work item failed for good is step 7's line. The inbound queues'
-   depth and oldest age, and pool checkouts, have no metric of the
-   worker's; the cloud reads the pool from the database's connection
-   count, as above, and each queue and its dead letter from SQS:
+   An outcome, a gauge, or an alarm is read as its signals file says,
+   with the log line it names as the cause, which step 7 or step 8
+   finds. A queue's depth and oldest age, and pool checkouts, have no
+   metric of the worker's; the cloud reads the pool from the database's
+   connection count, as above, and each queue of every signals file's
+   Queues, with its dead letter, from SQS:
 
    ```bash
-   for q in webhooks webhooks-dead slack slack-dead; do
+   for q in <queue> <queue>-dead; do
      url="$(aws sqs get-queue-url --queue-name tadas-<env>-$q \
        --query QueueUrl --output text --profile tadas-<env>-investigate)"
      aws sqs get-queue-attributes --queue-url "$url" --profile tadas-<env>-investigate \
@@ -266,13 +230,10 @@ the API checked and queued), each with a dead-letter queue named with
    done
    ```
 
-   A message in a `-dead` queue is a delivery the worker could not
-   handle after its retries: a finding, with the queue's name. The
-   worker counts each delivery it handles as `deliveries`/`<outcome>`
-   (`applied`, `duplicate`, `unowned`, `malformed`, `failed`), and each
-   call from Slack as `slack_inbound`/`<outcome>`; a `failed` stays on
-   the queue and comes back. Cloud
-   also reads the running count against the desired count:
+   with every queue the signals files name in the list, each followed
+   by its `-dead`. A message in a `-dead` queue is one its consumer
+   could not handle after its retries: a finding, with the queue's
+   name. Cloud also reads the running count against the desired count:
 
    ```bash
    aws ecs describe-services --cluster tadas-<env> \
@@ -352,100 +313,30 @@ the API checked and queued), each with a dead-letter queue named with
    `"request_id"` when `TADAS_LOG_JSON` is on.
    With `--request-id`, filter every source on it: `filter request_id
    = "<id>"` in the cloud, `grep` locally.
-   A failed work item is a finding with its id, its kind, its org, and
-   its reason, all off the `failed for good` line. The reason says
-   whether it is the provider's or a person's to fix; a
-   `DELETE_ACCOUNT` one leaves a deleted person's personal org in
-   place until it runs. Once the cause is fixed, a person sends it back
-   with `uv run tadas-ops work requeue --env <env> --org <org> <item>`,
-   in their own terminal: it signs them in with the second factor and
-   mints a `write` token for that one call. This skill names the
-   command in the report and never runs it.
-8. The providers. Each of the three says in its own log when it is
-   not configured, and the skill reads that, never a secret: the
-   secrets are denied to the role, and their names are enough. Cloud,
-   over the same window:
+   A line a signals file's Log lines names is read as that file says:
+   the finding it is, with the ids it carries, and a kind on it as the
+   Kinds of the file that names the kind say. When the file's Commands
+   give a person's command for that finding, the report names it for a
+   person to run in their own terminal; this skill never runs it.
+8. The lines a read of `ERROR` misses: a start line, a warning, an
+   access line. Each signals file's Search is one pattern, and one
+   query joins them all with `|`. Cloud, over the same window:
 
    ```bash
    aws logs start-query --profile tadas-<env>-investigate \
      --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
      --start-time <start> --end-time <end> \
-     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|TADAS_WORKOS_WEBHOOK_SECRET|webhooks\/identity (400|503)|identity delivery|payments=stripe|billing_unavailable|payments_key_refused|refused the runtime key|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
+     --query-string 'fields @timestamp, @log, @message | filter @message like /<every Search, joined with |>/ | sort @timestamp desc | limit 50'
    ```
 
-   What each line means, and the secret it points to:
-
-   - `identity provider: none (TADAS_WORKOS_API_KEY is not set)` and
-     `every sign-in through one answers 503`: nobody can sign in
-     through WorkOS. `tadas/<env>/workos_api_key` is `off`, or the
-     API's tasks started before it was written.
-   - `TADAS_WORKOS_API_KEY is not the API key of the WorkOS application`,
-     and the API's tasks stop at start: the secret holds a key WorkOS
-     refuses as the Tadas App's (the environment's API key, another
-     application's, or the other WorkOS environment's). The key belongs
-     on the Tadas App's own API keys tab. `the WorkOS credential check
-     did not finish` or `answered` is a warning only: WorkOS could not
-     say, and the API started.
-   - `TADAS_WORKOS_WEBHOOK_SECRET is not set` on `POST
-     /webhooks/identity`, a `503` there in the access lines of
-     `/tadas/<env>/api`: `tadas/<env>/workos_webhook_secret` is `off`, or
-     the API's tasks started before it was written. Every delivery is
-     refused, and WorkOS sends it again later.
-   - A `400` (`webhook_signature_invalid`) on `/webhooks/identity` in
-     the access lines of `/tadas/<env>/api`: the secret does not match
-     the signing secret of the endpoint in the WorkOS dashboard, so
-     every delivery is refused.
-   - `identity delivery <id> names no org` or `names org <id>, which
-     is gone` in `/tadas/<env>/maintenance`: one delivery about an org
-     this environment does not hold, dropped. Not a finding about a
-     secret.
-   - `payments=stripe (not configured)`, or `billing_unavailable` on a
-     request: checkouts answer 503 and every org keeps its plan.
-     `tadas/<env>/stripe_runtime_key` is `off`. `payments=stripe
-     (acct_..., <version>; the key lacks <resource>, ...)` names what
-     the runtime key could not read at start, and the log line `the
-     stripe runtime key lacks <resource> (group <group>)` says where
-     the dashboard's editor keeps it: the person adds it to the key,
-     which takes effect at once. `payments_key_refused` (503) on a
-     request, or `stripe refused the runtime key for <call>` in either
-     log group, is the same key refused on a call while the process
-     runs: revoked, or without that permission. Work that made the call
-     stays parked until the key is fixed. A `503` on
-     `/webhooks/stripe` is `tadas/<env>/stripe_webhook_secret`; a
-     `400` there is a signing secret that does not match the
-     endpoint's, and the processor retries it.
-   - `slack=off` on a start line, a `503` (`slack_unavailable`) on
-     `/v1/slack/installation` or `/webhooks/slack/*` in the access
-     lines of `/tadas/<env>/api`, or `slack post <id> dropped: no Slack app is
-     configured` in `/tadas/<env>/maintenance`: Slack is unconfigured,
-     so "Add to Slack" and `/tadas` answer nothing and posts go
-     nowhere. `tadas/<env>/slack_client_secret` or
-     `tadas/<env>/slack_signing_secret` is `off`, or `slack_client_id`
-     is empty in the environment root. `slack=web` is the healthy
-     start line.
-   - A `401` (`slack_signature_invalid`) on `/webhooks/slack/*` in the
-     access lines of `/tadas/<env>/api`: the signing secret does not match the app's,
-     so every command and event is refused.
-   - `slack install failed at Slack: <code>` in `/tadas/<env>/api`:
-     an install the app's client id or client secret could not
-     finish.
-   - `slack token of org <id> is revoked` or `slack channel of org
-     <id> is unusable` in `/tadas/<env>/maintenance`: one org's
-     installation is broken, not the environment's. The org installs
-     again, or types `/tadas connect` in a channel the app is in; not
-     a finding about a secret.
-
-   The start lines are written once, when a task starts, so a window
-   after the last rollout holds none: report "not in the window",
-   never "configured". A finding here names the secret and
-   `docs/runbooks/providers/<workos|stripe|slack>.md`; writing the
-   value is a person's step under their own sign-in, never this
-   skill's. Locally, `grep` the same lines in each process's own
-   output, as step 7 reads it; a laptop that sets no
-   `TADAS_WORKOS_API_KEY` signs people in by the local sign-in on
-   purpose, so `identity provider: none` there is not a finding, and
-   a laptop runs Slack's twin on purpose (`slack=twin`), which is not
-   one either.
+   What each line means, and the secret it points to, is its signals
+   file's Log lines. The skill reads a secret's name, never its value:
+   the secrets are denied to the role, and their names are enough. A
+   line written once, when a task starts, is not in a window after the
+   last rollout: report "not in the window", never "configured".
+   Writing a secret's value is a person's step under their own
+   sign-in, never this skill's. Locally, `grep` the same patterns in
+   each process's own output, as step 7 reads it.
 9. Traces. Cloud:
 
    ```bash
@@ -494,11 +385,11 @@ the API checked and queued), each with a dead-letter queue named with
 12. Write the report. Name the next skill: `ops-root-cause` with an
     org id when one tenant's rows explain it, `ops-watch` when the
     signal is still moving, `ops-infra-as-code` when the fix is a
-    resource, and, for a failed work item whose cause is fixed, the
-    requeue command of step 7 for a person to run. A session follows at
-    most 2 hops of Next. The skill it starts with is hop zero; the
-    report of the second hop still names its next skill, and the
-    session stops there and reports.
+    resource, and, for a finding whose cause is fixed, the command its
+    signals file gives a person to run, as step 7 names it. A session
+    follows at most 2 hops of Next. The skill it starts with is hop
+    zero; the report of the second hop still names its next skill, and
+    the session stops there and reports.
 
 ## What it never does
 
@@ -521,7 +412,7 @@ the API checked and queued), each with a dead-letter queue named with
 # Investigation: <env>, last <since>
 
 **Credential.** <profile and the Arn it resolved to, or local>
-**Size.** <tenants> tenants, <users> users, <n> tasks and <n> events in the last day, counted <age> ago
+**Size.** <tenants> tenants, <users> users, <n> change events in the last day, counted <age> ago
 
 ## Alarms
 
@@ -530,12 +421,9 @@ the API checked and queued), each with a dead-letter queue named with
 ## Signals
 
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route (cloud: one p95 <ms, or none>, every route together)
-- Workers: <outcomes per kind>, oldest ready item <age>, failed in the last fifteen minutes <n>, oldest pending outbox row <age>
-- Failed work items: <item id, kind, org id, reason; or none>
-- Orchestrations: imports <started, parked, succeeded, failed, cancelled>, cleanups <opened, succeeded, failed>, defects <record and org ids, or none>
-- Queues: webhooks <n> (dead <n>), slack <n> (dead <n>), deliveries <outcomes>; services api, maintenance <running>/<desired>
-- Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, webhook <configured | off: tadas/<env>/workos_webhook_secret | signature refused: tadas/<env>/workos_webhook_secret | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack <configured | off: tadas/<env>/slack_client_secret, tadas/<env>/slack_signing_secret, slack_client_id | signature refused: tadas/<env>/slack_signing_secret | not in the window>, broken installations <org ids, or none>
-- Pool and cache: <checkouts, timeouts, hits, misses>
+- Services: api, maintenance <running>/<desired> (cloud only)
+- Pool and cache: <connections, checkout and statement timeouts, hits, misses, unreachable>
+- <each Report line of every signals file, in the order of the files' names>
 - Errors: <count>, top issue <title> (<request id, or none>), or "not
   read: the environment names no error tracker"
 - Cost: <month to date> of <budget> USD (cloud only)
