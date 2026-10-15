@@ -1,5 +1,5 @@
--- The activity role: each tenant's event stream, and the cursor that says
--- where the stream stands.
+-- The activity role: each tenant's change-event stream, and the cursor that
+-- says where the stream stands.
 --
 -- The second fence. Both tables belong to a tenant and to nobody in it, and
 -- each carries a policy that holds the rows of one tenant. The tenant comes
@@ -12,35 +12,34 @@
 -- bypass, spelled in every policy as the empty UUID, and it belongs to the
 -- system login alone: the runtime login naming it reads nothing.
 
--- The event stream: append-only, one sequence per tenant, read by seq on a
--- reconnect. An event is (kind, target_id, payload) plus its provenance: the
--- actor, the request, and the app. The kind folds the namespace, the entity,
--- and the action into one name, and an audit entry is the same shape under
--- an audit kind. The not-null constraints of `kind` and `target_id` carry
--- the names every migrated database holds.
-CREATE TABLE activity.events (
+-- The change-event stream: append-only, one sequence per tenant, read by seq
+-- on a reconnect. A change event is (kind, target_id, payload) plus its
+-- provenance: the actor, the request, and the app. The kind folds the
+-- namespace, the entity, and the action into one name, and an audit entry is
+-- the same shape under an audit kind.
+CREATE TABLE activity.change_events (
     id uuid NOT NULL,
     org_id uuid NOT NULL,
     seq bigint NOT NULL,
-    kind text CONSTRAINT events_entity_not_null NOT NULL,
-    target_id uuid CONSTRAINT events_entity_id_not_null NOT NULL,
+    kind text NOT NULL,
+    target_id uuid NOT NULL,
     produced_at timestamptz NOT NULL,
     actor_id uuid NOT NULL,
     request_id uuid NOT NULL,
     app text NOT NULL,
     payload jsonb NOT NULL,
-    CONSTRAINT pk_events PRIMARY KEY (id)
+    CONSTRAINT pk_change_events PRIMARY KEY (id)
 );
-CREATE UNIQUE INDEX uq_events_org_id_seq ON activity.events (org_id, seq);
--- The trim, and the operator's count of the events of the last day, read
--- across every tenant by when an event was produced. A b-tree, not a BRIN:
--- the trim frees pages at the bottom of the heap, new events land there, and
--- the physical order stops following the time.
-CREATE INDEX ix_events_produced_at ON activity.events (produced_at);
+CREATE UNIQUE INDEX uq_change_events_org_id_seq ON activity.change_events (org_id, seq);
+-- The trim, and the operator's count of the change events of the last day,
+-- read across every tenant by when a change event was produced. A b-tree, not
+-- a BRIN: the trim frees pages at the bottom of the heap, new change events
+-- land there, and the physical order stops following the time.
+CREATE INDEX ix_change_events_produced_at ON activity.change_events (produced_at);
 
-ALTER TABLE activity.events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE activity.events FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_fence ON activity.events FOR ALL
+ALTER TABLE activity.change_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity.change_events FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON activity.change_events FOR ALL
     USING (
         org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
         OR (
@@ -59,18 +58,19 @@ CREATE POLICY tenant_fence ON activity.events FOR ALL
 -- The cursor row per tenant. The append takes the next seq as `head + 1`
 -- under the row's lock inside its own transaction, and `head` is the tenant's
 -- head seq the pong carries. The floor is the highest seq the trim has
--- removed from the stream, 0 while it has removed none: every event above
--- it, up to the head, is stored, and a read that starts below it is refused.
-CREATE TABLE activity.event_cursors (
+-- removed from the stream, 0 while it has removed none: every change event
+-- above it, up to the head, is stored, and a read that starts below it is
+-- refused.
+CREATE TABLE activity.change_event_cursors (
     org_id uuid NOT NULL,
     head bigint NOT NULL,
     floor bigint NOT NULL DEFAULT 0,
-    CONSTRAINT pk_event_cursors PRIMARY KEY (org_id)
+    CONSTRAINT pk_change_event_cursors PRIMARY KEY (org_id)
 );
 
-ALTER TABLE activity.event_cursors ENABLE ROW LEVEL SECURITY;
-ALTER TABLE activity.event_cursors FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant_fence ON activity.event_cursors FOR ALL
+ALTER TABLE activity.change_event_cursors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity.change_event_cursors FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_fence ON activity.change_event_cursors FOR ALL
     USING (
         org_id = NULLIF(current_setting('app.org_id', true), '')::uuid
         OR (
