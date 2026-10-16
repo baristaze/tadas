@@ -41,6 +41,21 @@ class BillingStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def next_customer_attempt(
+        self,
+        org_id: UUID,
+        attempt: int,
+        at: datetime,
+        by: UUID,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> bool:
+        """Moves the org's account from customer attempt `attempt` to the
+        next, stamped `at` and `by`, with the rows that announce it, in one
+        commit, while the account has no customer; False, with nothing
+        landed, when it has one, or is past `attempt` already."""
+        ...
+
+    @abstractmethod
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:
         """The mark of one delivery, when it was applied under this org."""
         ...

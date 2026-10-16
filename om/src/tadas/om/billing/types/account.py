@@ -46,12 +46,18 @@ class BillingAccount(Identifiable, Trackable):
         "quantity",
         "comped_plan",
         "synced_at",
+        "customer_attempt",
     )
     """All of it: the mirror is written from the processor's answer, the
     customer when the manager makes it, and the grant by an operator."""
 
     customer_id: str | None = None
     """Made the first time the org starts a checkout; None before."""
+    customer_attempt: int = 0
+    """Which attempt at the customer the next create is: its idempotency key
+    carries it. The processor answers a key it has seen with its first
+    answer for a day, a failure included, so a create it failed moves this
+    on, and the next start asks again under a key of its own."""
     subscription_id: str | None = None
     price_lookup_key: str | None = None
     status: SubscriptionStatus | None = None

@@ -172,12 +172,12 @@ class PaymentsStripeImpl(PaymentsInterface):
         return self._client.v1
 
     async def create_customer(
-        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+        self, org_id: UUID, name: str, idempotency_key: str, *, deadline: datetime | None = None
     ) -> str:
         async with translated("create customer", deadline):
             customer = await self._v1().customers.create_async(
                 {"name": name, "metadata": {ORG_METADATA_KEY: str(org_id)}},
-                {"idempotency_key": f"tadas-customer-{org_id}"},
+                {"idempotency_key": idempotency_key},
             )
         return str(customer.id)
 

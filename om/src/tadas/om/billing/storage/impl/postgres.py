@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -88,6 +88,35 @@ class BillingStoragePostgresImpl(PgStorageBase, BillingStorageInterface):
                 raise UniqueKeyTaken(
                     f"billing_accounts {account.id}: {constraint or 'a unique key'} is taken"
                 ) from error
+            return True
+
+    async def next_customer_attempt(
+        self,
+        org_id: UUID,
+        attempt: int,
+        at: datetime,
+        by: UUID,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> bool:
+        # The condition is in the statement: a start that made the customer,
+        # or moved the attempt, since this caller read the account wins.
+        stmt = (
+            update(BillingAccounts)
+            .where(
+                BillingAccounts.org_id == org_id,
+                BillingAccounts.customer_id.is_(None),
+                BillingAccounts.customer_attempt == attempt,
+            )
+            .values(customer_attempt=attempt + 1, updated_at=at, updated_by=by)
+            .returning(BillingAccounts.id)
+        )
+        async with self._session_for(BillingAccounts, org_id=org_id) as session:
+            if (await session.execute(stmt)).scalar_one_or_none() is None:
+                await session.rollback()
+                return False
+            for outbox_row in outbox_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
             return True
 
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:

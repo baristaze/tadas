@@ -51,6 +51,26 @@ class BillingStorageMemoryImpl(MemoryStorageBase, BillingStorageInterface):
                 self._deliveries[delivery.id] = (org_id, delivery)
             return True
 
+    async def next_customer_attempt(
+        self,
+        org_id: UUID,
+        attempt: int,
+        at: datetime,
+        by: UUID,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> bool:
+        async with self._lock:
+            held = self._rows(self._accounts, org_id)
+            if not held or held[0].customer_id is not None:
+                return False
+            if held[0].customer_attempt != attempt:
+                return False
+            moved = held[0].model_copy(
+                update={"customer_attempt": attempt + 1, "updated_at": at, "updated_by": by}
+            )
+            self._put(self._accounts, org_id, moved, outbox_rows)
+            return True
+
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:
         return self._get(self._deliveries, org_id, delivery_id)
 

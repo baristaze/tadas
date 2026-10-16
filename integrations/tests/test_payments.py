@@ -214,8 +214,8 @@ def test_the_twin_refuses_to_run_outside_a_local_environment() -> None:
 async def test_the_twins_deliveries_pass_the_check_the_real_ones_do() -> None:
     twin = PaymentsTwinImpl(environment="test")
     org = uuid4()
-    customer = await twin.create_customer(org, "Acme")
-    assert await twin.create_customer(org, "Acme") == customer
+    customer = await twin.create_customer(org, "Acme", f"tadas-customer-{org}")
+    assert await twin.create_customer(org, "Acme", f"tadas-customer-{org}") == customer
     url = await twin.create_checkout(
         customer_id=customer,
         org_id=org,
@@ -327,7 +327,7 @@ async def test_no_key_leaves_billing_unconfigured_and_every_call_says_so() -> No
         await payments.start()
         assert payments.configured is False
         with pytest.raises(PaymentsUnconfigured) as refused:
-            await payments.create_customer(uuid4(), "Acme")
+            await payments.create_customer(uuid4(), "Acme", "tadas-customer-x")
         assert refused.value.http_status == 503
         with pytest.raises(PaymentsUnconfigured):
             payments.verify_delivery(b"{}", "t=1,v1=00")
@@ -526,7 +526,10 @@ async def test_a_stripe_that_hangs_ends_at_the_deadline_not_after_its_retries() 
     try:
         with pytest.raises(BackendUnreachable) as raised:
             deadline = utcnow() + timedelta(seconds=0.3)
-            await asyncio.wait_for(payments.create_customer(uuid4(), "Acme", deadline=deadline), 5)
+            created = payments.create_customer(
+                uuid4(), "Acme", "tadas-customer-x", deadline=deadline
+            )
+            await asyncio.wait_for(created, 5)
     finally:
         await payments.close()
     waited = time.monotonic() - began
@@ -813,6 +816,25 @@ async def test_a_customer_the_processor_no_longer_knows_is_deleted_already() -> 
     payments = await _checked(set())
     payments._client = _Ends("canceled", missing=True)  # type: ignore[assignment]
     await payments.delete_customer("cus_1")
+
+
+async def test_a_customer_is_created_under_the_key_it_is_given() -> None:
+    payments = await _checked(set())
+    sent: list[tuple[Any, ...]] = []
+
+    class Created:
+        def __init__(self) -> None:
+            class Customers:
+                async def create_async(self, *args: Any) -> object:
+                    sent.append(args)
+                    return answered(stripe.Customer, {"id": "cus_1", "object": "customer"})
+
+            self.customers = Customers()
+            self.v1 = self
+
+    payments._client = Created()  # type: ignore[assignment]
+    assert await payments.create_customer(uuid4(), "Acme", "tadas-customer-x-1") == "cus_1"
+    assert [options for _, options in sent] == [{"idempotency_key": "tadas-customer-x-1"}]
 
 
 async def test_a_runtime_key_refused_the_end_of_an_account_is_unavailable_not_refused() -> None:

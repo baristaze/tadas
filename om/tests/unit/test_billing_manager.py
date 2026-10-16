@@ -4,8 +4,9 @@ any order; a cancellation that holds the plan to its period's end; a
 per-seat subscription that follows the members; an operator's grant; and
 the levers of the tasks and tenancy managers that read the plan."""
 
+import asyncio
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -14,6 +15,7 @@ import pytest
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.valkey import CacheValkeyImpl
+from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.impl.valkey import ValkeyConnection
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
@@ -154,6 +156,72 @@ async def test_an_org_starts_on_free_and_a_checkout_makes_its_customer_once(worl
     sessions = list(world.twin.sessions.values())
     assert [s["lookup_key"] for s in sessions] == ["tadas.pro.monthly", "tadas.team.monthly"]
     assert all(s["org_id"] == ctx.org_id for s in sessions)
+
+
+async def test_a_start_after_a_failed_customer_create_makes_the_customer_and_a_checkout(
+    world: World,
+) -> None:
+    """The processor answers a key with its first answer, a failure included:
+    the start after a failed create asks under the next key."""
+    ctx = await world.org("acme")
+    world.twin.fail_next("create_customer", BackendFailed("stripe", "create customer", "api_error"))
+    with pytest.raises(BackendFailed):
+        await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    start = await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    assert start.url.startswith("https://checkout.twin.invalid/")
+    account = (await world.billing.get_billing(ctx)).account
+    assert account is not None and account.customer_attempt == 1
+    assert world.twin.customer_keys == {f"tadas-customer-{ctx.org_id}-1": account.customer_id}
+    assert list(world.twin.failed_keys) == [f"tadas-customer-{ctx.org_id}"]
+
+
+async def test_a_customer_create_that_went_unanswered_is_asked_again_under_its_key(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The processor may have made the customer: the next start asks under
+    the same key, which answers with that customer if it did."""
+    ctx = await world.org("acme")
+
+    async def unanswered(*_: object, **__: object) -> str:
+        raise BackendUnreachable("stripe", "create customer", "ConnectError")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(world.twin, "create_customer", unanswered)
+        with pytest.raises(BackendUnreachable):
+            await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    assert (await world.billing.get_billing(ctx)).account is None
+    await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    assert list(world.twin.customer_keys) == [f"tadas-customer-{ctx.org_id}"]
+
+
+async def test_two_starts_at_once_make_one_customer_after_a_failed_create(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both starts reach the processor before either is answered, and both
+    ask under the attempt the failure moved to."""
+    ctx = await world.org("acme")
+    world.twin.fail_next("create_customer", BackendFailed("stripe", "create customer", "api_error"))
+    with pytest.raises(BackendFailed):
+        await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    create = world.twin.create_customer
+    both = asyncio.Barrier(2)
+
+    async def together(
+        org_id: UUID, name: str, idempotency_key: str, *, deadline: datetime | None = None
+    ) -> str:
+        await both.wait()
+        return await create(org_id, name, idempotency_key, deadline=deadline)
+
+    monkeypatch.setattr(world.twin, "create_customer", together)
+    starts = await asyncio.gather(
+        world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL),
+        world.billing.start_checkout(ctx, Plan.TEAM, 1, "Acme", SUCCESS, CANCEL),
+    )
+    assert len(world.twin.customers) == 1
+    account = (await world.billing.get_billing(ctx)).account
+    assert account is not None and account.customer_id in world.twin.customers
+    assert {s["customer"] for s in world.twin.sessions.values()} == {account.customer_id}
+    assert len({start.url for start in starts}) == 2
 
 
 async def test_max_starts_at_the_active_member_count_and_every_other_plan_at_one(

@@ -23,6 +23,7 @@ INTERFACE = BillingStorageInterface
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "create_account",
+        "next_customer_attempt",
         "purge_tenant",
         "read_account",
         "read_delivery",
@@ -141,6 +142,31 @@ class BillingStorageContract:
         stored = await storage.read_account(org)
         assert stored in (one, two)
 
+    async def test_a_customer_attempt_moves_once_and_never_past_a_customer(
+        self, storage: BillingStorageInterface
+    ) -> None:
+        """Two starts that drew the same failure move the attempt once; a
+        start that read an older attempt, or an account that has its
+        customer, moves nothing."""
+        org = new_id()
+        account = make_account(None)
+        await seed(storage, org, account)
+        at, by = utcnow(), new_id()
+        run = await race(
+            storage.next_customer_attempt(org, 0, at, by, (make_row(org, account),)),
+            storage.next_customer_attempt(org, 0, at, by, (make_row(org, account),)),
+        )
+        assert run.outcomes.count(True) == 1, run.summary()
+        moved = await storage.read_account(org)
+        assert moved is not None
+        assert (moved.customer_attempt, moved.updated_by) == (1, by)
+        assert moved.created_by == account.created_by
+        assert await storage.next_customer_attempt(org, 0, utcnow(), by, ()) is False
+        made = moved.model_copy(update={"customer_id": "cus_1"})
+        assert await storage.write_account(org, made, (make_row(org, made),)) is True
+        assert await storage.next_customer_attempt(org, 1, utcnow(), by, ()) is False
+        assert await storage.read_account(org) == made
+
     async def test_a_delivery_lands_once(self, storage: BillingStorageInterface) -> None:
         """The mark and the account share a commit: the first copy of a
         delivery writes both, the second writes neither."""
@@ -191,6 +217,11 @@ class BillingStorageContract:
         with pytest.raises(TenantMismatch):
             await storage.write_account(org_b, paying(account), (), make_delivery("evt_b"))
         assert await storage.read_account(org_a) == account
+        # An org with no account of its own moves no other org's attempt.
+        customerless = make_account(None)
+        await seed(storage, org_b, customerless)
+        assert await storage.next_customer_attempt(new_id(), 0, utcnow(), new_id(), ()) is False
+        assert await storage.read_account(org_b) == customerless
 
     async def test_purges_are_tenant_scoped(self, storage: BillingStorageInterface) -> None:
         """The purge of a tenant takes its rows and no other's; the purge of

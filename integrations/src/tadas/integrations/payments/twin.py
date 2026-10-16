@@ -7,9 +7,14 @@ does. Tests, and a single process on a laptop, run against it; it refuses
 to be built outside a local environment. Everything it makes names its
 provenance: every id carries `twin`.
 
+A call that carries an idempotency key is answered as the processor
+answers it: a key it has seen gets its first answer again, a failure
+included.
+
 Beyond the interface it offers what a test drives the processor with: a
 checkout completed by the customer, a subscription moved to another state
-or past its period, and the signed delivery of any event about one."""
+or past its period, a keyed call that fails, and the signed delivery of any
+event about one."""
 
 import json
 from collections.abc import Callable
@@ -56,7 +61,13 @@ class PaymentsTwinImpl(PaymentsInterface):
         """Every idempotency key a quantity change was made under, and the
         quantity it set: a repeated key changes nothing."""
         self.quantity_changes: list[tuple[str, int]] = []
-        self._customer_by_org: dict[UUID, str] = {}
+        self.customer_keys: dict[str, str] = {}
+        """Every idempotency key a customer was made under, and the customer:
+        a repeated key makes none."""
+        self.failed_keys: dict[str, Exception] = {}
+        """Every idempotency key whose first call failed, and the failure: a
+        later call with the key fails the same way."""
+        self._failing: dict[str, Exception] = {}
 
     @property
     def configured(self) -> bool:
@@ -76,14 +87,15 @@ class PaymentsTwinImpl(PaymentsInterface):
         return f"{prefix}_twin_{self._counter:06d}"
 
     async def create_customer(
-        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+        self, org_id: UUID, name: str, idempotency_key: str, *, deadline: datetime | None = None
     ) -> str:
-        existing = self._customer_by_org.get(org_id)
+        existing = self.customer_keys.get(idempotency_key)
         if existing is not None:
             return existing
+        self._answer("create_customer", idempotency_key)
         customer_id = self._id("cus")
         self.customers[customer_id] = {"name": name, "metadata": {ORG_METADATA_KEY: str(org_id)}}
-        self._customer_by_org[org_id] = customer_id
+        self.customer_keys[idempotency_key] = customer_id
         return customer_id
 
     async def create_checkout(
@@ -151,6 +163,7 @@ class PaymentsTwinImpl(PaymentsInterface):
             # The processor refuses an item that is not the subscription's.
             raise PaymentsRefused("update subscription quantity", "resource_missing")
         if idempotency_key not in self.quantity_keys:
+            self._answer("set_quantity", idempotency_key)
             self.quantity_keys[idempotency_key] = quantity
             found["quantity"] = quantity
             self.quantity_changes.append((subscription.id, quantity))
@@ -165,7 +178,6 @@ class PaymentsTwinImpl(PaymentsInterface):
         found = self.customers.pop(customer_id, None)
         if found is None:
             return
-        self._customer_by_org.pop(UUID(found["metadata"][ORG_METADATA_KEY]), None)
         for subscription in self.subscriptions.values():
             if subscription["customer"] == customer_id:
                 subscription["status"] = "canceled"
@@ -174,6 +186,23 @@ class PaymentsTwinImpl(PaymentsInterface):
         return verified(payload, signature, self._secret)
 
     # What a test drives the processor with.
+
+    def fail_next(self, operation: str, error: Exception) -> None:
+        """The next call of `operation` (`create_customer`, `set_quantity`)
+        under a key not yet seen raises `error`, and the key keeps it: every
+        later call with that key raises it again."""
+        self._failing[operation] = error
+
+    def _answer(self, operation: str, idempotency_key: str) -> None:
+        """Raises what the key first drew, when it drew a failure, or the
+        failure set for this call, which the key keeps from then on."""
+        failed = self.failed_keys.get(idempotency_key)
+        if failed is None:
+            failed = self._failing.pop(operation, None)
+            if failed is None:
+                return
+            self.failed_keys[idempotency_key] = failed
+        raise failed
 
     def complete_checkout(self, checkout_url: str) -> tuple[bytes, str]:
         """The customer pays: the session's subscription starts, active for one

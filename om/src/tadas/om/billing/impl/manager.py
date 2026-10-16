@@ -7,6 +7,7 @@ from pydantic import TypeAdapter
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.cache.read import ReadCache
+from tadas.infra.exceptions import BackendFailed
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.types import ProviderDelivery, ProviderSubscription
 from tadas.om.base import OmBase, new_id, utcnow
@@ -109,6 +110,15 @@ def cached_accounts(cache: CacheInterface, ttl: timedelta) -> ReadCache[BillingA
     return ReadCache(cache, TypeAdapter(BillingAccount | None), ttl)
 
 
+def customer_key(org_id: UUID, attempt: int) -> str:
+    """The idempotency key of a create of the org's customer: one for every
+    start at one attempt, so two that race make one customer, and another
+    once a create failed."""
+    if attempt == 0:
+        return f"tadas-customer-{org_id}"
+    return f"tadas-customer-{org_id}-{attempt}"
+
+
 def billing_of(account: BillingAccount | None, now: datetime) -> Billing:
     """The answer every read and every write of this namespace gives."""
     plan = effective_plan(account, now)
@@ -208,9 +218,17 @@ class BillingManagerImpl(BillingManagerInterface):
                 f"the org pays for {paid.value}; change the plan in the billing portal"
             )
         if account is None or account.customer_id is None:
-            customer_id = await self._payments.create_customer(
-                ctx.org_id, org_name, deadline=ctx.deadline
-            )
+            attempt = account.customer_attempt if account is not None else 0
+            try:
+                customer_id = await self._payments.create_customer(
+                    ctx.org_id, org_name, customer_key(ctx.org_id, attempt), deadline=ctx.deadline
+                )
+            except BackendFailed:
+                # The processor keeps this failure as the key's answer for a
+                # day; the next start asks under the next key. A call that went
+                # unanswered keeps its key: its retry gets whatever happened.
+                await self._next_customer_attempt(ctx, account, attempt)
+                raise
             account = await self._with_customer(ctx, account, customer_id)
         assert account.customer_id is not None
         url = await self._payments.create_checkout(
@@ -448,13 +466,44 @@ class BillingManagerImpl(BillingManagerInterface):
             await self._relay.relay_all(ctx.org_id, rows)
             return created
         # Another start raced this one and made the account first; the
-        # processor's idempotency key made them one customer.
+        # processor's idempotency key, one for every start at one attempt,
+        # made them one customer.
         stored = await self._storage.read_account(ctx.org_id)
         if stored is None:
             raise TenantMismatch(f"billing_accounts {created.id} is not in {ctx.org_id}")
         if stored.customer_id is None:
             return await self._with_customer(ctx, stored, customer_id)
         return stored
+
+    async def _next_customer_attempt(
+        self, ctx: TenantContext, account: BillingAccount | None, attempt: int
+    ) -> None:
+        """Moves the org past a customer attempt the processor failed: the
+        account is made at the next attempt when the org has none, and moved
+        to it otherwise, unless another start made the customer or moved it
+        first."""
+        now = self._clock()
+        if account is None:
+            created = BillingAccount(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=ctx.user_id,
+                updated_by=ctx.user_id,
+                customer_attempt=attempt + 1,
+            )
+            rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
+            if await self._storage.create_account(ctx.org_id, created, rows):
+                await self._accounts.bump(ctx.org_id)
+                await self._relay.relay_all(ctx.org_id, rows)
+                return
+            account = await self._storage.read_account(ctx.org_id)
+            if account is None:
+                return
+        rows = self._rows(ctx, account)
+        if await self._storage.next_customer_attempt(ctx.org_id, attempt, now, ctx.user_id, rows):
+            await self._accounts.bump(ctx.org_id)
+            await self._relay.relay_all(ctx.org_id, rows)
 
     @staticmethod
     def _rows(ctx: ProvenanceScope, account: BillingAccount) -> tuple[OutboxRow, ...]:
