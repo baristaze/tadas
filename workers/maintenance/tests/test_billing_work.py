@@ -191,18 +191,16 @@ async def test_a_seat_count_whose_first_change_failed_lands_on_the_next_claim(
     twin = twin_of(container)
     twin.fail_next("set_quantity", BackendFailed("stripe", "update subscription quantity", "500"))
     handler = seats_handler(container)
-    runs: list[str] = []
+    [subscription] = twin.subscriptions.values()
+    runs: list[tuple[str, int]] = []
     for attempt in (1, 2, 3):
         claimed = item.model_copy(update={"claim_token": new_id(), "attempts": attempt})
         try:
             await handler.handle(service, claimed)
-            runs.append("done")
+            runs.append(("done", subscription["quantity"]))
         except BackendFailed:
-            runs.append("BackendFailed")
-        if attempt == 2:
-            [subscription] = twin.subscriptions.values()
-            assert subscription["quantity"] == 2
-    assert runs == ["BackendFailed", "done", "done"]
+            runs.append(("BackendFailed", subscription["quantity"]))
+    assert runs == [("BackendFailed", 1), ("done", 2), ("done", 2)]
     assert [quantity for _, quantity in twin.quantity_changes] == [2]
     billing = await container.managers.billing.get_billing(ctx)
     assert billing.account is not None and billing.account.quantity == 2
