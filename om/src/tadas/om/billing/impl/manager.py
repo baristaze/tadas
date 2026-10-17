@@ -454,13 +454,15 @@ class BillingManagerImpl(BillingManagerInterface):
         if account is not None:
             account_id = account.id
             rows = self._rows(ctx, account)
-            if await self._storage.record_customer(
-                ctx.org_id, customer_id, now, ctx.user_id, rows
-            ):
+            if await self._storage.record_customer(ctx.org_id, customer_id, now, ctx.user_id, rows):
                 await self._accounts.bump(ctx.org_id)
                 await self._relay.relay_all(ctx.org_id, rows)
                 return account.model_copy(
-                    update={"customer_id": customer_id, "updated_at": now, "updated_by": ctx.user_id}
+                    update={
+                        "customer_id": customer_id,
+                        "updated_at": now,
+                        "updated_by": ctx.user_id,
+                    }
                 )
         else:
             created = BillingAccount(
