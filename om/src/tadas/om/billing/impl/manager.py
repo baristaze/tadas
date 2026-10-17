@@ -7,7 +7,7 @@ from pydantic import TypeAdapter
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.cache.read import ReadCache
-from tadas.infra.exceptions import BackendFailed
+from tadas.infra.exceptions import BackendFailed, InfraException
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.types import ProviderDelivery, ProviderSubscription
 from tadas.om.base import OmBase, new_id, utcnow
@@ -223,11 +223,13 @@ class BillingManagerImpl(BillingManagerInterface):
                 customer_id = await self._payments.create_customer(
                     ctx.org_id, org_name, customer_key(ctx.org_id, attempt), deadline=ctx.deadline
                 )
-            except BackendFailed:
-                # The processor keeps this failure as the key's answer for a
-                # day; the next start asks under the next key. A call that went
-                # unanswered keeps its key: its retry gets whatever happened.
-                await self._next_customer_attempt(ctx, account, attempt)
+            except InfraException as error:
+                # Translated by its code. A failure the processor answered is
+                # the key's answer for a day: the next start asks under the
+                # next key. A call that went unanswered keeps its key: its
+                # retry gets whatever happened.
+                if error.code == BackendFailed.code:
+                    await self._next_customer_attempt(ctx, account, attempt)
                 raise
             account = await self._with_customer(ctx, account, customer_id)
         assert account.customer_id is not None
