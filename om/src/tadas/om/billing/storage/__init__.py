@@ -56,6 +56,21 @@ class BillingStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def record_customer(
+        self,
+        org_id: UUID,
+        customer_id: str,
+        at: datetime,
+        by: UUID,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> bool:
+        """Names `customer_id` as the customer on the org's account, stamped
+        `at` and `by`, with the rows that announce it, in one commit, while
+        the account has no customer; False, with nothing landed, when it has
+        one, and the caller reads it."""
+        ...
+
+    @abstractmethod
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:
         """The mark of one delivery, when it was applied under this org."""
         ...

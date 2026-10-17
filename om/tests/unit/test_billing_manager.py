@@ -12,15 +12,17 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import stripe
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.valkey import CacheValkeyImpl
-from tadas.infra.exceptions import BackendFailed, BackendUnreachable
+from tadas.infra.exceptions import BackendFailed, BackendUnreachable, InfraException
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.impl.valkey import ValkeyConnection
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.payments.deliveries import sign
+from tadas.integrations.payments.stripe import translated
 from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions, cached_accounts
@@ -222,6 +224,63 @@ async def test_two_starts_at_once_make_one_customer_after_a_failed_create(
     assert account is not None and account.customer_id in world.twin.customers
     assert {s["customer"] for s in world.twin.sessions.values()} == {account.customer_id}
     assert len({start.url for start in starts}) == 2
+
+
+@pytest.mark.parametrize("failed_before", [False, True])
+async def test_a_start_while_another_creates_the_customer_keeps_the_key(
+    world: World, monkeypatch: pytest.MonkeyPatch, failed_before: bool
+) -> None:
+    """A second request under a key the processor is still running draws its
+    409, which the client raises as not right now: the attempt stays, and
+    the org ends with one customer, the one its account names."""
+    ctx = await world.org("acme")
+    attempt = 0
+    if failed_before:
+        failed = BackendFailed("stripe", "create customer", "api_error")
+        world.twin.fail_next("create_customer", failed)
+        with pytest.raises(BackendFailed):
+            await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+        attempt = 1
+    create = world.twin.create_customer
+    running: set[str] = set()
+    calls: list[str] = []
+    release = asyncio.Event()
+
+    async def processor(
+        org_id: UUID, name: str, idempotency_key: str, *, deadline: datetime | None = None
+    ) -> str:
+        calls.append(idempotency_key)
+        if idempotency_key in running:
+            async with translated("create customer"):
+                raise stripe.APIError("another request is in progress", http_status=409)
+        running.add(idempotency_key)
+        try:
+            if len(calls) == 1:
+                await release.wait()
+            return await create(org_id, name, idempotency_key, deadline=deadline)
+        finally:
+            running.discard(idempotency_key)
+
+    monkeypatch.setattr(world.twin, "create_customer", processor)
+    first = asyncio.create_task(
+        world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    )
+    await asyncio.sleep(0)
+    refused: list[InfraException] = []
+    for _ in range(2):
+        try:
+            await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+        except InfraException as error:
+            refused.append(error)
+    release.set()
+    await first
+    await world.billing.start_checkout(ctx, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
+    account = (await world.billing.get_billing(ctx)).account
+    assert len(world.twin.customers) == 1, list(world.twin.customers)
+    assert account is not None and account.customer_id in world.twin.customers
+    assert {s["customer"] for s in world.twin.sessions.values()} == {account.customer_id}
+    assert account.customer_attempt == attempt
+    assert [(e.http_status, e.code) for e in refused] == [(503, "unavailable")] * 2
 
 
 async def test_max_starts_at_the_active_member_count_and_every_other_plan_at_one(

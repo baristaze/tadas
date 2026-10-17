@@ -71,6 +71,24 @@ class BillingStorageMemoryImpl(MemoryStorageBase, BillingStorageInterface):
             self._put(self._accounts, org_id, moved, outbox_rows)
             return True
 
+    async def record_customer(
+        self,
+        org_id: UUID,
+        customer_id: str,
+        at: datetime,
+        by: UUID,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> bool:
+        async with self._lock:
+            held = self._rows(self._accounts, org_id)
+            if not held or held[0].customer_id is not None:
+                return False
+            named = held[0].model_copy(
+                update={"customer_id": customer_id, "updated_at": at, "updated_by": by}
+            )
+            self._put(self._accounts, org_id, named, outbox_rows)
+            return True
+
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:
         return self._get(self._deliveries, org_id, delivery_id)
 

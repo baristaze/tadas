@@ -933,6 +933,14 @@ KEY_TEXT = "Invalid API Key provided: rk_test_****abcd"
             "unavailable",
         ),
         (stripe.APIConnectionError("reset"), BackendUnreachable, 503, "unavailable"),
+        # Another request under the same key is still running: Stripe's 409,
+        # which the SDK raises as an `APIError`.
+        (
+            stripe.APIError("another request is in progress", http_status=409),
+            ProviderUnavailable,
+            503,
+            "unavailable",
+        ),
         # The request itself.
         (
             stripe.InvalidRequestError("bad", "items", code="parameter_invalid", http_status=400),

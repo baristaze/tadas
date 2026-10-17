@@ -119,6 +119,31 @@ class BillingStoragePostgresImpl(PgStorageBase, BillingStorageInterface):
             await session.commit()
             return True
 
+    async def record_customer(
+        self,
+        org_id: UUID,
+        customer_id: str,
+        at: datetime,
+        by: UUID,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> bool:
+        # The condition is in the statement: a start that named a customer
+        # since this caller read the account wins.
+        stmt = (
+            update(BillingAccounts)
+            .where(BillingAccounts.org_id == org_id, BillingAccounts.customer_id.is_(None))
+            .values(customer_id=customer_id, updated_at=at, updated_by=by)
+            .returning(BillingAccounts.id)
+        )
+        async with self._session_for(BillingAccounts, org_id=org_id) as session:
+            if (await session.execute(stmt)).scalar_one_or_none() is None:
+                await session.rollback()
+                return False
+            for outbox_row in outbox_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+            return True
+
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:
         stmt = select(BillingDeliveries).where(
             BillingDeliveries.org_id == org_id, BillingDeliveries.id == delivery_id

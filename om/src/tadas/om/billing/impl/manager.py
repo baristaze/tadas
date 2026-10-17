@@ -226,8 +226,9 @@ class BillingManagerImpl(BillingManagerInterface):
             except InfraException as error:
                 # Translated by its code. A failure the processor answered is
                 # the key's answer for a day: the next start asks under the
-                # next key. A call that went unanswered keeps its key: its
-                # retry gets whatever happened.
+                # next key. A call that went unanswered, or met another under
+                # its key still running, keeps its key: its retry gets
+                # whatever happened.
                 if error.code == BackendFailed.code:
                     await self._next_customer_attempt(ctx, account, attempt)
                 raise
@@ -446,33 +447,40 @@ class BillingManagerImpl(BillingManagerInterface):
         self, ctx: TenantContext, account: BillingAccount | None, customer_id: str
     ) -> BillingAccount:
         """The org's account, now naming its customer: created the first time,
-        or, when a grant made the account first, updated with it."""
+        or, when a grant or a failed create made the account first, updated
+        with it while it names none. A start that named one first wins, and
+        this one takes the stored customer."""
         now = self._clock()
         if account is not None:
-            updated = account.model_copy(
-                update={"customer_id": customer_id, "updated_at": now, "updated_by": ctx.user_id}
+            account_id = account.id
+            rows = self._rows(ctx, account)
+            if await self._storage.record_customer(
+                ctx.org_id, customer_id, now, ctx.user_id, rows
+            ):
+                await self._accounts.bump(ctx.org_id)
+                await self._relay.relay_all(ctx.org_id, rows)
+                return account.model_copy(
+                    update={"customer_id": customer_id, "updated_at": now, "updated_by": ctx.user_id}
+                )
+        else:
+            created = BillingAccount(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=ctx.user_id,
+                updated_by=ctx.user_id,
+                customer_id=customer_id,
             )
-            await self._write(ctx, updated)
-            return updated
-        created = BillingAccount(
-            id=new_id(),
-            created_at=now,
-            updated_at=now,
-            created_by=ctx.user_id,
-            updated_by=ctx.user_id,
-            customer_id=customer_id,
-        )
-        rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
-        if await self._storage.create_account(ctx.org_id, created, rows):
-            await self._accounts.bump(ctx.org_id)
-            await self._relay.relay_all(ctx.org_id, rows)
-            return created
-        # Another start raced this one and made the account first; the
-        # processor's idempotency key, one for every start at one attempt,
-        # made them one customer.
+            account_id = created.id
+            rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
+            if await self._storage.create_account(ctx.org_id, created, rows):
+                await self._accounts.bump(ctx.org_id)
+                await self._relay.relay_all(ctx.org_id, rows)
+                return created
+        # Another start made the account, or named its customer, first.
         stored = await self._storage.read_account(ctx.org_id)
         if stored is None:
-            raise TenantMismatch(f"billing_accounts {created.id} is not in {ctx.org_id}")
+            raise TenantMismatch(f"billing_accounts {account_id} is not in {ctx.org_id}")
         if stored.customer_id is None:
             return await self._with_customer(ctx, stored, customer_id)
         return stored
