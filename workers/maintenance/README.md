@@ -40,7 +40,7 @@ side, started in `main.py`.
   the installation broken when Slack refuses the channel for good.
 - **`SYNC_SEATS`** reads an org's active members when it runs and holds a
   Max subscription's quantity to them, with no proration and under a key
-  made of the item and the count, so a retried run is one change.
+  made of the item's claim and the count, so a late or second run converges.
 - **An orchestration step** does one batch of its record: an import makes
   the tasks of the next hundred rows, a cleanup archives the next five
   hundred old done tasks. A wake-up resumes the org's records parked for
