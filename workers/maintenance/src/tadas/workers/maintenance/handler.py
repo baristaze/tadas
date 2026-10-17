@@ -39,11 +39,14 @@ class NoopHandlerImpl(WorkHandlerInterface):
 class SyncSeatsHandlerImpl(WorkHandlerInterface):
     """Reads the org's active members when it runs, never when it was asked
     for, and holds the subscription to that count. Items that run late, twice,
-    or out of order converge on the members the org has then; the processor
-    call carries a key made of the item and the count, so a retried run is
-    one change. A processor out of reach, marked out, or refusing the
-    process's own key, parks the item; one that refuses the request fails it
-    at once."""
+    or out of order converge on the members the org has then. The processor
+    call carries a key made of the item's claim and the count: the client's
+    own retries within one run share it, and a run the queue retries asks
+    again, since the processor answers a key it has seen with its first
+    answer, a failure included. A run whose change already landed reads the
+    count there and asks nothing. A processor out of reach, marked out, or
+    refusing the process's own key, parks the item; one that refuses the
+    request fails it at once."""
 
     REQUIRES: ClassVar[tuple[Permission, ...]] = (Permission.READ, Permission.MANAGE_MEMBERS)
     """`count_members` reads; `sync_seats` manages members."""
@@ -61,4 +64,10 @@ class SyncSeatsHandlerImpl(WorkHandlerInterface):
     async def handle(self, ctx: TenantContext, item: WorkItem) -> None:
         seats = await self._tenancy.members.count_members(ctx)
         async with self._payments_calls.calls():
-            await self._billing.sync_seats(ctx, seats, f"tadas-seats-{item.id}-{seats}")
+            await self._billing.sync_seats(ctx, seats, seats_key(item, seats))
+
+
+def seats_key(item: WorkItem, seats: int) -> str:
+    """The key of one claim's change: each claim of the item mints its own
+    token, so each run of it is a request of its own."""
+    return f"tadas-seats-{item.id}-{item.claim_token}-{seats}"

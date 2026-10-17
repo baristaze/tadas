@@ -72,7 +72,7 @@ or removed on Max lands a second outbox row, `work.SYNC_SEATS`, in the
 change's commit, on the path a reminder and a Slack post take. The
 handler reads the member count when it runs, so items that
 run late or twice converge, and sets the quantity with
-`proration_behavior=none` under a key made of the item and the count: a
+`proration_behavior=none` under a key made of the item's claim and the count: a
 seat is billed from the next invoice, with no prorated line per change
 and nothing to credit when one is added and removed within a period.
 `WORK_ENQUEUE_PERMISSIONS` names the permission each kind is asked for

@@ -182,6 +182,30 @@ async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: P
     assert billing.account is not None and billing.account.quantity == 2
 
 
+async def test_a_seat_count_whose_first_change_failed_lands_on_the_next_claim(
+    tmp_path: Path,
+) -> None:
+    """The processor answers a key it has seen with its first answer, a
+    failure included: each claim of the item asks under a key of its own."""
+    container, ctx, service, item = await seats_to_sync(tmp_path)
+    twin = twin_of(container)
+    twin.fail_next("set_quantity", BackendFailed("stripe", "update subscription quantity", "500"))
+    handler = seats_handler(container)
+    [subscription] = twin.subscriptions.values()
+    runs: list[tuple[str, int]] = []
+    for attempt in (1, 2, 3):
+        claimed = item.model_copy(update={"claim_token": new_id(), "attempts": attempt})
+        try:
+            await handler.handle(service, claimed)
+            runs.append(("done", subscription["quantity"]))
+        except BackendFailed:
+            runs.append(("BackendFailed", subscription["quantity"]))
+    assert runs == [("BackendFailed", 1), ("done", 2), ("done", 2)]
+    assert [quantity for _, quantity in twin.quantity_changes] == [2]
+    billing = await container.managers.billing.get_billing(ctx)
+    assert billing.account is not None and billing.account.quantity == 2
+
+
 @pytest.mark.parametrize(
     ("error", "outcome"),
     [

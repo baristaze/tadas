@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Index
-from sqlalchemy.orm import Mapped
+from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import Base, IdentifiableMixin, TrackableMixin
 
@@ -21,3 +21,4 @@ class BillingAccounts(IdentifiableMixin, TrackableMixin, Base):
     quantity: Mapped[int]
     comped_plan: Mapped[str | None]
     synced_at: Mapped[datetime | None]
+    customer_attempt: Mapped[int] = mapped_column(server_default="0")

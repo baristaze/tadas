@@ -45,11 +45,12 @@ class PaymentsInterface(ABC):
 
     @abstractmethod
     async def create_customer(
-        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+        self, org_id: UUID, name: str, idempotency_key: str, *, deadline: datetime | None = None
     ) -> str:
-        """The processor's customer for one org, created once: the call carries
-        an idempotency key derived from the org, so two starts that race make
-        one customer. The customer's metadata names the org."""
+        """The processor's customer for one org. The call carries
+        `idempotency_key`, so two starts that race with one key make one
+        customer; the processor answers a key it has seen with its first
+        answer, a failure included. The customer's metadata names the org."""
         ...
 
     @abstractmethod

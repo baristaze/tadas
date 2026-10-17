@@ -8,7 +8,7 @@ plan bills.
 
 - `SYNC_SEATS`: a per-seat plan's quantity follows the org's active
   members, read when it runs, with no proration and under a key made of
-  the item and the count. While the processor is out of reach, or
+  the item's claim and the count. While the processor is out of reach, or
   refuses the system's key, the item parks and spends no attempt; one
   the processor refuses for the request itself fails at once. One that
   failed for good leaves the subscription billing the old count until

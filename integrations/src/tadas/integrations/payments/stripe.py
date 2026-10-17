@@ -65,6 +65,10 @@ PORTAL_DESIRED_KEY = "portal"
 """The metadata the bootstrap stamps on the one portal configuration it
 manages (`tadas_desired_key`), which a portal session names."""
 
+CONFLICT = 409
+"""The processor's answer while another request under the same idempotency
+key is still running: it kept no answer for the key yet."""
+
 
 class PaymentsStripeImpl(PaymentsInterface):
     def __init__(
@@ -172,12 +176,12 @@ class PaymentsStripeImpl(PaymentsInterface):
         return self._client.v1
 
     async def create_customer(
-        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+        self, org_id: UUID, name: str, idempotency_key: str, *, deadline: datetime | None = None
     ) -> str:
         async with translated("create customer", deadline):
             customer = await self._v1().customers.create_async(
                 {"name": name, "metadata": {ORG_METADATA_KEY: str(org_id)}},
-                {"idempotency_key": f"tadas-customer-{org_id}"},
+                {"idempotency_key": idempotency_key},
             )
         return str(customer.id)
 
@@ -375,6 +379,10 @@ async def translated(operation: str, deadline: datetime | None = None) -> AsyncI
       until a person fixes the key.
     - A throttle (429, after the SDK's own retries) is not right now:
       `ProviderUnavailable`.
+    - A conflict (409, after the SDK's own retries: another request under
+      the same idempotency key still running) is not right now too, never a
+      failure: the processor kept no answer for the key, and the first
+      request may still land.
     - A refusal of the request (400, 402, 404, an idempotency key reused
       for another request) is the call's: `PaymentsRefused`, and the same
       request gets the same answer.
@@ -409,5 +417,11 @@ async def translated(operation: str, deadline: datetime | None = None) -> AsyncI
         reason = error.code or type(error).__name__
         log.warning("stripe refused %s: %s", operation, reason)
         raise PaymentsRefused(operation, reason) from None
+    except stripe.APIError as error:
+        if error.http_status == CONFLICT:
+            log.warning("stripe is still running another %s under its key", operation)
+            running = f"the payment processor is still running another {operation} under its key"
+            raise ProviderUnavailable(running) from None
+        raise BackendFailed("stripe", operation, error.code or type(error).__name__) from None
     except stripe.StripeError as error:
         raise BackendFailed("stripe", operation, error.code or type(error).__name__) from None
