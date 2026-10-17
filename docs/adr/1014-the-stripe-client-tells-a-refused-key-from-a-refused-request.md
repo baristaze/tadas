@@ -21,6 +21,7 @@ The Stripe client tells the two apart on every call:
 | `401`, `403` (the key) | `PaymentsKeyRefused`, a `ProviderUnavailable` | `503`, `payments_key_refused` |
 | `429`, after the SDK's own retries | `ProviderUnavailable` | `503`, `unavailable` |
 | No answer | `BackendUnreachable` | `503`, `unavailable` |
+| `409`, after the SDK's own retries (another request under the key still running) | `ProviderUnavailable` | `503`, `unavailable` |
 | `400`, `402`, `404`, an idempotency key reused (the request) | `PaymentsRefused` | `502`, `payments_refused` |
 | `5xx`, anything else | `BackendFailed` | `500`, `backend_failed` |
 
