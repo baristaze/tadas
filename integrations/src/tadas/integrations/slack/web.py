@@ -52,6 +52,7 @@ log = logging.getLogger(__name__)
 
 AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 
+
 def retry_after_of(header: str | None) -> timedelta:
     """How long Slack asks a throttled caller to wait, from `Retry-After`:
     whole seconds, or an HTTP date. An absent header, or one that is anything
