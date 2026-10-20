@@ -1859,6 +1859,7 @@ dependencies = [
     { name = "slack-sdk" },
     { name = "stripe" },
     { name = "tadas-infra" },
+    { name = "tadas-timing" },
     { name = "workos" },
 ]
 
@@ -1871,6 +1872,7 @@ requires-dist = [
     { name = "slack-sdk", specifier = ">=3.36" },
     { name = "stripe", specifier = "==15.6.1" },
     { name = "tadas-infra", editable = "infra" },
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "workos", specifier = "==10.4.0" },
 ]
 

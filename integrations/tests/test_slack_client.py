@@ -31,6 +31,7 @@ from tadas.infra.deadline import PASSED
 from tadas.infra.exceptions import InfraException
 from tadas.integrations.slack import (
     BOT_SCOPES,
+    DEFAULT_RETRY_AFTER,
     SlackChannelUnusable,
     SlackFailed,
     SlackNotConfigured,
@@ -51,7 +52,7 @@ from tadas.integrations.slack.requests import (
     verify,
 )
 from tadas.integrations.slack.twin import TWIN_SIGNING_SECRET, SlackTwinImpl
-from tadas.integrations.slack.web import DEFAULT_RETRY_AFTER, SlackWebImpl, retry_after_of
+from tadas.integrations.slack.web import SlackWebImpl, retry_after_of
 
 TOKEN = "xoxe.xoxb-000-000-not-a-real-token"
 SECRET = "8f742231b10e8888abcd99yyyzzz85a5"
@@ -61,7 +62,10 @@ CLIENT_SECRET = "not-a-real-client-secret"
 def test_slacks_answers_become_the_errors_a_caller_decides_on() -> None:
     limited = error_for("ratelimited", timedelta(seconds=7))
     assert isinstance(limited, SlackRateLimited) and limited.retry_after == timedelta(seconds=7)
-    assert isinstance(error_for("ratelimited"), SlackRateLimited)
+    unsaid = error_for("ratelimited")
+    assert isinstance(unsaid, SlackRateLimited) and unsaid.retry_after == DEFAULT_RETRY_AFTER
+    at_once = error_for("ratelimited", timedelta(0))
+    assert isinstance(at_once, SlackRateLimited) and at_once.retry_after == timedelta(0)
     for code in ("channel_not_found", "not_in_channel", "is_archived"):
         unusable = error_for(code)
         assert isinstance(unusable, SlackChannelUnusable) and unusable.slack_code == code
@@ -344,15 +348,15 @@ async def test_a_rate_limit_carries_the_wait_slack_named(monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize(
     "header",
-    [None, "Wed, 21 Oct 2026 07:28:00 GMT", "\u00b2", "9" * 30, "9" * 5000, "-1"],
-    ids=["absent", "a date", "a digit int refuses", "past any wait", "past int's digits", "signed"],
+    [None, "soon", "\u00b2", "9" * 30, "9" * 5000, "-1"],
+    ids=["absent", "a word", "a digit int refuses", "past any wait", "past int's digits", "signed"],
 )
 async def test_a_rate_limit_with_no_wait_it_can_read_waits_the_default(
     monkeypatch: pytest.MonkeyPatch, header: str | None
 ) -> None:
     """The answer is a throttle whatever came with it: a `Retry-After` that
-    is not whole seconds in ASCII digits is the default wait, never an
-    exception."""
+    is neither whole seconds in ASCII digits nor an HTTP date, or that no
+    wait counts to, is the default wait, never an exception."""
     assert retry_after_of(header) == DEFAULT_RETRY_AFTER == timedelta(seconds=30)
     headers = {} if header is None else {"Retry-After": header}
     client = await started(monkeypatch, refusal(429, "ratelimited", headers))
@@ -362,6 +366,13 @@ async def test_a_rate_limit_with_no_wait_it_can_read_waits_the_default(
         assert raised.value.retry_after == DEFAULT_RETRY_AFTER
     finally:
         await client.close()
+
+
+def test_a_rate_limit_dated_by_slack_waits_until_that_date() -> None:
+    """`Retry-After` may be an HTTP date: the wait runs until it, and a date
+    already past asks for none."""
+    assert retry_after_of("Wed, 21 Oct 2015 07:28:00 GMT") == timedelta(0)
+    assert retry_after_of("Fri, 01 Jan 2100 00:00:00 GMT") > timedelta(days=365)
 
 
 @pytest.mark.parametrize(
