@@ -1,7 +1,8 @@
 """Each namespace's OpenAPI document, held over what `make openapi` emits: a
 schema is defined once, in the document of the namespace whose module
 defines it, and every other use is a file `$ref` to it; a route is in one
-document; and a change to one namespace rewrites its own files alone."""
+document; an object-model package no router serves has a document of its
+enums alone; and a change to one namespace rewrites its own files alone."""
 
 import filecmp
 import importlib
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ModelWrapValidatorHandler, computed_field, model
 
 import tadas.om
 import tadas.services.api.types
+from tadas.om.orchestrations.types.orchestration import OrchestrationStatus
 from tadas.services.api.app import create_app
 from tadas.services.api.openapi import COMMON, documents, write
 from tadas.services.api.routers import HOSTED
@@ -65,21 +67,38 @@ def refs(node: Any) -> list[str]:
     return []
 
 
+@pytest.fixture(params=["the scaffold's app", "an enum-only document"])
+def app(request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+    """The scaffold's app, and the app with one more media route whose answer
+    holds an enum of an object-model package no router serves, as a copy's
+    wire type may: that package's document holds the enum alone."""
+    if request.param == "an enum-only document":
+        assert "orchestrations" not in HOSTED, "the enum's package is one no router serves"
+        media_types = importlib.import_module(f"{tadas.services.api.types.__name__}.media")
+        answer = view("StatusProbeView", "media", status=OrchestrationStatus)
+        monkeypatch.setattr(media_types, "StatusProbeView", answer, raising=False)
+        probe = APIRouter(prefix="/media", tags=["media"])
+        probe.add_api_route("/status-probe", lambda: None, response_model=answer)
+        monkeypatch.setitem(HOSTED, "media", (*HOSTED["media"], probe))
+    return create_app(build_container(tmp_path))
+
+
 @pytest.fixture
-def emitted(tmp_path: Path) -> dict[str, dict[str, Any]]:
-    return documents(create_app(build_container(tmp_path)))
+def emitted(app: FastAPI) -> dict[str, dict[str, Any]]:
+    return documents(app)
 
 
 def test_each_schema_is_defined_once_in_the_document_of_its_defining_module(
     emitted: dict[str, dict[str, Any]],
 ) -> None:
     owners = defining_namespaces()
-    # A namespace no image hosts has a document only for an enum of its
-    # `om/<namespace>/` that a wire type names, and that document holds no route.
     assert set(emitted) >= {COMMON, *HOSTED}
-    for namespace in set(emitted) - {COMMON, *HOSTED}:
-        assert not emitted[namespace]["paths"], f"{namespace} is hosted by no image"
     for namespace, document in emitted.items():
+        if namespace not in {COMMON, *HOSTED}:
+            schemas = document["components"]["schemas"].values()
+            assert not document["paths"] and all("enum" in schema for schema in schemas), (
+                f"{namespace}.json is of a package no router serves, so it holds its enums alone"
+            )
         for name in document["components"]["schemas"]:
             if name in FRAMEWORK:
                 assert namespace == COMMON, f"{name} is the framework's, so common's"
@@ -118,7 +137,7 @@ def test_every_use_of_another_namespaces_schema_is_a_file_ref_to_its_document(
 
 
 def test_no_route_is_in_two_documents_and_none_is_lost(
-    emitted: dict[str, dict[str, Any]], tmp_path: Path
+    emitted: dict[str, dict[str, Any]], app: FastAPI
 ) -> None:
     pairs = [
         (method, path)
@@ -127,7 +146,7 @@ def test_no_route_is_in_two_documents_and_none_is_lost(
         for method in item
     ]
     assert len(pairs) == len(set(pairs))
-    whole = create_app(build_container(tmp_path)).openapi()
+    whole = app.openapi()
     assert set(pairs) == {(m, p) for p, item in whole["paths"].items() for m in item}
     for namespace, document in emitted.items():
         operations = [op for item in document["paths"].values() for op in item.values()]

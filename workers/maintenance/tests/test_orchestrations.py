@@ -116,7 +116,7 @@ async def test_an_import_parks_at_the_plan_and_the_processors_delivery_wakes_it(
 
 class Leasing:
     """A step that needs a resource: it asks for a lease by a key its record
-    derives, parks on `resource` in the same call while it waits, and steps
+    derives, parks on `leasable_resource` in the same call while it waits, and steps
     once it holds one. Woken, it asks again by the key and finds its lease."""
 
     def __init__(self, container: WorkerContainer, resource: LeasableResource) -> None:

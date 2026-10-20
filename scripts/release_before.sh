@@ -4,7 +4,7 @@
 # returns to it. So a migration the release before cannot run on fails its
 # writes for the minutes of the roll, and for good after a rollback.
 #
-#   scripts/release_before.sh [<base>]    # <base> defaults to origin/main
+#   scripts/release_before.sh [--running-stack] [<base>]    # <base> defaults to origin/main
 #
 # A branch that changes nothing under om/migrations since its merge base with
 # <base> ends here, green, with no database. Otherwise it brings the compose
@@ -23,9 +23,24 @@
 # stamped back to this branch's heads, which `make migrate` reads next.
 #
 # Like `make test-integration`, it empties every table of the local stack.
+#
+# With --running-stack it starts nothing and runs no compose command, for a
+# stack another process started and keeps: from this checkout, `make
+# infra-up` would recreate that stack under the same compose project. Each
+# database URL, the environment's, else .env's, else .env.example's, is then
+# this run's own, never the stack's, since every table it runs on is emptied:
+# one that names the database .env.example gives, the stack's own, is refused.
+# Without a .env, the URLs come from the environment.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+running_stack=""
+reset="make infra-reset"
+if [ "${1:-}" = "--running-stack" ]; then
+  running_stack=1
+  reset="make this run's databases anew"
+  shift
+fi
 base="${1:-origin/main}"
 merge_base="$(git merge-base "$base" HEAD)"
 changed="$(git diff --name-only "$merge_base" HEAD -- om/migrations)"
@@ -60,14 +75,32 @@ work="$(mktemp -d)"
 stamped=""
 cleanup() {
   if [ -n "$stamped" ] && ! "${migrate[@]}" stamp --all --heads-of "$here"; then
-    echo "release before: the version records still name a release before; run this again, or make infra-reset" >&2
+    echo "release before: the version records still name a release before; run this again, or ${reset}" >&2
   fi
   rm -rf "$work"
   git worktree prune
 }
 trap cleanup EXIT
 
-make --no-print-directory infra-up
+if [ -n "$running_stack" ]; then
+  while read -r name; do
+    stack="$(sed -n "s/^${name}=//p" .env.example | tail -n 1)"
+    url="${!name:-}"
+    if [ -z "$url" ] && [ -f .env ]; then
+      url="$(sed -n "s/^${name}=//p" .env | tail -n 1)"
+    fi
+    url="${url:-$stack}"
+    url="${url%%\?*}"
+    stack="${stack%%\?*}"
+    if [ "${url##*/}" = "${stack##*/}" ]; then
+      echo "release before: ${name} names ${url##*/}, the stack's own database; with --running-stack, name a database of this run's own in each TADAS_DATABASE_* URL, since the run empties every table it reaches" >&2
+      exit 1
+    fi
+  done < <(sed -n 's/^\(TADAS_DATABASE_[A-Z_]*URL[A-Z_]*\)=.*/\1/p' .env.example)
+  echo "release before: the stack is running, so it starts nothing and runs on the databases this run names"
+else
+  make --no-print-directory infra-up
+fi
 make --no-print-directory migrate
 
 failed=()
@@ -78,7 +111,11 @@ for i in "${!releases[@]}"; do
   echo "release before: ${label}, ${commit:0:12}"
   git worktree add -q --detach "$tree" "$commit"
   (cd "$tree" && uv sync --all-packages --quiet)
-  cat "$tree/.env.example" .env > "$tree/.env"
+  if [ -f .env ]; then
+    cat "$tree/.env.example" .env > "$tree/.env"
+  else
+    cp "$tree/.env.example" "$tree/.env"
+  fi
   stamped=1
   "${migrate[@]}" stamp --all --heads-of "$tree"
   if (cd "$tree" && uv run pytest -q -m integration -p no:cacheprovider "${deselect[@]}"); then

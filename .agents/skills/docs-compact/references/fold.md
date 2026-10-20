@@ -11,7 +11,11 @@ their place. A role that owns one revision, or none, is folded already.
 deployment/local/docker-compose.yml`, with `--env-file .env` left out
 when the tree has no `.env`. `<day>` is today's date in UTC,
 `yyyymmdd`, and `<evidence>` is the evidence folder the skill's step 1
-made.
+made. The fold's two databases are made by `ops/audit/auditdb.py`,
+which puts every role on core's instance, as the cloud's one instance
+holds them. So each dump and query below runs on `postgres-core` for
+every role, never on the instance the stack gives a role's own
+database.
 
 ## What the tree owns
 
@@ -52,7 +56,10 @@ stays as it is, and the report says which part.
    ones end where the owned ones begin.
 
 2. The newest migration's commit: `git log -1 --format=%H origin/<main>
-   -- om/migrations/sql om/migrations/versions`.
+   -- om/migrations/sql om/migrations/versions`. On a move's branch
+   (`SKILL.md` step 1), read `HEAD` for `origin/<main>`: the chain the
+   fold folds is the branch's, and a migration the move brought or wrote
+   is deployed nowhere yet, so part 3 stops the fold.
 3. Each environment `deployment/cloud/environments.json` names has
    deployed that commit or a later one. The deploy migrates before it
    rolls out, so its database is then at the head. A tree that is a

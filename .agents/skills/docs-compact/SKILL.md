@@ -74,7 +74,13 @@ left as it is, and the report names it under Kept.
    `git rev-parse --verify --quiet <name>` or `git rev-parse --verify
    --quiet origin/<name>` prints a commit: add a suffix then (`-2`). On
    another branch, work there only when `git log
-   --oneline origin/<main>..HEAD` prints nothing; otherwise refuse.
+   --oneline origin/<main>..HEAD` prints nothing, or when the branch
+   holds a move of the tree's base: `git log --first-parent --format=%s
+   origin/<main>..HEAD` lists a subject that starts `The scaffold base
+   moves to`. Otherwise refuse. On a move's branch the skill's commits
+   follow the move's, and the render of the base is the `scaffold`
+   branch the move merged, which may not be pushed yet: wherever a step
+   or `references/fold.md` names `origin/scaffold`, read `scaffold`.
    The evidence folder is `~/Downloads/tadas_docs_compact_<yyyy-mm-dd>/`
    and the report `~/Downloads/tadas_docs_compact_<yyyy-mm-dd>.md`. When
    either exists, both take the next free suffix (`_2`), so a run never
@@ -101,7 +107,10 @@ left as it is, and the report names it under Kept.
      A hit of the second search is a citation when the line above it,
      which the search prints, ends in `ADR`.
 
-   - `CHANGELOG.md`: its release sections, when the tree has one.
+   - `CHANGELOG.md`: its release sections, when the tree has one. In a
+     layer, the changelog is the one at its repository's root,
+     `$(git rev-parse --show-toplevel)/CHANGELOG.md`, and step 4 cuts
+     that one.
    - The Substitutions and Deviations rows of `specs/architecture.md`;
      with a `scaffold` branch, those below each table's marker.
    - The sentences that tell a past, in the Markdown and in the code's
@@ -202,6 +211,11 @@ left as it is, and the report names it under Kept.
    as the render gave them: only the tree's own table below it is
    cleaned. Commit.
 6. **Rewrite the sentences** of step 2's sweep, each hit judged once.
+   With a `scaffold` branch, a hit on a line the render of its base
+   holds in that file stays as the render gave it, as the base's rows
+   and ADRs do; this prints such a line:
+   `git show origin/scaffold:./<file> | grep -F '<the line>'`. Only the
+   tree's own lines are rewritten.
    - A sentence about the code's past goes, or is rewritten to what the
      code does: what a former release did, what changed, what a value
      once held.
@@ -264,7 +278,12 @@ left as it is, and the report names it under Kept.
    infra-up`, and then `make migrate`, `make migrate-check`, and `make
    test-integration` on a database the run makes and drops, never the
    stack's own: the integration tests empty every table of the
-   database they run on.
+   database they run on. Another checkout keeps the stack when
+   `docker compose ls --format json` lists this tree's compose project
+   (`COMPOSE_PROJECT_NAME` in `.env`, else the `name:` of
+   `deployment/local/docker-compose.yml`) with its `ConfigFiles`
+   outside this tree. Then `make infra-up` is skipped: from this tree
+   it would recreate that stack under the same compose project.
 
    ```bash
    uv run python ops/audit/auditdb.py create audit_docs_compact_<yyyymmdd>

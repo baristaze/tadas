@@ -40,6 +40,7 @@ from tadas.services.api.realtime.send_buffer import SendBuffer
 from tadas.services.api.realtime.timeouts import IDLE_TIMEOUT_SECONDS
 from tadas.services.api.services.realtime import RIGHTS_CHANGED, RealtimeServiceInterface
 from tadas.services.api.types.change_events import IssuedTicketView
+from tadas.timing import Every
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/realtime", tags=["change_events"])
@@ -173,17 +174,26 @@ async def recheck_until_refused(
     handler: a database out of reach is no proof that the credential still
     holds."""
     nudged = nudged or asyncio.Event()
-    wait = phase(interval)
-    while True:
+
+    async def until_nudged(seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(nudged.wait(), timeout=wait)
+            await asyncio.wait_for(nudged.wait(), timeout=seconds)
+
+    first = phase(interval)
+    while True:
+        async for _ in Every(interval, phase=first, sleep=until_nudged):
+            if nudged.is_set():
+                # The ticks start again from the nudge, with its check first.
+                break
+            reason = await realtime.recheck(principal)
+            if reason is not None:
+                log.info(
+                    "socket of user %s closed on its recheck: %s", principal.ctx.user_id, reason
+                )
+                end(reason)
+                return
         nudged.clear()
-        reason = await realtime.recheck(principal)
-        if reason is not None:
-            log.info("socket of user %s closed on its recheck: %s", principal.ctx.user_id, reason)
-            end(reason)
-            return
-        wait = interval
+        first = 0.0
 
 
 @router.websocket("")
