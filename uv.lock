@@ -12,6 +12,7 @@ members = [
     "tadas-maintenance",
     "tadas-om",
     "tadas-ops",
+    "tadas-timing",
     "tadas-workspace",
 ]
 
@@ -56,6 +57,7 @@ name = "tadas-client"
 version = "0.1.0"
 source = { editable = "clients/python" }
 dependencies = [
+    { name = "tadas-timing" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "truststore" },
@@ -64,6 +66,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "truststore", specifier = ">=0.10" },
@@ -75,6 +78,7 @@ name = "tadas-infra"
 version = "0.1.0"
 source = { editable = "infra" }
 dependencies = [
+    { name = "tadas-timing" },
     { name = "aioboto3" },
     { name = "launchdarkly-openfeature-server" },
     { name = "launchdarkly-server-sdk" },
@@ -92,6 +96,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "aioboto3", specifier = ">=15.5" },
     { name = "launchdarkly-openfeature-server", specifier = ">=0.8.2" },
     { name = "launchdarkly-server-sdk", specifier = ">=9.18.1" },
@@ -136,6 +141,7 @@ dependencies = [
     { name = "tadas-infra" },
     { name = "tadas-integrations" },
     { name = "tadas-om" },
+    { name = "tadas-timing" },
     { name = "pydantic-settings" },
 ]
 
@@ -144,6 +150,7 @@ requires-dist = [
     { name = "tadas-infra", editable = "infra" },
     { name = "tadas-integrations", editable = "integrations" },
     { name = "tadas-om", editable = "om" },
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "pydantic-settings", specifier = ">=2.15" },
 ]
 
@@ -154,6 +161,7 @@ source = { editable = "om" }
 dependencies = [
     { name = "tadas-infra" },
     { name = "tadas-integrations" },
+    { name = "tadas-timing" },
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "cryptography" },
@@ -166,6 +174,7 @@ dependencies = [
 requires-dist = [
     { name = "tadas-infra", editable = "infra" },
     { name = "tadas-integrations", editable = "integrations" },
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "alembic", specifier = ">=1.20" },
     { name = "asyncpg", specifier = ">=0.31" },
     { name = "cryptography", specifier = ">=50.0" },
@@ -196,6 +205,11 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
+
+[[package]]
+name = "tadas-timing"
+version = "0.1.0"
+source = { editable = "libs/timing" }
 
 [[package]]
 name = "tadas-workspace"
