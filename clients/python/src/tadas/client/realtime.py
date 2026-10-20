@@ -31,16 +31,19 @@ from tadas.client.envelopes import (
 )
 from tadas.client.stream import Cursor, Gap, Next, Seen, behind, is_last_page, place
 from tadas.client.transport import LIMIT_MAX, ApiError, trust_store
+from tadas.timing import Draw, Every, RetryPolicy
 
 log = logging.getLogger(__name__)
 
 SOCKET_PATH = "/v1/realtime"
-BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+RECONNECT = RetryPolicy(base=1.0, cap=30.0, jitter=0.5)
+"""The wait before each reconnect: 1s doubled per failed try up to 30s, the
+top of each window, with half of it drawn."""
 MIN_PING_SECONDS = 1.0  # a hello that names less would spin
 CLOSE_UNAUTHENTICATED = 4401
 
 
-def reconnect_delay_seconds(attempt: int, jitter: Callable[[], float] = random.random) -> float:
+def reconnect_delay_seconds(attempt: int, jitter: Draw = random.random) -> float:
     """The wait before reconnect `attempt` (0 is the first): the curve above,
     halved and topped up from `jitter`. A socket drops for a shared reason, so
     every listener is dropped at once and a bare curve brings them all back at
@@ -50,8 +53,7 @@ def reconnect_delay_seconds(attempt: int, jitter: Callable[[], float] = random.r
     assertable under randomness. The curve itself is unchanged: its values are
     the top of each window, the last step included, where the cap is less than
     a doubling and the two windows overlap by a second."""
-    full = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
-    return full / 2 + (full / 2) * jitter()
+    return RECONNECT.wait(attempt + 1, draw=jitter)
 
 
 State = Literal["connecting", "open", "reconnecting", "closed"]
@@ -199,9 +201,9 @@ class Channel:
         The server counts only what the client sends as a sign of life, so a
         socket busy with pushes, or one mid-replay, would idle out without
         it. A send that fails is left to the reader, which sees the same
-        closed socket."""
-        while True:
-            await asyncio.sleep(interval)
+        closed socket. The first ping goes one interval in, and the pings
+        fall an interval apart start to start, however long a send takes."""
+        async for _ in Every(interval, phase=interval):
             try:
                 await socket.send(PING_COMMAND)
             except OSError, websockets.exceptions.WebSocketException:

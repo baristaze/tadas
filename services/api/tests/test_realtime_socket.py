@@ -727,6 +727,45 @@ async def test_a_nudge_runs_the_recheck_at_once(tmp_path: Path) -> None:
     assert ended == ["plan_limit_reached"]
 
 
+async def test_the_interval_starts_again_after_a_nudge(tmp_path: Path) -> None:
+    """The check after a nudged one comes one interval after it: neither at
+    the next tick of the first schedule nor at the one after."""
+    container = build_container(tmp_path)
+    tenancy = container.managers.tenancy
+    _, org = await tenancy.bootstrap(seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"])
+    login = await tenancy.sign_in.dev_sign_in(seed_request(), OWNER["email"])
+    identity = await tenancy.authenticate_login(seed_request(), login.token)
+    ctx = await tenancy.authenticate(
+        seed_request(), (await tenancy.sign_in.exchange_login(identity, org.id)).token
+    )
+    principal = await tenancy.redeem_ticket(
+        seed_request(), (await tenancy.issue_ticket(ctx)).ticket
+    )
+    service = container.services.get_realtime_service()
+    answers = iter([None, None, "not_authenticated"])
+    asked: list[float] = []
+
+    async def recheck(asked_about: SocketPrincipal) -> str | None:
+        asked.append(time.monotonic())
+        return next(answers)
+
+    service.recheck = recheck  # type: ignore[method-assign]
+    nudged = asyncio.Event()
+    ended: list[str] = []
+    checking = asyncio.create_task(
+        recheck_until_refused(
+            service, principal, ended.append, 1.0, phase=lambda _: 0.0, nudged=nudged
+        )
+    )
+    await asyncio.sleep(0.5)
+    nudged.set()
+    await asyncio.wait_for(checking, timeout=3.0)
+    assert ended == ["not_authenticated"]
+    first, nudge, after = asked
+    assert nudge - first < 0.7, "the nudge runs the check at once"
+    assert 0.9 <= after - nudge < 1.3, "one interval after the nudged check"
+
+
 def test_a_recheck_that_cannot_be_made_closes_the_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

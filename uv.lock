@@ -12,6 +12,7 @@ members = [
     "tadas-maintenance",
     "tadas-om",
     "tadas-ops",
+    "tadas-timing",
     "tadas-workspace",
 ]
 
@@ -1793,6 +1794,7 @@ source = { editable = "clients/python" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "tadas-timing" },
     { name = "truststore" },
     { name = "websockets" },
 ]
@@ -1801,6 +1803,7 @@ dependencies = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.12" },
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "truststore", specifier = ">=0.10" },
     { name = "websockets", specifier = ">=15" },
 ]
@@ -1821,6 +1824,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "sentry-sdk" },
+    { name = "tadas-timing" },
     { name = "truststore" },
     { name = "valkey-glide" },
 ]
@@ -1838,6 +1842,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "sentry-sdk", specifier = ">=2.69.2" },
+    { name = "tadas-timing", editable = "libs/timing" },
     { name = "truststore", specifier = ">=0.10.4" },
     { name = "valkey-glide", specifier = ">=2.5.2" },
 ]
@@ -1878,6 +1883,7 @@ dependencies = [
     { name = "tadas-infra" },
     { name = "tadas-integrations" },
     { name = "tadas-om" },
+    { name = "tadas-timing" },
 ]
 
 [package.metadata]
@@ -1886,6 +1892,7 @@ requires-dist = [
     { name = "tadas-infra", editable = "infra" },
     { name = "tadas-integrations", editable = "integrations" },
     { name = "tadas-om", editable = "om" },
+    { name = "tadas-timing", editable = "libs/timing" },
 ]
 
 [[package]]
@@ -1901,6 +1908,7 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "tadas-infra" },
     { name = "tadas-integrations" },
+    { name = "tadas-timing" },
 ]
 
 [package.metadata]
@@ -1913,6 +1921,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.54" },
     { name = "tadas-infra", editable = "infra" },
     { name = "tadas-integrations", editable = "integrations" },
+    { name = "tadas-timing", editable = "libs/timing" },
 ]
 
 [[package]]
@@ -1937,6 +1946,11 @@ requires-dist = [
     { name = "tadas-infra", editable = "infra" },
     { name = "tadas-integrations", editable = "integrations" },
 ]
+
+[[package]]
+name = "tadas-timing"
+version = "0.1.0"
+source = { editable = "libs/timing" }
 
 [[package]]
 name = "tadas-workspace"
