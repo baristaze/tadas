@@ -135,7 +135,7 @@ jobs:
           done
           [ -n "${PROVISIONER_EMAIL:-}" ] || {
             echo "::error::the staging environment's PROVISIONER_EMAIL is empty. Grant the provisioner with grant-operator.yml, then set the variable: gh variable set PROVISIONER_EMAIL --env staging --body <email>"; exit 1; }
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - run: uv sync --all-packages
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -225,7 +225,7 @@ jobs:
             tail -c 60000 stress-run.txt 2>/dev/null || echo "the run printed nothing"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: stress-${{ inputs.scenario }}
