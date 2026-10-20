@@ -6,8 +6,8 @@ the other side of that queue. A call is a slash command (`/tadas ...`) or an
 event: an app mention, the App Home being opened, the app being uninstalled,
 or the bot joining a channel, which mends an installation broken by that
 channel. Each is handled here and then deleted from the queue; one whose
-handling failed is left there and comes back after its visibility timeout,
-and the hosted queue moves it to its dead-letter queue after a few returns.
+handling failed is left there and comes back later on each receive, and the
+hosted queue moves it to its dead-letter queue after a few returns.
 
 A call names a workspace, never a tenant: the org is the one that installed
 the app in that workspace. A command also names a Slack user, and the person
@@ -25,6 +25,7 @@ join mends an installation once; a second finds it well."""
 import asyncio
 import contextlib
 import logging
+import random
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
@@ -33,7 +34,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from tadas.infra.observability import OUTCOMES, current_traceparent
-from tadas.infra.queues import Queues, QueuesInterface
+from tadas.infra.queues import QueueMessage, Queues, QueuesInterface
 from tadas.integrations.slack import (
     SlackChannelUnusable,
     SlackError,
@@ -50,6 +51,8 @@ from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.timing import Draw, RetryPolicy
+from tadas.workers.maintenance.deliveries import MAX_VISIBILITY
 from tadas.workers.maintenance.slack_posts import escaped
 
 log = logging.getLogger(__name__)
@@ -333,6 +336,11 @@ class InboundOptions(BaseModel):
     batch: int = 10
     wait: timedelta = timedelta(seconds=10)
     visibility: timedelta = timedelta(seconds=60)
+    retry: timedelta = timedelta(seconds=15)
+    """The longest wait after a call's first failed receive, and twice the
+    shortest: four times longer on each receive after it, so the fifth
+    receive, the last before the dead letters, comes 10 to 22 minutes after
+    the first, inside the 30 minutes a command's `response_url` answers."""
     error_backoff: timedelta = timedelta(seconds=5)
     idle: timedelta = timedelta(seconds=1)
     """The pause after an empty receive. The hosted queue's long poll already
@@ -353,14 +361,30 @@ def settled(error: SlackError | OmException) -> bool:
 class SlackInboundConsumer:
     """The loop over the `slack` queue: receive, handle, delete. A call that
     does not parse is deleted with a log line, since no retry parses it; one
-    whose handling raised stays for the queue to hand back."""
+    whose handling raised stays for the queue to hand back, later on each
+    receive."""
 
     def __init__(
-        self, queues: QueuesInterface, handler: SlackInboundHandler, options: InboundOptions
+        self,
+        queues: QueuesInterface,
+        handler: SlackInboundHandler,
+        options: InboundOptions,
+        jitter: Draw = random.random,
     ) -> None:
         self._queues = queues
         self._handler = handler
         self._options = options
+        self._jitter = jitter
+        # The hosted queue counts its 12 hours from the receive, and the wait
+        # is set within the receive's visibility, so the cap leaves it out.
+        # Four times longer on each receive, half of it drawn: the shortest
+        # wait of a receive is longer than the longest of the one before.
+        self._retry = RetryPolicy(
+            base=options.retry.total_seconds(),
+            cap=(MAX_VISIBILITY - options.visibility).total_seconds(),
+            growth=4.0,
+            jitter=0.5,
+        )
         self._stopping = asyncio.Event()
 
     def stop(self) -> None:
@@ -407,6 +431,7 @@ class SlackInboundConsumer:
                         exc_info=error,
                     )
                     OUTCOMES.labels(subsystem="slack_inbound", outcome="failed").inc()
+                    await self._come_back_later(message)
                     continue
                 # A refusal no retry changes is said in the log; the call is done.
                 log.warning("slack inbound: %s answered %s", delivery.key, error, exc_info=error)
@@ -414,7 +439,22 @@ class SlackInboundConsumer:
             except Exception:
                 log.exception("slack inbound: %s failed; the queue hands it back", delivery.key)
                 OUTCOMES.labels(subsystem="slack_inbound", outcome="failed").inc()
+                await self._come_back_later(message)
                 continue
             await self._queues.delete(Queues.SLACK, message.receipt)
             OUTCOMES.labels(subsystem="slack_inbound", outcome="handled").inc()
         return len(messages)
+
+    async def _come_back_later(self, message: QueueMessage) -> None:
+        """Hides a call whose handling failed for longer on each receive. A
+        change that fails leaves the call to come back after the receive's
+        visibility."""
+        wait = timedelta(seconds=self._retry.wait(message.attempts, draw=self._jitter))
+        try:
+            await self._queues.change_visibility(Queues.SLACK, message.receipt, wait)
+        except Exception:
+            log.exception(
+                "slack inbound: message %s keeps its visibility of receive %d",
+                message.id,
+                message.attempts,
+            )
