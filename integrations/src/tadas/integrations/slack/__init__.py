@@ -86,6 +86,10 @@ class SlackError(InfraException):
         self.slack_code = slack_code
 
 
+DEFAULT_RETRY_AFTER = timedelta(seconds=30)
+"""How long a throttled call waits when Slack's answer does not say."""
+
+
 class SlackRateLimited(SlackError):
     """Slack asked the caller to wait (HTTP 429); `retry_after` is how long."""
 
@@ -236,7 +240,7 @@ class SlackInterface(ABC):
 def error_for(code: str, retry_after: timedelta | None = None) -> SlackError:
     """The error a caller decides on, from Slack's own answer."""
     if retry_after is not None or code == "ratelimited":
-        return SlackRateLimited(retry_after or timedelta(seconds=30))
+        return SlackRateLimited(DEFAULT_RETRY_AFTER if retry_after is None else retry_after)
     if code in UNUSABLE_CHANNEL_ERRORS:
         return SlackChannelUnusable(code)
     if code in REVOKED_TOKEN_ERRORS:

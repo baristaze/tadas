@@ -3,10 +3,13 @@ parser; the workspace names the org and the Slack profile's address names
 the person; `/tadas` alone, `/tadas team`, `/tadas add`, `/tadas connect`,
 and the help; the mention, once; the App Home; the uninstall; the bot
 invited back to its channel; the tenant fence of the workspace; and the
-queue consumer's delete-or-retry."""
+queue consumer's delete-or-retry, a failed call coming back later on each
+receive."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import date, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -40,6 +43,7 @@ from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.workers.maintenance.container import WorkerContainer
+from tadas.workers.maintenance.main import build_inbound
 from tadas.workers.maintenance.slack_inbound import (
     CONNECTED,
     NOT_INSTALLED,
@@ -458,6 +462,76 @@ async def test_the_consumer_deletes_what_it_handled_and_leaves_what_failed(
     await queues.send(Queues.SLACK, command("help").model_dump_json().encode())
     assert await consumer.poll_once() == 1
     assert (await queues.depth(Queues.SLACK)).in_flight == 1, "left for the queue to hand back"
+
+
+def consumer_of(container: WorkerContainer, jitter: Callable[[], float]) -> SlackInboundConsumer:
+    """The worker's own consumer, with a long poll that answers at once and
+    the jitter handed in."""
+    built = build_inbound(container)
+    options = built._options  # pyright: ignore[reportPrivateUsage]
+    built._options = options.model_copy(  # pyright: ignore[reportPrivateUsage]
+        update={"wait": timedelta(0)}
+    )
+    built._jitter = jitter  # pyright: ignore[reportPrivateUsage]
+    return built
+
+
+def held_by(container: WorkerContainer, monkeypatch: pytest.MonkeyPatch) -> list[timedelta]:
+    """The visibility each failed call is given, in order, on its way to the
+    memory queue. The wait then passes at once, so the next receive takes
+    the call."""
+    queues = container.infra.get_queues()
+    change = queues.change_visibility
+    held: list[timedelta] = []
+
+    async def recorded(queue: Queues, receipt: str, visibility: timedelta) -> None:
+        held.append(visibility)
+        await change(queue, receipt, timedelta(seconds=-1))
+
+    monkeypatch.setattr(queues, "change_visibility", recorded)
+    return held
+
+
+@pytest.mark.parametrize(
+    "draws",
+    [[0.0] * 5, [1.0] * 5, [1.0, 0.0, 1.0, 0.0, 1.0]],
+    ids=["jitter-low", "jitter-high", "jitter-high-then-low"],
+)
+async def test_a_failed_command_comes_back_later_and_inside_its_reply_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, draws: list[float]
+) -> None:
+    """The database and Slack fail in turn on five receives of `/tadas add`:
+    each hides the call for longer, and the fifth, the last before the dead
+    letters, comes after an outage of five minutes and inside the 30 minutes
+    the command's `response_url` answers."""
+    container, _ = build(tmp_path)
+    consumer = consumer_of(container, iter(draws).__next__)
+    held = held_by(container, monkeypatch)
+    receives = 0
+
+    async def down(*_: object) -> None:
+        nonlocal receives
+        receives += 1
+        if receives % 2:
+            raise ConnectionResetError("the database went away")
+        raise SlackFailed("timeout")
+
+    monkeypatch.setattr(container.managers.slack, "installation_for_team", down)
+    queues = container.infra.get_queues()
+    await queues.send(Queues.SLACK, command("add Buy milk").model_dump_json().encode())
+    for _ in range(5):
+        await consumer.poll_once()
+    assert len(held) == 5, held
+    assert receives == 5
+    assert await consumer.poll_once() == 0, "the sixth receive dead-letters it"
+    assert all(earlier < later for earlier, later in pairwise(held)), held
+    # The fifth receive follows the first four waits, and each failed
+    # handling ends within its receive's visibility, or another receive
+    # takes the call.
+    between = sum(held[:4], timedelta())
+    visibility = consumer._options.visibility  # pyright: ignore[reportPrivateUsage]
+    assert between > timedelta(minutes=5), held
+    assert between + 4 * visibility < timedelta(minutes=30), held
 
 
 async def test_the_consumer_stops_when_asked(tmp_path: Path) -> None:

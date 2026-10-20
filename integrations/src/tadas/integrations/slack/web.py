@@ -35,6 +35,7 @@ from tadas.infra.base import utcnow
 from tadas.infra.deadline import bounded
 from tadas.integrations.slack import (
     BOT_SCOPES,
+    DEFAULT_RETRY_AFTER,
     SlackError,
     SlackFailed,
     SlackGrant,
@@ -45,25 +46,24 @@ from tadas.integrations.slack import (
     is_response_url,
 )
 from tadas.integrations.slack.requests import verify
+from tadas.timing import retry_after
 
 log = logging.getLogger(__name__)
 
 AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 
-DEFAULT_RETRY_AFTER = timedelta(seconds=30)
-"""How long a throttled call waits when Slack's answer does not say."""
-
 
 def retry_after_of(header: str | None) -> timedelta:
     """How long Slack asks a throttled caller to wait, from `Retry-After`:
-    whole seconds, in ASCII digits. An absent header, or one that is anything
-    else, a date or a number no wait counts to among them, is the default:
-    the answer is a throttle whatever came with it, never an exception."""
-    if header is None or not (header.isascii() and header.isdigit()):
+    whole seconds, or an HTTP date. An absent header, or one that is anything
+    else, a number no wait counts to among them, is the default: the answer
+    is a throttle whatever came with it, never an exception."""
+    seconds = retry_after(header)
+    if seconds is None:
         return DEFAULT_RETRY_AFTER
     try:
-        return timedelta(seconds=int(header))
-    except ValueError, OverflowError:
+        return timedelta(seconds=seconds)
+    except OverflowError:
         return DEFAULT_RETRY_AFTER
 
 
@@ -215,11 +215,11 @@ class SlackWebImpl(SlackInterface):
         except SlackApiError as error:
             response = error.response
             code = str(response.get("error") or f"http_{response.status_code}")
-            retry_after: timedelta | None = None
+            wait: timedelta | None = None
             if response.status_code == 429:
                 header = response.headers.get("Retry-After") or response.headers.get("retry-after")
-                retry_after = retry_after_of(header)
-            raise error_for(code, retry_after) from None
+                wait = retry_after_of(header)
+            raise error_for(code, wait) from None
         except SlackError:
             raise
         except Exception as error:
