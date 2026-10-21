@@ -14,7 +14,15 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import add_member, build_container, callback_body, on_plan, run, seed_request, sign_in_as
+from api_support import (
+    add_member,
+    build_container,
+    callback_body,
+    on_plan,
+    run,
+    seed_request,
+    sign_in_as,
+)
 from starlette.testclient import TestClient
 
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
