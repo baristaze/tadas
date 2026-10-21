@@ -288,7 +288,7 @@ async def test_an_owner_installs_and_a_member_reads(
 
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
     await add_member(container, org_id, "bob@example.test", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", org_id)
+    bob = await sign_in_as(client, container, "bob@example.test", org_id)
     assert (await client.get("/v1/slack/installation", headers=bob)).status_code == 200
     refused = await client.post("/v1/slack/installation", headers=bob)
     assert refused.status_code == 403 and refused.json()["error"]["code"] == "not_authorized"
@@ -332,7 +332,7 @@ async def test_a_workspace_another_org_holds_is_refused(
     fabrikam, _ = await container.managers.tenancy.bootstrap(
         seed_request(), "Fabrikam", "fabrikam", "zoe@fab.test", "Zoe"
     )
-    zoe = await sign_in_as(client, "zoe@fab.test", fabrikam.org_id)
+    zoe = await sign_in_as(client, container, "zoe@fab.test", fabrikam.org_id)
     taken = await back_from_slack(client, await start(client, zoe))
     assert taken == f"{PORTAL}/settings?slack=taken"
     assert (await client.get("/v1/slack/installation", headers=zoe)).json() == {

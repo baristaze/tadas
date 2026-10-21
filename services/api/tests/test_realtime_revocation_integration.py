@@ -234,7 +234,7 @@ async def key_socket_on_team(processes: TwoProcesses) -> tuple[str, str]:
     """The org on Team, an api key of its owner, and a ticket minted on it:
     the key's headers' value and the ticket."""
     await on_plan(processes.revoker, processes.org.id, Plan.TEAM)
-    owner = await headers_of(processes.address, processes.email, processes.org)
+    owner = await headers_of(processes, processes.email, processes.org)
     async with httpx.AsyncClient(base_url=f"http://{processes.address}") as client:
         issued = await client.post(
             "/v1/api-keys", headers=owner, json={"name": "ci", "role": "member"}
@@ -254,7 +254,7 @@ async def downgrade(processes: TwoProcesses, announced: bool) -> None:
     if not announced:
         await billing.write_account(processes.org.id, downgraded, ())
         return
-    owner = await headers_of(processes.address, processes.email, processes.org)
+    owner = await headers_of(processes, processes.email, processes.org)
     ctx = await context_of(processes.revoker, owner)
     rows = (outbox_row(ctx, "billing.account.updated", account.id, {}),)
     await billing.write_account(processes.org.id, downgraded, rows)

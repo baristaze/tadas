@@ -17,7 +17,7 @@ from fake_api import OWNER_ID, FakeApi, connect_to
 
 from tadas.client.client import ApiClient
 from tadas.ops.environments import Environment, SeedPeople
-from tadas.ops.main import FAILED, traffic_exit_code
+from tadas.ops.main import FAILED, OK, traffic_exit_code
 from tadas.ops.profiles import LIGHT, Profile
 from tadas.ops.report import AUTH_ROUTES, Report, Sample, Sessions
 from tadas.ops.stress import Readback, load_scenario, verdict
@@ -492,6 +492,7 @@ async def test_a_run_counts_conflicts_apart_from_errors_and_failures() -> None:
         max_sessions=2,
         transport=httpx.MockTransport(api),
         connect=connect_to(api),
+        mint=api.mint,
     )
     report = result.report
     s = report.sessions

@@ -29,6 +29,8 @@ from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyOptions
 
+from contracts.signing_in import provider_login, signing_in
+
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 REDIRECT = "https://api.tadas.test/webhooks/slack/oauth"
 
@@ -46,16 +48,16 @@ class World:
         self.managers: Managers = build_managers(
             self.storage,
             self.infra,
-            TenancyOptions(dev_sign_in=True),
+            TenancyOptions(),
             integrations=IntegrationsOverImpl(self.identity, slack=self.twin),
         )
+        signing_in(self.managers.tenancy, self.identity)
 
     async def prove(self, email: str) -> None:
         """The person signs in once through the identity provider, which
-        proves the address: an address the seeding or the local sign-in typed
-        names nobody to an integration until then (ADR 0090)."""
-        code = self.identity.issue_code(email)
-        await self.managers.tenancy.sign_in.sign_in_with_code(request(), code)
+        proves the address: an address the seeding typed names nobody to an
+        integration until then (ADR 0090)."""
+        await provider_login(self.managers.tenancy, email)
 
     async def org(self, slug: str) -> TenantContext:
         ctx, _ = await self.managers.tenancy.bootstrap(
@@ -67,12 +69,11 @@ class World:
     async def member(self, slug: str, email: str, role: Role = Role.MEMBER) -> TenantContext:
         tenancy = self.managers.tenancy
         await tenancy.add_member(request(), slug, email, "Member", role)
-        login = await tenancy.sign_in.dev_sign_in(request(), email)
+        login = await provider_login(tenancy, email)
         identity = await tenancy.authenticate_login(request(), login.token)
         memberships = await tenancy.sign_in.get_identity_memberships(identity, None, 10)
         org = next(m.org.id for m in memberships.items if m.org.slug == slug)
         session = await tenancy.sign_in.exchange_login(identity, org)
-        await self.prove(email)
         return await tenancy.authenticate(request(), session.token)
 
     async def install(self, ctx: TenantContext, team: str = "T0ACME") -> str:

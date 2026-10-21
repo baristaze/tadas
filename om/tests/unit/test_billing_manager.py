@@ -19,7 +19,7 @@ from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.exceptions import BackendFailed, BackendUnreachable, InfraException
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.impl.valkey import ValkeyConnection
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.payments.deliveries import sign
 from tadas.integrations.payments.stripe import translated
@@ -48,7 +48,7 @@ from tadas.om.exceptions import (
     SubscriptionExists,
     ValidationFailed,
 )
-from tadas.om.root import Managers, build_managers, build_tenancy
+from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy.impl.manager import TenancyOptions
@@ -58,6 +58,7 @@ from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
+from contracts.signing_in import provider_login, signing_in, tenancy_signing_in
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 SUCCESS, CANCEL = "http://portal.test/billing?done", "http://portal.test/billing?cancelled"
@@ -76,12 +77,14 @@ class World:
         self.twin = PaymentsTwinImpl(environment="test")
         self.now = utcnow()
         self.infra = InfraLocalImpl(tmp_path)
+        identity = IdentityProviderTwinImpl()
         self.managers: Managers = build_managers(
             self.storage,
             self.infra,
-            TenancyOptions(totp_encryption_key=TOTP_KEY, dev_sign_in=True),
-            integrations=IntegrationsOverImpl(IdentityProviderAbsentImpl(), self.twin),
+            TenancyOptions(totp_encryption_key=TOTP_KEY),
+            integrations=IntegrationsOverImpl(identity, self.twin),
         )
+        signing_in(self.managers.tenancy, identity)
         self.billing = BillingManagerImpl(
             self.storage.get_billing_storage(),
             self.twin,
@@ -103,7 +106,7 @@ class World:
 
     async def signed_in(self, email: str, org_id: UUID) -> TenantContext:
         tenancy = self.managers.tenancy
-        login = await tenancy.sign_in.dev_sign_in(request(), email)
+        login = await provider_login(tenancy, email)
         identity = await tenancy.authenticate_login(request(), login.token)
         session = await tenancy.sign_in.exchange_login(identity, org_id)
         return await tenancy.authenticate(request(), session.token)
@@ -620,13 +623,12 @@ class Plane:
     def __init__(self, world: World, tmp_path: Path) -> None:
         self.clock = SteppingClock()
         storage = world.storage
-        self.tenancy = build_tenancy(
+        self.tenancy = tenancy_signing_in(
             storage.get_tenancy_storage(),
             world.managers.outbox,
             InfraLocalImpl(tmp_path / "plane").get_cache(CacheScope.REALTIME_TICKET),
-            TenancyOptions(totp_encryption_key=TOTP_KEY, dev_sign_in=True),
+            TenancyOptions(totp_encryption_key=TOTP_KEY),
             self.clock,
-            identity_provider=IdentityProviderAbsentImpl(),
             entitlements=world.managers.billing,
         )
         self.operator = TenancyOperatorManagerImpl(
