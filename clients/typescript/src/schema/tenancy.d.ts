@@ -248,23 +248,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/dev-sign-in": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Dev Sign In */
-        post: operations["dev_sign_in"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/auth/device": {
         parameters: {
             query?: never;
@@ -845,23 +828,6 @@ export interface components {
             name: string;
         };
         /**
-         * DevSignInRequest
-         * @description Local and test only: a sign-in by address alone, with no browser round
-         *     trip, for the seed, the demos, the traffic generator, and the tests. A
-         *     person nobody knew is made, with their personal org. A deployed
-         *     environment never serves it: the route answers 404 there, and the
-         *     process refuses to start with it on.
-         */
-        DevSignInRequest: {
-            /**
-             * Display Name
-             * @default
-             */
-            display_name: string;
-            /** Email */
-            email: string;
-        };
-        /**
          * DeviceSignInView
          * @description The start of a sign-in for a device with no browser, the command
          *     line. The person opens `verification_uri_complete` (or
@@ -1327,7 +1293,7 @@ export interface components {
          *     token, and `provider_logout_url`: where the browser goes next to end the
          *     identity provider's session behind it, so the next sign-in on this
          *     browser asks who it is. Null when the sign-in left no session there
-         *     (the device sign-in, the local sign-in, an operator token). It names the
+         *     (the device sign-in, the local mint, an operator token). It names the
          *     provider's session, which is not a secret.
          */
         SignedOutView: {
@@ -1378,10 +1344,10 @@ export interface components {
         /**
          * SystemSizeView
          * @description How big the system is, what the first responder to an alarm reads
-         *     before it escalates: live tenants and users, and the tasks created and
-         *     change events produced in the twenty-four hours from `since` to
-         *     `counted_at`. The maintenance worker counts it every few minutes, and
-         *     this is its latest count: `counted_at` says how old the answer is.
+         *     before it escalates: live tenants and users, and the events produced in
+         *     the twenty-four hours from `since` to `counted_at`. The maintenance
+         *     worker counts it every few minutes, and this is its latest count:
+         *     `counted_at` says how old the answer is.
          */
         SystemSizeView: {
             /** Change Events Last 24H */
@@ -1396,8 +1362,6 @@ export interface components {
              * Format: date-time
              */
             since: string;
-            /** Tasks Last 24H */
-            tasks_last_24h: number;
             /** Tenants */
             tenants: number;
             /** Users */
@@ -1425,8 +1389,8 @@ export interface components {
          * UpdateIdentityRequest
          * @description Where the person is, as an IANA name ("Europe/Istanbul"): the portal
          *     sends the browser's own on sign-in, and a time shown or sent to the
-         *     person is in it (a due date's reminder goes out at nine in the morning
-         *     there); with none sent, in UTC. A name that is not one is 422.
+         *     person is in it; with none sent, in UTC. A name that is not one is
+         *     422.
          */
         UpdateIdentityRequest: {
             /** Time Zone */
@@ -1510,7 +1474,7 @@ export interface components {
          * Permission
          * @enum {string}
          */
-        Permission: "read" | "write" | "manage_members" | "manage_keys" | "manage_billing";
+        Permission: "read" | "write" | "manage_members" | "manage_keys";
         /**
          * OwnedOrgRef
          * @description An org named in a refusal: enough to find it and to say which.
@@ -1536,22 +1500,6 @@ export interface components {
             orgs: components["schemas"]["OwnedOrgRef"][];
         };
         /**
-         * PlanLimitDetail
-         * @description What a `plan_limit_reached` refusal carries, so a client can offer the
-         *     plan that lifts the bound: the lever, the org's plan, the bound, and the
-         *     first plan above it that admits one more (null when none does).
-         */
-        PlanLimitDetail: {
-            /** Lever */
-            lever: string;
-            /** Limit */
-            limit: number | null;
-            /** Plan */
-            plan: string;
-            /** Suggested Plan */
-            suggested_plan: string | null;
-        };
-        /**
          * StreamTruncatedDetail
          * @description What a `stream_truncated` refusal carries: the floor, the highest seq
          *     trimmed from the stream, and the head. A client drops its cursor, reads
@@ -1570,7 +1518,6 @@ export interface components {
             last_owner?: components["schemas"]["LastOwnerDetail"] | null;
             /** Message */
             message: string;
-            plan_limit?: components["schemas"]["PlanLimitDetail"] | null;
             /**
              * Request Id
              * Format: uuid
@@ -2187,42 +2134,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SignInCallbackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["IssuedLoginView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dev_sign_in: {
-        parameters: {
-            query?: never;
-            header?: {
-                "x-app"?: string | null;
-                "x-app-version"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DevSignInRequest"];
             };
         };
         responses: {

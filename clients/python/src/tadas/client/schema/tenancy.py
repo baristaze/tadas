@@ -151,24 +151,6 @@ class DeleteOrgRequest(BaseModel):
     name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
 
 
-class DevSignInRequest(BaseModel):
-    """
-    Local and test only: a sign-in by address alone, with no browser round
-    trip, for the seed, the demos, the traffic generator, and the tests. A
-    person nobody knew is made, with their personal org. A deployed
-    environment never serves it: the route answers 404 there, and the
-    process refuses to start with it on.
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    display_name: Annotated[str | None, Field(max_length=200, title='Display Name')] = (
-        ''
-    )
-    email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
-
-
 class DeviceSignInView(BaseModel):
     """
     The start of a sign-in for a device with no browser, the command
@@ -481,7 +463,7 @@ class SignedOutView(BaseModel):
     token, and `provider_logout_url`: where the browser goes next to end the
     identity provider's session behind it, so the next sign-in on this
     browser asks who it is. Null when the sign-in left no session there
-    (the device sign-in, the local sign-in, an operator token). It names the
+    (the device sign-in, the local mint, an operator token). It names the
     provider's session, which is not a secret.
     """
 
@@ -525,16 +507,15 @@ class SsoLinkView(BaseModel):
 class SystemSizeView(BaseModel):
     """
     How big the system is, what the first responder to an alarm reads
-    before it escalates: live tenants and users, and the tasks created and
-    change events produced in the twenty-four hours from `since` to
-    `counted_at`. The maintenance worker counts it every few minutes, and
-    this is its latest count: `counted_at` says how old the answer is.
+    before it escalates: live tenants and users, and the events produced in
+    the twenty-four hours from `since` to `counted_at`. The maintenance
+    worker counts it every few minutes, and this is its latest count:
+    `counted_at` says how old the answer is.
     """
 
     change_events_last_24h: Annotated[int, Field(title='Change Events Last 24H')]
     counted_at: Annotated[AwareDatetime, Field(title='Counted At')]
     since: Annotated[AwareDatetime, Field(title='Since')]
-    tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
     tenants: Annotated[int, Field(title='Tenants')]
     users: Annotated[int, Field(title='Users')]
 
@@ -554,8 +535,8 @@ class UpdateIdentityRequest(BaseModel):
     """
     Where the person is, as an IANA name ("Europe/Istanbul"): the portal
     sends the browser's own on sign-in, and a time shown or sent to the
-    person is in it (a due date's reminder goes out at nine in the morning
-    there); with none sent, in UTC. A name that is not one is 422.
+    person is in it; with none sent, in UTC. A name that is not one is
+    422.
     """
 
     model_config = ConfigDict(

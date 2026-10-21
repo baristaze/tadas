@@ -28,7 +28,7 @@ knob names its port as a number, so it changes with the port
 
 | Service | Knob, default | Inside the network | Sign-in |
 |---------|---------------|--------------------|---------|
-| portal | `TADAS_PORTAL_PORT`, 55173 | `portal:8080` | `/login/dev` by address after `make seed`; `/login` through WorkOS once `TADAS_WORKOS_API_KEY` is set |
+| portal | `TADAS_PORTAL_PORT`, 55173 | `portal:8080` | `/login` through WorkOS once `TADAS_WORKOS_API_KEY` is set, as a seeded person after `make seed` |
 | api (`/docs`, `/metrics`, `/healthz`) | `TADAS_PORT`, 8000 | `api:8000` | |
 | postgres-core | `TADAS_POSTGRES_CORE_PORT`, 55432 | `postgres-core:5432` | database `tadas`; the logins are below |
 | postgres-activity | `TADAS_POSTGRES_ACTIVITY_PORT`, 55433 | `postgres-activity:5432` | as above |
@@ -84,7 +84,7 @@ hold for all of them. The init script runs on an empty data directory only.
 | Backing services plus dashboards | `make devx-up` |
 | Backing services plus app containers | `make stack-up` |
 | Apply new migrations | `make migrate` |
-| Seed again, or other people | `make seed SEED_EMAIL=me@example.test`, or the `SEED_*` knobs in `.env` |
+| Seed again, or other people | `make seed SEED_EMAIL=you@example.com`, or the `SEED_*` knobs in `.env` |
 | Record the README's demo GIFs (each empties the task list first) | `make demo-gif`, `make demo-gif-dark`, `make demo-cli-gif` |
 
 For one service at a time, name both files, both env files, and the

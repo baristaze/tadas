@@ -17,9 +17,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-AUTH_ROUTES = frozenset({"/v1/auth/dev-sign-in", "/v1/auth/sessions", "/v1/auth/logout"})
-"""Sign-in and sign-out. Every other route a run calls is a working request:
-the task routes, the event stream, and the socket's ticket."""
+AUTH_ROUTES = frozenset({"/v1/auth/memberships", "/v1/auth/sessions", "/v1/auth/logout"})
+"""Sign-in and sign-out: the places a login lists, the exchange for a
+session, and the sign-out. Every other route a run calls is a working
+request: the task routes, the event stream, and the socket's ticket."""
 
 
 @dataclass(frozen=True)

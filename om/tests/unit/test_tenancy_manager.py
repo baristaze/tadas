@@ -16,7 +16,6 @@ import pytest
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.types.billing import Entitlements
 from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
@@ -50,7 +49,6 @@ from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.root import build_tenancy
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.creates import MAX_ORGS_PER_IDENTITY, Admission, add_member_to
@@ -79,6 +77,7 @@ from contracts.second_factor import (
     second_factor,
     secret_of,
 )
+from contracts.signing_in import provider_login, tenancy_signing_in
 from contracts.tenancy import (
     SpyRelay,
     add_member,
@@ -151,7 +150,7 @@ async def test_bootstrap_produces_the_owners_context(manager: TenancyManagerInte
 
 async def test_bootstrap_login_exchange_authenticate(manager: TenancyManagerInterface) -> None:
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     # The owner nobody had seen before came with a personal org of her own.
     assert [m.org.id for m in team(login.memberships)] == [org.id]
     assert [m.role for m in login.memberships] == [Role.OWNER, Role.OWNER]
@@ -202,7 +201,7 @@ async def test_a_login_credential_cannot_call_tenant_routes(
     manager: TenancyManagerInterface,
 ) -> None:
     await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     with pytest.raises(InvalidCredential):
         await manager.authenticate(request(), login.token)
     with pytest.raises(InvalidCredential):
@@ -212,11 +211,9 @@ async def test_a_login_credential_cannot_call_tenant_routes(
 async def test_expired_sessions_are_refused(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
-    manager = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, auth_session_ttl=timedelta(seconds=-1))
-    )
+    manager = make_manager(storage, infra, TenancyOptions(auth_session_ttl=timedelta(seconds=-1)))
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     issued = await manager.sign_in.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
     )
@@ -231,7 +228,7 @@ async def test_a_session_idle_past_its_idle_lifetime_has_ended(
     idle one. Each use records itself, at most once a minute, and a session
     no request has touched yet starts its idle clock at its first use."""
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     issued = await manager.sign_in.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
     )
@@ -257,7 +254,7 @@ async def admitted_on_login(
     manager: TenancyManagerInterface, email: str, code: str | None = None
 ) -> OperatorContext:
     if code is None:
-        login = await manager.sign_in.dev_sign_in(request(), email)
+        login = await provider_login(manager, email)
     else:
         login = await second_factor(manager, email, code)
     return await manager.admit_operator(await manager.authenticate_login(request(), login.token))
@@ -339,7 +336,7 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
         await second_factor(manager, "root@example.test", code)
     # A tenant's sign-in needs no code, and one who has no factor may not send one.
     await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    await provider_login(manager, "ann@example.test")
     with pytest.raises(ValidationFailed):
         await second_factor(manager, "ann@example.test", "123456")
 
@@ -347,7 +344,7 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
 async def test_a_process_without_the_totp_key_refuses_to_enrol(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
-    manager = make_manager(storage, infra, TenancyOptions(dev_sign_in=True), outbox=outbox)
+    manager = make_manager(storage, infra, TenancyOptions(), outbox=outbox)
     operator = TenancyOperatorManagerImpl(
         storage,
         TasksStorageMemoryImpl(outbox),
@@ -580,7 +577,7 @@ async def test_each_credential_is_checked_in_the_fewest_reads(
     owner = await sign_in(manager, "ann@example.test", org[1].id)
     session = await manager.sign_in.exchange_login(
         await manager.authenticate_login(
-            request(), (await manager.sign_in.dev_sign_in(request(), "ann@example.test")).token
+            request(), (await provider_login(manager, "ann@example.test")).token
         ),
         org[1].id,
     )
@@ -617,13 +614,11 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
     relay = SpyRelay(OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics()))
-    manager = build_tenancy(
+    manager = tenancy_signing_in(
         storage,
         relay,
         infra.get_cache(CacheScope.REALTIME_TICKET),
-        TenancyOptions(dev_sign_in=True),
-        identity_provider=IdentityProviderAbsentImpl(),
-        entitlements=ON_TEAM,
+        TenancyOptions(),
     )
     with pytest.raises(NotFound):
         await manager.grant_operator(request(), "ann@example.test", OperatorRole.READ)
@@ -649,8 +644,8 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
         request(), "provisioner@platform.tadas.invalid", OperatorRole.WRITE
     )
     assert provisioner.operator_role is OperatorRole.WRITE
-    with pytest.raises(ValidationFailed):
-        await manager.sign_in.dev_sign_in(request(), "smoke@platform.tadas.invalid")
+    with pytest.raises(InvalidCredential):
+        await provider_login(manager, "smoke@platform.tadas.invalid")
     token = await manager.grant_operator_token(request(), "provisioner@platform.tadas.invalid")
     assert token.operator_role is OperatorRole.WRITE
     read_only = await manager.grant_operator_token(
@@ -700,7 +695,7 @@ async def test_a_member_added_by_another_spelling_is_the_same_person(
         request(), "ajax", "dee@EXAMPLE.test", "Dee", Role.MEMBER
     )
     assert not created and again.id == dee.id
-    signed_up = await manager.sign_in.dev_sign_in(request(), "cid@example.test")
+    signed_up = await provider_login(manager, "cid@example.test")
     identity_id = signed_up.memberships[0].user.identity_id
     _, cid, created = await manager.add_member(
         request(), "ajax", "CID@Example.test", "Cid", Role.MEMBER
@@ -726,7 +721,7 @@ async def test_an_operator_closes_an_org_at_once_and_the_queue_deletes_it(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     issued = await manager.sign_in.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
     )
@@ -738,7 +733,7 @@ async def test_an_operator_closes_an_org_at_once_and_the_queue_deletes_it(
     with pytest.raises(CredentialExpired):
         await manager.authenticate(request(), issued.token)
     # Ann keeps her personal org, the one place no deletion reaches.
-    left = (await manager.sign_in.dev_sign_in(request(), "ann@example.test")).memberships
+    left = (await provider_login(manager, "ann@example.test")).memberships
     assert [m.org.kind for m in left] == [OrgKind.PERSONAL]
     # A repeat, before the queue has run, answers the org as it stands.
     assert await operator.delete_org(admin, org.id) == closed
@@ -789,9 +784,7 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
     # Within the retention nothing of the tenant is deleted in its own right, so
     # nothing goes; past it, every row of the tenant goes and the org row stays.
     assert await manager.purge_tenant(sweep) == 0
-    no_retention = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
-    )
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     assert await no_retention.purge_tenant(sweep) == 5, "user, membership, key, session, ticket"
     assert await storage.read_users(org.id, None, limit=10) == []
     assert await storage.read_memberships(org.id, limit=10) == []
@@ -949,9 +942,7 @@ async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     # The purge across tenants takes the one member who left, and the
     # tenant's own purge takes nothing of a tenant that lives.
     assert await manager.purge_across_tenants() == 0, "retention has not passed"
-    no_retention = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
-    )
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     assert await no_retention.purge_tenant(ctx) == 0, "the tenant lives"
     assert await no_retention.purge_across_tenants() == 2, "the user and the membership"
     assert await storage.read_user(org.id, ann.id) is None
@@ -964,19 +955,15 @@ async def test_the_sweep_purges_the_expired_logins_of_the_system_scope(
     # The purge runs across tenants in the system scope, so the expired ones
     # go with a tenant's dead sessions; the sweep still mints a context for
     # that scope first.
-    manager = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, login_ttl=timedelta(seconds=-1))
-    )
+    manager = make_manager(storage, infra, TenancyOptions(login_ttl=timedelta(seconds=-1)))
     await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     found = await storage.read_auth_session_by_digest(hash_token(login.token))
     assert found is not None and found[0] == EMPTY_UUID
     system = next(c for c in await manager.service_contexts(request()) if c.org_id == EMPTY_UUID)
     assert system.user_id == EMPTY_UUID and system.role is Role.SERVICE
     assert await manager.purge_across_tenants() == 0, "retention has not passed"
-    no_retention = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
-    )
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     assert await no_retention.purge_tenant(system) == 0, "the system scope never expires"
     assert await no_retention.purge_across_tenants() == 1
     assert await storage.read_auth_session_by_digest(hash_token(login.token)) is None
@@ -985,9 +972,7 @@ async def test_the_sweep_purges_the_expired_logins_of_the_system_scope(
 async def test_expired_api_keys_are_purged_like_revoked_ones(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
-    manager = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, api_key_ttl=timedelta(seconds=1))
-    )
+    manager = make_manager(storage, infra, TenancyOptions(api_key_ttl=timedelta(seconds=1)))
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     ctx = await sign_in(manager, "ann@example.test", org.id)
     expired = await manager.credentials.create_api_key(
@@ -997,9 +982,7 @@ async def test_expired_api_keys_are_purged_like_revoked_ones(
     assert [k.id for k in (await manager.credentials.get_api_keys(ctx, None, limit=10)).items] == [
         expired.api_key.id
     ]
-    no_retention = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
-    )
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     assert await no_retention.purge_across_tenants() == 1
     assert await storage.read_api_key(org.id, expired.api_key.id) is None
 
@@ -1094,7 +1077,7 @@ async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
     manager: TenancyManagerInterface,
 ) -> None:
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     session = await manager.sign_in.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
     )
@@ -1116,9 +1099,7 @@ async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
 async def test_expired_tickets_are_refused(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
-    manager = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, ticket_ttl=timedelta(seconds=-1))
-    )
+    manager = make_manager(storage, infra, TenancyOptions(ticket_ttl=timedelta(seconds=-1)))
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     ctx = await sign_in(manager, "ann@example.test", org.id)
     issued = await manager.issue_ticket(ctx)
@@ -1152,7 +1133,7 @@ async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerInte
         "Bob",
     ]
 
-    login = await manager.sign_in.dev_sign_in(request(), "bob@example.test")
+    login = await provider_login(manager, "bob@example.test")
     assert [(m.org.id, m.role) for m in team(login.memberships)] == [(org.id, Role.MEMBER)]
     # Bob was nobody before: he came with his personal org, and owns it.
     assert [(m.org.name, m.role) for m in login.memberships if m.org.personal] == [
@@ -1167,7 +1148,7 @@ async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManager
         request(), "globex", "ann@example.test", "Ann", Role.VIEWER
     )
     assert created
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     assert sorted(m.role.value for m in team(login.memberships)) == ["owner", "viewer"]
 
 
@@ -1477,9 +1458,7 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
     names could be the row cut off."""
     storage = TenancyStorageMemoryImpl(outbox)
     # Three places: the personal org every person has, and two more.
-    manager = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, max_orgs_per_identity=3), outbox=outbox
-    )
+    manager = make_manager(storage, infra, TenancyOptions(max_orgs_per_identity=3), outbox=outbox)
     _, first = await manager.bootstrap(request(), "A", "a", "ann@example.test", "Ann")
     _, second = await manager.bootstrap(request(), "B", "b", "ann@example.test", "Ann")
     await manager.bootstrap(request(), "C", "c", "cid@example.test", "Cid")
@@ -1492,7 +1471,7 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
         request(), "a", "ann@example.test", "Ann", Role.MEMBER
     )
     assert not created and again.email == "ann@example.test"
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     assert {m.org.id for m in team(login.memberships)} == {first.id, second.id}
 
     # A third user lands past the refusal, the way two racing adds would.
@@ -1504,7 +1483,7 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
     await storage.write_user(third.id, raced)
     await storage.write_membership(third.id, make_membership(raced.id))
     with pytest.raises(MembershipLimitReached):
-        await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+        await provider_login(manager, "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     with pytest.raises(MembershipLimitReached):
         await manager.sign_in.exchange_login(ictx, first.id)
@@ -1533,7 +1512,7 @@ async def test_a_live_session_proves_the_identity_and_a_dead_one_does_not(
     manager: TenancyManagerInterface,
 ) -> None:
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     session = await manager.sign_in.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
     )
@@ -1550,19 +1529,17 @@ async def test_a_live_session_proves_the_identity_and_a_dead_one_does_not(
 async def test_an_expired_session_or_a_removed_members_proves_no_identity(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
-    expiring = make_manager(
-        storage, infra, TenancyOptions(dev_sign_in=True, auth_session_ttl=timedelta(seconds=-1))
-    )
+    expiring = make_manager(storage, infra, TenancyOptions(auth_session_ttl=timedelta(seconds=-1)))
     manager = make_manager(storage, infra)
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     stale = await expiring.sign_in.exchange_login(ictx, org.id)
     with pytest.raises(CredentialExpired):
         await manager.authenticate_login(request(), stale.token)
     # A member removed from the org: the session they held proves nothing.
     bob = await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
-    bob_login = await manager.sign_in.dev_sign_in(request(), "bob@example.test")
+    bob_login = await provider_login(manager, "bob@example.test")
     bob_session = await manager.sign_in.exchange_login(
         await manager.authenticate_login(request(), bob_login.token), org.id
     )

@@ -13,11 +13,12 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id
 from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.exceptions import NotAuthenticated, NotFound
-from tadas.om.root import build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.work.types.work_item import WorkKind
+
+from contracts.signing_in import managers_signing_in, provider_login
 
 pytestmark = pytest.mark.integration
 
@@ -44,11 +45,11 @@ async def storage(
 async def test_an_operator_closes_a_team_org_at_once_and_its_work_deletes_it(
     storage: StoragePostgresImpl, tmp_path: Path
 ) -> None:
-    managers = build_managers(storage, InfraLocalImpl(tmp_path), TenancyOptions(dev_sign_in=True))
+    managers = managers_signing_in(storage, InfraLocalImpl(tmp_path), TenancyOptions())
     tenancy = managers.tenancy
     _, org = await tenancy.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     await tenancy.add_member(request(), "ajax", "bob@example.test", "Bob", Role.MEMBER)
-    login = await tenancy.sign_in.dev_sign_in(request(), "bob@example.test")
+    login = await provider_login(tenancy, "bob@example.test")
     issued = await tenancy.sign_in.exchange_login(
         await tenancy.authenticate_login(request(), login.token), org.id
     )

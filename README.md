@@ -12,8 +12,8 @@ maintenance worker around them, and a portal, a command line, and the
 clients at the edge.
 
 Its base is the guideline's scaffold,
-[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.62.0/scaffold/acme_root)
-at v0.62.0, rendered as Tadas. The `scaffold` branch keeps each render,
+[`scaffold/acme_root/`](https://github.com/baristaze/swe_guidelines/tree/v0.63.0/scaffold/acme_root)
+at v0.63.0, rendered as Tadas. The `scaffold` branch keeps each render,
 and the main branch merges it, so every difference from the scaffold is
 Tadas's own. `/swe-guidelines:arch-upgrade-scaffold` moves the base to
 a later release by a merge.
@@ -58,9 +58,10 @@ make reset    # wipe the data and the containers, then `make up`
 make urls     # print the URLs and the sign-ins again
 ```
 
-`make up` ends by printing every local URL and the seeded sign-ins,
-and `make urls` prints them again. The portal's `/login/dev` signs in
-a seeded person by address alone; `/login` goes through WorkOS once
+`make up` ends by printing every local URL and the seeded people, and
+`make urls` prints them again. Each seeded person is a plus-address of
+your `SEED_EMAIL` (set it in `.env`; git's `user.email` otherwise), and
+signs in at `/login` through WorkOS, as anyone does, once
 `TADAS_WORKOS_API_KEY` is set. [The local stack](deployment/local/README.md#ports)
 has every port, each a knob in `.env.example`: set it in `.env` when a
 port is taken.

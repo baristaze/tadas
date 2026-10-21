@@ -7,8 +7,7 @@ out, the orgs, the task verbs (`add`, `ls`, `edit`, `done`, `reopen`, `rm`,
 tasks as it happens.
 
 ```bash
-uv run tadas login --org acme        # confirm the code in the browser
-uv run tadas login --dev-email bob@example.test --org acme   # local stack only
+uv run tadas login --org acme        # confirm the code in the browser, on every stack
 uv run tadas whoami
 uv run tadas orgs                    # * marks the auth session's org
 uv run tadas switch fabrikam         # the old auth session ends

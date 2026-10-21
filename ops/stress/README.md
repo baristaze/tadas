@@ -6,11 +6,12 @@ client does and reads the signals back when it ends.
 
 ## The session
 
-Each person signs in once per run, by the local sign-in, and out once at
-the end. A session opens the realtime channel, lists the open tasks, adds
-five or six, edits one, completes two, reopens one, moves one, lists the
-done ones, deletes one, reads the change events, and waits to see its own
-change on the socket. A person thinks between steps.
+Each person signs in once per run, by the local mint (one `tadas-api
+mint-local-login` for all of them, on the local database), and out once
+at the end. A session opens the realtime channel, lists the open tasks,
+adds five or six, edits one, completes two, reopens one, moves one, lists
+the done ones, deletes one, reads the change events, and waits to see its
+own change on the socket. A person thinks between steps.
 
 The people of an org share its open list. A write that meets a task
 changed under it, by a reminder or by the sweep's respace of a run of

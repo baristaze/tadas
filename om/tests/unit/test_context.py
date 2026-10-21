@@ -11,7 +11,7 @@ from pydantic import ValidationError
 import tadas.om
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id
 from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import (
@@ -42,6 +42,7 @@ from tadas.om.tenancy.rules import operator_permissions_of, permissions_of
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 
 from contracts.plans import ON_TEAM
+from contracts.signing_in import provider_login, signing_in
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
@@ -60,14 +61,16 @@ def manager(tmp_path: Path) -> TenancyManagerInterface:
     outbox = OutboxStorageMemoryImpl()
     infra = InfraLocalImpl(tmp_path)
     relay = OutboxRelayImpl(outbox, ChangeEventStorageMemoryImpl(), infra.get_topics())
-    return build_tenancy(
+    twin = IdentityProviderTwinImpl()
+    manager = build_tenancy(
         TenancyStorageMemoryImpl(outbox),
         relay,
         infra.get_cache(CacheScope.REALTIME_TICKET),
-        TenancyOptions(dev_sign_in=True),
-        identity_provider=IdentityProviderAbsentImpl(),
+        TenancyOptions(),
+        identity_provider=twin,
         entitlements=ON_TEAM,
     )
+    return signing_in(manager, twin)
 
 
 # The stages are refinements: a subclass is accepted where its base is asked for.
@@ -96,7 +99,7 @@ async def test_login_then_authenticate_login_produces_the_identity_stage(
 ) -> None:
     await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     rctx = request()
-    login = await manager.sign_in.dev_sign_in(rctx, "ann@example.test")
+    login = await provider_login(manager, "ann@example.test", rctx=rctx)
     ictx = await manager.authenticate_login(rctx, login.token)
     assert type(ictx) is IdentityContext
     assert ictx.email == "ann@example.test"
@@ -115,7 +118,7 @@ async def test_authenticate_login_takes_a_session_token_and_refuses_an_api_key(
     manager: TenancyManagerInterface,
 ) -> None:
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     session = await manager.sign_in.exchange_login(ictx, org.id)
     # A live session proves the identity of its user as well as the tenant.
@@ -135,7 +138,7 @@ async def test_exchange_login_produces_a_session_and_refuses_a_non_member(
 ) -> None:
     _, ajax = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
     _, beta = await manager.bootstrap(request(), "Beta", "beta", "bob@example.test", "Bob")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     issued = await manager.sign_in.exchange_login(ictx, ajax.id)
     assert issued.org.id == ajax.id and issued.role is Role.OWNER
@@ -147,7 +150,7 @@ async def test_authenticate_produces_the_tenant_stage_and_refuses_a_login_token(
     manager: TenancyManagerInterface,
 ) -> None:
     _, org = await manager.bootstrap(request(), "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     issued = await manager.sign_in.exchange_login(ictx, org.id)
     rctx = request()
@@ -178,7 +181,7 @@ async def test_admit_operator_produces_the_operator_stage_for_operators_only(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     with pytest.raises(NotAnOperator):
         await manager.admit_operator(await manager.authenticate_login(request(), login.token))
 
@@ -264,7 +267,7 @@ async def test_service_and_socket_contexts_refine_the_request_they_are_given(
     assert service.security.role is Role.SERVICE and service.request_id == rctx.request_id
     assert {c.request_id for c in await manager.service_contexts(rctx)} == {rctx.request_id}
 
-    login = await manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(manager, "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     session = await manager.sign_in.exchange_login(ictx, org.id)
     ctx = await manager.authenticate(request(), session.token)
