@@ -1344,10 +1344,10 @@ export interface components {
         /**
          * SystemSizeView
          * @description How big the system is, what the first responder to an alarm reads
-         *     before it escalates: live tenants and users, and the events produced in
-         *     the twenty-four hours from `since` to `counted_at`. The maintenance
-         *     worker counts it every few minutes, and this is its latest count:
-         *     `counted_at` says how old the answer is.
+         *     before it escalates: live tenants and users, and the tasks created and
+         *     change events produced in the twenty-four hours from `since` to
+         *     `counted_at`. The maintenance worker counts it every few minutes, and
+         *     this is its latest count: `counted_at` says how old the answer is.
          */
         SystemSizeView: {
             /** Change Events Last 24H */
@@ -1362,6 +1362,8 @@ export interface components {
              * Format: date-time
              */
             since: string;
+            /** Tasks Last 24H */
+            tasks_last_24h: number;
             /** Tenants */
             tenants: number;
             /** Users */
@@ -1389,8 +1391,8 @@ export interface components {
          * UpdateIdentityRequest
          * @description Where the person is, as an IANA name ("Europe/Istanbul"): the portal
          *     sends the browser's own on sign-in, and a time shown or sent to the
-         *     person is in it; with none sent, in UTC. A name that is not one is
-         *     422.
+         *     person is in it (a due date's reminder goes out at nine in the morning
+         *     there); with none sent, in UTC. A name that is not one is 422.
          */
         UpdateIdentityRequest: {
             /** Time Zone */
@@ -1474,7 +1476,7 @@ export interface components {
          * Permission
          * @enum {string}
          */
-        Permission: "read" | "write" | "manage_members" | "manage_keys";
+        Permission: "read" | "write" | "manage_members" | "manage_keys" | "manage_billing";
         /**
          * OwnedOrgRef
          * @description An org named in a refusal: enough to find it and to say which.
@@ -1500,6 +1502,22 @@ export interface components {
             orgs: components["schemas"]["OwnedOrgRef"][];
         };
         /**
+         * PlanLimitDetail
+         * @description What a `plan_limit_reached` refusal carries, so a client can offer the
+         *     plan that lifts the bound: the lever, the org's plan, the bound, and the
+         *     first plan above it that admits one more (null when none does).
+         */
+        PlanLimitDetail: {
+            /** Lever */
+            lever: string;
+            /** Limit */
+            limit: number | null;
+            /** Plan */
+            plan: string;
+            /** Suggested Plan */
+            suggested_plan: string | null;
+        };
+        /**
          * StreamTruncatedDetail
          * @description What a `stream_truncated` refusal carries: the floor, the highest seq
          *     trimmed from the stream, and the head. A client drops its cursor, reads
@@ -1518,6 +1536,7 @@ export interface components {
             last_owner?: components["schemas"]["LastOwnerDetail"] | null;
             /** Message */
             message: string;
+            plan_limit?: components["schemas"]["PlanLimitDetail"] | null;
             /**
              * Request Id
              * Format: uuid

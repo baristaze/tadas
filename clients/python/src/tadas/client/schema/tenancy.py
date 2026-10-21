@@ -507,15 +507,16 @@ class SsoLinkView(BaseModel):
 class SystemSizeView(BaseModel):
     """
     How big the system is, what the first responder to an alarm reads
-    before it escalates: live tenants and users, and the events produced in
-    the twenty-four hours from `since` to `counted_at`. The maintenance
-    worker counts it every few minutes, and this is its latest count:
-    `counted_at` says how old the answer is.
+    before it escalates: live tenants and users, and the tasks created and
+    change events produced in the twenty-four hours from `since` to
+    `counted_at`. The maintenance worker counts it every few minutes, and
+    this is its latest count: `counted_at` says how old the answer is.
     """
 
     change_events_last_24h: Annotated[int, Field(title='Change Events Last 24H')]
     counted_at: Annotated[AwareDatetime, Field(title='Counted At')]
     since: Annotated[AwareDatetime, Field(title='Since')]
+    tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
     tenants: Annotated[int, Field(title='Tenants')]
     users: Annotated[int, Field(title='Users')]
 
@@ -535,8 +536,8 @@ class UpdateIdentityRequest(BaseModel):
     """
     Where the person is, as an IANA name ("Europe/Istanbul"): the portal
     sends the browser's own on sign-in, and a time shown or sent to the
-    person is in it; with none sent, in UTC. A name that is not one is
-    422.
+    person is in it (a due date's reminder goes out at nine in the morning
+    there); with none sent, in UTC. A name that is not one is 422.
     """
 
     model_config = ConfigDict(
