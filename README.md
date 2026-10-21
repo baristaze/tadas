@@ -26,7 +26,7 @@ Two of the seeded people on their team's list: each change Bob makes
 reaches the owner's window as it happens. `make demo-gif` records it.
 
 <p align="center">
-  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob signs in with tadas login, adds a task due tomorrow, adds another and attaches an image to it, lists the open tasks, and completes the first. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
+  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob, signed in, adds a task due tomorrow, adds another and attaches an image to it, lists the open tasks, and completes the first. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
 </p>
 
 The same from two terminals, with the owner's `tadas listen` on the
@@ -37,8 +37,10 @@ right. `make demo-cli-gif` records it.
 A task has a title, notes, a due date with one reminder, an assignee,
 and attachments. A team imports its list from a CSV file, and a done
 task nobody touched for ninety days is archived, never deleted. People
-sign in through WorkOS, each with a personal org, and join a team org
-by invitation or through their company's single sign-on. An org pays
+sign in through WorkOS, by an email code, Google, Microsoft, Apple,
+GitHub, or their company's single sign-on, and never with a password.
+Each has a personal org, and joins a team org by invitation or through
+that single sign-on. An org pays
 for its plan through Stripe. A team can bring Tadas into its Slack
 channel, where it posts and answers `/tadas`.
 [What Tadas is made of](om/README.md) tells it for a reader with no
@@ -61,8 +63,9 @@ make urls     # print the URLs and the sign-ins again
 `make up` ends by printing every local URL and the seeded people, and
 `make urls` prints them again. Each seeded person is a plus-address of
 your `SEED_EMAIL` (set it in `.env`; git's `user.email` otherwise), and
-signs in at `/login` through WorkOS, as anyone does, once
-`TADAS_WORKOS_API_KEY` is set. [The local stack](deployment/local/README.md#ports)
+signs in at `/login` through WorkOS's Staging application, as anyone
+does, once `TADAS_WORKOS_API_KEY` holds its `tadas-local` key
+([the WorkOS runbook](docs/runbooks/providers/workos.md#local-development)). [The local stack](deployment/local/README.md#ports)
 has every port, each a knob in `.env.example`: set it in `.env` when a
 port is taken.
 

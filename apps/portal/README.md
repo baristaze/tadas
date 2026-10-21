@@ -162,7 +162,9 @@ pnpm --filter @tadas/portal test
 make openapi                      # regenerates the client's types
 ```
 
-A person signs in only through the identity provider, at `/login`. On
-the local stack the portal signs in through WorkOS's Staging
-application. Without its key the API answers `503`, the page says
-sign-in is not available, and nobody signs in.
+A person signs in only through the identity provider, at `/login`: an
+email code, Google, Microsoft, Apple, GitHub, or the org's single
+sign-on, with passwords off. On the local stack the portal signs in
+through WorkOS's Staging application, with its `tadas-local` key in
+`TADAS_WORKOS_API_KEY`. Without the key the API answers `503`, the page
+says sign-in is not available, and nobody signs in.

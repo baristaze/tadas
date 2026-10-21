@@ -28,7 +28,7 @@ knob names its port as a number, so it changes with the port
 
 | Service | Knob, default | Inside the network | Sign-in |
 |---------|---------------|--------------------|---------|
-| portal | `TADAS_PORTAL_PORT`, 55173 | `portal:8080` | `/login` through WorkOS once `TADAS_WORKOS_API_KEY` is set, as a seeded person after `make seed` |
+| portal | `TADAS_PORTAL_PORT`, 55173 | `portal:8080` | `/login` through WorkOS's Staging application once `TADAS_WORKOS_API_KEY` holds its `tadas-local` key, as a seeded person after `make seed` |
 | api (`/docs`, `/metrics`, `/healthz`) | `TADAS_PORT`, 8000 | `api:8000` | |
 | postgres-core | `TADAS_POSTGRES_CORE_PORT`, 55432 | `postgres-core:5432` | database `tadas`; the logins are below |
 | postgres-activity | `TADAS_POSTGRES_ACTIVITY_PORT`, 55433 | `postgres-activity:5432` | as above |
