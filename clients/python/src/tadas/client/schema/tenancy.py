@@ -151,24 +151,6 @@ class DeleteOrgRequest(BaseModel):
     name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
 
 
-class DevSignInRequest(BaseModel):
-    """
-    Local and test only: a sign-in by address alone, with no browser round
-    trip, for the seed, the traffic generator, and the tests. A
-    person nobody knew is made, with their personal org. A deployed
-    environment never serves it: the route answers 404 there, and the
-    process refuses to start with it on.
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    display_name: Annotated[str | None, Field(max_length=200, title='Display Name')] = (
-        ''
-    )
-    email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
-
-
 class DeviceSignInView(BaseModel):
     """
     The start of a sign-in for a device with no browser, the command
@@ -481,7 +463,7 @@ class SignedOutView(BaseModel):
     token, and `provider_logout_url`: where the browser goes next to end the
     identity provider's session behind it, so the next sign-in on this
     browser asks who it is. Null when the sign-in left no session there
-    (the device sign-in, the local sign-in, an operator token). It names the
+    (the device sign-in, the local mint, an operator token). It names the
     provider's session, which is not a secret.
     """
 

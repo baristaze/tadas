@@ -15,6 +15,9 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 URL = "TADAS_DATABASE_MIGRATION_URL"
 IN_DOTENV = "postgresql+asyncpg://tadas_migration:tadas_migration@127.0.0.1:55432/from_dotenv"
@@ -98,3 +101,116 @@ def test_dev_script_takes_the_exported_value_over_dotenv(tmp_path: Path) -> None
     lines = seen.read_text().splitlines()
     assert lines
     assert set(lines) == {f"{EXPORTED}|dotenv@example.test"}
+
+
+SEEDED = (
+    "seeded:\n"
+    "\t@printf '%s\\n' '$(SEED_OWNER_EMAIL)' '$(SEED_ADMIN_EMAIL)' '$(SEED_MEMBER_EMAIL)'\n"
+)
+
+
+def _seeded(checkout: Path, env: dict[str, str], *arguments: str) -> list[str]:
+    (checkout / "seeded.mk").write_text(SEEDED)
+    done = subprocess.run(
+        ["make", "-s", "-f", "Makefile", "-f", "seeded.mk", "seeded", *arguments],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.splitlines()
+
+
+def test_each_seeded_person_is_a_plus_address_of_the_base(tmp_path: Path) -> None:
+    """Every seeded person has an address WorkOS can send a code to, all in
+    the mailbox of the one base address: the owner of the first org, the
+    owner of the second (an admin of the first), and the member."""
+    checkout = _checkout(tmp_path)
+    assert _seeded(checkout, _shell(), "SEED_EMAIL=dev@example.com") == [
+        "dev+tadas+local+ajax@example.com",
+        "dev+tadas+local+fabrikam@example.com",
+        "dev+tadas+local+personal@example.com",
+    ]
+
+
+def test_with_no_base_the_seed_takes_gits_address(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    (checkout / ".env").write_text("")
+    git_config = tmp_path / "gitconfig"
+    git_config.write_text("[user]\n\temail = me@example.org\n")
+    shell = _shell(GIT_CONFIG_GLOBAL=str(git_config), GIT_CONFIG_NOSYSTEM="1")
+    assert _seeded(checkout, shell)[0] == "me+tadas+local+ajax@example.org"
+
+
+def _seed(
+    checkout: Path, env: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """`make seed` in the copy, with a `uv` that records the arguments of each
+    command it is handed in place of running it, and a home of its own."""
+    bin_dir = checkout / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    ran = checkout / "ran"
+    fake = bin_dir / "uv"
+    fake.write_text(f'#!/bin/sh\necho "$*" >> "{ran}"\n')
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    path = f"{bin_dir}{os.pathsep}{env.get('PATH', os.defpath)}"
+    done = subprocess.run(
+        ["make", "-s", "-f", "Makefile", "seed"],
+        cwd=checkout,
+        env={**env, "PATH": path, "HOME": str(checkout)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done, ran.read_text().splitlines() if ran.exists() else []
+
+
+def _no_git_identity(tmp_path: Path) -> dict[str, str]:
+    empty = tmp_path / "gitconfig"
+    empty.write_text("")
+    return {"GIT_CONFIG_GLOBAL": str(empty), "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+@pytest.mark.parametrize(
+    "base", ["owner@example.test", "me@tadas.example", "me@tadas.invalid", "me@localhost"]
+)
+def test_the_seed_refuses_a_base_on_a_domain_that_takes_no_mail(tmp_path: Path, base: str) -> None:
+    """A checkout whose `.env` still names an address on a reserved domain
+    would seed people WorkOS can send no code to. The seed refuses it before
+    it writes anything, naming the line to change, and `make reset` for a
+    database seeded before, whose orgs the seed would keep."""
+    checkout = _checkout(tmp_path)
+    (checkout / ".env").write_text(f"SEED_EMAIL={base}\n")
+    done, ran = _seed(checkout, _shell())
+    assert done.returncode == 2, done.stderr
+    assert f"make seed: {base} is on a domain that takes no mail" in done.stderr
+    assert "the SEED_EMAIL= line in .env" in done.stderr
+    assert "`make reset`" in done.stderr
+    assert ran == []
+
+
+def test_the_seed_takes_a_base_that_takes_mail(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    (checkout / ".env").write_text("SEED_EMAIL=dev@example.com\n")
+    done, ran = _seed(checkout, _shell())
+    assert done.returncode == 0, done.stderr
+    assert "--email dev+tadas+local+ajax@example.com" in ran[0]
+
+
+def test_the_telemetry_job_seeds_on_a_runner_with_no_git_identity(tmp_path: Path) -> None:
+    """The copy's CI job copies `.env.example`, which names no base, onto a
+    runner with no git identity: the seed has no base until the job's own
+    environment names one, which the round trip and the traffic run read too."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    job_env = {name: str(value) for name, value in workflow["jobs"]["telemetry"]["env"].items()}
+    checkout = _checkout(tmp_path)
+    shutil.copy(ROOT / ".env.example", checkout / ".env")
+    runner = _shell(**_no_git_identity(tmp_path))
+    done, ran = _seed(checkout, runner)
+    assert done.returncode == 2 and "no base address" in done.stderr
+    assert ran == []
+    done, ran = _seed(checkout, {**runner, **job_env})
+    assert done.returncode == 0, done.stderr
+    local, domain = job_env["SEED_EMAIL"].split("@")
+    assert f"--email {local}+tadas+local+ajax@{domain}" in ran[0]

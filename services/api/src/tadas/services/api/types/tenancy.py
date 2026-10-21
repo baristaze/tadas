@@ -139,17 +139,6 @@ class DeviceTokenRequest(RequestBody):
     device_code: str = Field(min_length=1, max_length=500)
 
 
-class DevSignInRequest(RequestBody):
-    """Local and test only: a sign-in by address alone, with no browser round
-    trip, for the seed, the traffic generator, and the tests. A
-    person nobody knew is made, with their personal org. A deployed
-    environment never serves it: the route answers 404 there, and the
-    process refuses to start with it on."""
-
-    email: str = Field(min_length=3, max_length=320)
-    display_name: str = Field(default="", max_length=200)
-
-
 class SecondFactorRequest(RequestBody):
     """The code from an authenticator, presented with a sign-in credential.
     The answer is a new sign-in that records the verified code, which the
@@ -232,7 +221,7 @@ class SignedOutView(AuthSessionView):
     token, and `provider_logout_url`: where the browser goes next to end the
     identity provider's session behind it, so the next sign-in on this
     browser asks who it is. Null when the sign-in left no session there
-    (the device sign-in, the local sign-in, an operator token). It names the
+    (the device sign-in, the local mint, an operator token). It names the
     provider's session, which is not a secret."""
 
     provider_logout_url: str | None = None

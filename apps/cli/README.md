@@ -4,8 +4,7 @@ Tadas from the terminal. A command does one thing and returns; `listen`
 stays and prints every change in the org as it happens.
 
 ```bash
-uv run tadas login --org ajax        # confirm the code in the browser
-uv run tadas login --dev-email bob@example.test --org ajax   # local stack only
+uv run tadas login --org ajax        # confirm the code in the browser, on every stack
 uv run tadas whoami
 uv run tadas orgs                    # * marks the auth session's org
 uv run tadas switch fabrikam         # the old auth session ends
