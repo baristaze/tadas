@@ -20,6 +20,16 @@ $(foreach name,$(EXPORTED),$(eval EXPORTED.$(name) := $$(value $(name))))
 include $(ENV_FILES)
 $(foreach name,$(EXPORTED),$(eval $(name) := $$(EXPORTED.$(name))))
 COMPOSE_ENV := $(foreach file,$(ENV_FILES),--env-file $(file))
+# The seeded people's addresses, each a plus-address of one base address
+# WorkOS can send a code to: SEED_EMAIL from .env or the shell, else git's
+# user.email (.env.example lists who is who).
+ifndef SEED_EMAIL
+SEED_EMAIL := $(shell git config user.email 2>/dev/null)
+endif
+seed_address = $(firstword $(subst @, ,$(SEED_EMAIL)))+tadas+local+$(1)@$(word 2,$(subst @, ,$(SEED_EMAIL)))
+SEED_OWNER_EMAIL := $(call seed_address,$(SEED_SLUG))
+SEED_ADMIN_EMAIL := $(call seed_address,$(SEED_SECOND_SLUG))
+SEED_MEMBER_EMAIL := $(call seed_address,personal)
 # The one switch between hosts: on Linux, host.docker.internal is the bridge
 # gateway, which a process on 127.0.0.1 never answers, so the devx collector
 # that scrapes the host processes joins the host's network there.
@@ -52,7 +62,7 @@ SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 # follows, on the project's Python: the checker refuses a Python older than
 # .python-version. Offline, point it at a checkout:
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
-ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.62.0\#subdirectory=checkers" arch-check
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.63.0\#subdirectory=checkers" arch-check
 
 # pnpm at the version packageManager in package.json names. Node 25 and
 # later ship no corepack, so a Node installed or switched to has no pnpm
@@ -125,8 +135,8 @@ reset: ## Wipe every container and all local data, then `make up`
 .PHONY: urls
 urls: ## Print the local URLs and the seeded sign-ins
 	@echo ""
-	@echo "  Portal         http://localhost:$(TADAS_PORTAL_PORT)   /login through WorkOS; /login/dev as $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL)"
-	@echo "                 two orgs: $(SEED_ADMIN_EMAIL) at /login/dev   owner of $(SEED_SECOND_ORG), admin of $(SEED_ORG)"
+	@echo "  Portal         http://localhost:$(TADAS_PORTAL_PORT)   /login through WorkOS, as $(SEED_OWNER_EMAIL) or $(SEED_MEMBER_EMAIL)"
+	@echo "                 two orgs and the operator plane: $(SEED_ADMIN_EMAIL)   owner of $(SEED_SECOND_ORG), admin of $(SEED_ORG)"
 	@echo "  API docs       http://127.0.0.1:$(TADAS_PORT)/docs"
 	@echo "  pgweb          http://localhost:$(TADAS_PGWEB_PORT)   core; a bookmark per role in its connect dialog"
 	@echo "  Valkey Admin   http://localhost:$(TADAS_VALKEY_ADMIN_PORT)"
@@ -200,10 +210,17 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all --local
 
 # The SEED_* values come from .env (or .env.example); override any of them
-# there or on the command line, e.g. `make seed SEED_EMAIL=me@example.test`.
-# The admin owns the second org and joins the first as an admin: one person
-# with two memberships, each under a different role. The first org is a
-# team of three, so the seed grants it Team; the second stays on Free.
+# there or on the command line, e.g. `make seed SEED_EMAIL=you@example.com`.
+# Each person's address is a plus-address of SEED_EMAIL (see the top of this
+# file), so WorkOS delivers their code to its owner's mailbox. A base on a
+# domain that takes no mail (.test, .example, .invalid, .localhost) is
+# refused before anything is written.
+# The admin owns the second org, joins the first as an admin, and is an
+# operator on the local allowlist: one person with two memberships, each
+# under a different role, who signs in to the operator plane as everyone
+# does, through WorkOS, the device flow, and the second factor. The first
+# org is a team of three, so the seed grants it Team; the second stays on
+# Free.
 # Then the two local operators, the system's own identities of
 # tadas.ops.environments.LOCAL_OPERATORS: a read operator and the
 # provisioner, which writes. The read operator's token goes into the
@@ -214,9 +231,15 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 # since each lasts an hour.
 .PHONY: seed
 seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as, and the two local operators; a no-op once they exist
+	@case "$(SEED_EMAIL)" in \
+		*[@.]test|*[@.]example|*[@.]invalid|*[@.]localhost) \
+			echo "make seed: $(SEED_EMAIL) is on a domain that takes no mail, so WorkOS can send its people no code. Set the SEED_EMAIL= line in .env to your own address, then run \`make reset\` if this database was seeded before: the seed keeps an org that exists, and its owner" >&2; exit 2 ;; \
+		?*@?*) ;; \
+		*) echo "make seed: no base address; set SEED_EMAIL in .env to your own, or git's user.email" >&2; exit 2 ;; \
+	esac
 	uv run --package tadas-api tadas-api bootstrap --if-absent --plan team \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
-		--email "$(SEED_EMAIL)"
+		--email "$(SEED_OWNER_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" \
 		--name "$(SEED_MEMBER_NAME)" --email "$(SEED_MEMBER_EMAIL)"
 	uv run --package tadas-api tadas-api bootstrap --if-absent \
@@ -224,6 +247,8 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 		--email "$(SEED_ADMIN_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" --role admin \
 		--name "$(SEED_ADMIN_NAME)" --email "$(SEED_ADMIN_EMAIL)"
+	uv run --package tadas-api tadas-api grant-operator --permission write \
+		--email "$(SEED_ADMIN_EMAIL)"
 	uv run --package tadas-api tadas-api grant-operator --permission read \
 		--email operator@platform.tadas.invalid
 	uv run --package tadas-api tadas-api grant-operator --permission write \
@@ -241,21 +266,25 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 
 # Needs `make up` (the seeded owner and member, the API on 8000, the portal on
 # 55173). Empties the task list, then records docs/media/realtime-demo.gif:
-# Bob's window on the left, the owner's on the right.
+# Bob's window on the left, the owner's on the right. Both sign in through
+# the local mint, `tadas-api mint-local-login`, on the local database.
 .PHONY: demo-gif
 demo-gif: ## Record the README's realtime demo GIF against the running stack
-	uv run python scripts/record_demo.py docs/media/realtime-demo.gif
+	uv run python scripts/record_demo.py docs/media/realtime-demo.gif \
+		--owner "$(SEED_OWNER_EMAIL)" --member "$(SEED_MEMBER_EMAIL)"
 
 # The same story in the dark theme, for the company site on a dark system.
 .PHONY: demo-gif-dark
 demo-gif-dark: ## Record the dark variant of the realtime demo GIF the company site shows
-	uv run python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark
+	uv run python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark \
+		--owner "$(SEED_OWNER_EMAIL)" --member "$(SEED_MEMBER_EMAIL)"
 
 # Needs `make up` too. Bob in command mode on the left, the owner on
 # `tadas listen` on the right; records docs/media/cli-demo.gif.
 .PHONY: demo-cli-gif
 demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) against the running stack
-	uv run python scripts/record_cli_demo.py docs/media/cli-demo.gif
+	uv run python scripts/record_cli_demo.py docs/media/cli-demo.gif --org "$(SEED_SLUG)" \
+		--owner "$(SEED_OWNER_EMAIL)" --member "$(SEED_MEMBER_EMAIL)"
 
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it

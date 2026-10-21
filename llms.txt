@@ -56,7 +56,7 @@ served to it. Exposure is by listing, never by folder.
 - [Restore runbook](docs/runbooks/restore.md): what is backed up, and a restore to a new instance
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
-- [WorkOS runbook](docs/runbooks/providers/workos.md): the identity provider for a newcomer: its environments, the application and its key, the redirects, the webhook, the bootstrap, and rotation
+- [WorkOS runbook](docs/runbooks/providers/workos.md): the identity provider for a newcomer: its environments, the application and its key, the sign-in methods with passwords off, the redirects, the webhook, the bootstrap, the local stack's sign-in and the local mint, and rotation
 - [LaunchDarkly runbook](docs/runbooks/providers/launchdarkly.md): the flag provider: how a rule reaches an org or a person, the SDK key, the switch from none, and what breaks
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention
 <!-- A copy adds its entries below this line. -->

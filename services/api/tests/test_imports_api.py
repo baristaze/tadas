@@ -110,12 +110,12 @@ async def test_whoever_may_resume_an_import_cancels_it_and_nobody_else(
     # A viewer may not resume it, so may not cancel it; another org's owner
     # is answered as for an id that never existed.
     await add_member(container, ctx.org_id, "vic@example.test", Role.VIEWER)
-    viewer = await sign_in_as(client, "vic@example.test", ctx.org_id)
+    viewer = await sign_in_as(client, container, "vic@example.test", ctx.org_id)
     assert (await client.post(path, headers=viewer)).status_code == 403
     _, other = await container.managers.tenancy.bootstrap(
         seed_request(), "Bolt", "bolt", "eve@example.test", "Eve"
     )
-    eve = await sign_in_as(client, "eve@example.test", other.id)
+    eve = await sign_in_as(client, container, "eve@example.test", other.id)
     assert (await client.post(path, headers=eve)).status_code == 404
     too_long = await client.post(path, headers=free_owner, json={"reason": "x" * 501})
     assert too_long.status_code == 422, too_long.text

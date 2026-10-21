@@ -10,8 +10,7 @@ from uuid import UUID
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.integrations.identity import IdentityProviderInterface
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.om.base import OmBase, new_id, utcnow
 from tadas.om.context import AppContext, AppType, RequestContext, TenantContext
 from tadas.om.media.types.file import File, FilePurpose
@@ -20,6 +19,7 @@ from tadas.om.root import build_tenancy
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyOptions
+from tadas.om.tenancy.types.issued import IssuedLogin
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import KindName, WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
@@ -51,29 +51,42 @@ def request() -> RequestContext:
     )
 
 
-def signing(
-    container: WorkerContainer, identity_provider: IdentityProviderInterface | None = None
-) -> TenancyManagerInterface:
-    """A tenancy manager over the worker's storage that signs people in: by
-    address, with the local sign-in on, or through `identity_provider` when
-    one is given. The worker signs nobody in itself."""
+def signing(container: WorkerContainer) -> TenancyManagerInterface:
+    """A tenancy manager over the worker's storage that signs people in
+    through the container's identity provider, its twin. The worker signs
+    nobody in itself."""
     return build_tenancy(
         container.storage.get_tenancy_storage(),
         container.managers.outbox,
         container.infra.get_cache(CacheScope.REALTIME_TICKET),
-        TenancyOptions(dev_sign_in=identity_provider is None),
-        identity_provider=identity_provider or IdentityProviderAbsentImpl(),
+        TenancyOptions(),
+        identity_provider=container.identity_provider,
         entitlements=container.managers.billing,
+    )
+
+
+def twin_of(container: WorkerContainer) -> IdentityProviderTwinImpl:
+    """The identity provider's twin the test container holds."""
+    provider = container.identity_provider
+    assert isinstance(provider, IdentityProviderTwinImpl), "this container has no twin"
+    return provider
+
+
+async def provider_login(container: WorkerContainer, email: str) -> IssuedLogin:
+    """A person signs in through the twin, as everywhere: the code a browser
+    brings back from the hosted sign-in, finished by the manager's callback."""
+    return await signing(container).sign_in.sign_in_with_code(
+        request(), twin_of(container).issue_code(email)
     )
 
 
 async def sign_in(container: WorkerContainer, slug: str = "ajax") -> TenantContext:
     """A session in a seeded org, `ajax` unless named, whose owner is
-    `ann@<slug>.test`, signed in by address."""
+    `ann@<slug>.test`, signed in through the twin."""
     tenancy = container.managers.tenancy
     email = "ann@example.test" if slug == "ajax" else f"ann@{slug}.test"
     _, org = await tenancy.bootstrap(request(), slug.title(), slug, email, "Ann")
-    login = await signing(container).sign_in.dev_sign_in(request(), email)
+    login = await provider_login(container, email)
     identity = await tenancy.authenticate_login(request(), login.token)
     issued = await tenancy.sign_in.exchange_login(identity, org.id)
     return await tenancy.authenticate(request(), issued.token)

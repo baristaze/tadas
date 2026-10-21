@@ -70,10 +70,11 @@ OVER_THE_STACK: dict[str, object] = {
     "buckets_backend": "local",
     "queues_backend": "memory",
     "secrets_backend": "local",
-    # The people of the run sign in by address alone, as the local stack does.
-    "dev_sign_in_enabled": True,
-    # The rest comes from the environment and .env, the tracker's DSN and
-    # the collector aside: a test reports nothing anywhere.
+    # The people of the run sign in through the identity provider's twin,
+    # in process B, which serves. The rest comes from the environment and
+    # .env, the tracker's DSN and the collector aside: a test reports
+    # nothing anywhere.
+    "identity_provider": "twin",
     "sentry_dsn": None,
     "otel_endpoint": None,
 }
@@ -131,7 +132,7 @@ async def test_a_revocation_in_one_process_closes_the_socket_in_another(
 ) -> None:
     address, revoker, org = two_processes.address, two_processes.revoker, two_processes.org
     async with httpx.AsyncClient(base_url=f"http://{address}") as client:
-        headers = await sign_in_as(client, two_processes.email, org.id)
+        headers = await sign_in_as(client, two_processes.server, two_processes.email, org.id)
         ticket = (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
     token = headers["Authorization"].removeprefix("Bearer ")
     async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
@@ -154,9 +155,9 @@ async def ticket_for(address: str, headers: dict[str, str]) -> str:
         return (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
 
 
-async def headers_of(address: str, email: str, org: Org) -> dict[str, str]:
-    async with httpx.AsyncClient(base_url=f"http://{address}") as client:
-        return await sign_in_as(client, email, org.id)
+async def headers_of(processes: TwoProcesses, email: str, org: Org) -> dict[str, str]:
+    async with httpx.AsyncClient(base_url=f"http://{processes.address}") as client:
+        return await sign_in_as(client, processes.server, email, org.id)
 
 
 async def context_of(container: AppContainer, headers: dict[str, str]) -> TenantContext:
@@ -188,7 +189,7 @@ async def test_a_revocation_the_bus_never_carried_closes_within_the_recheck(
         tmp_path, revoker_bus="memory", realtime_recheck_seconds=RECHECK_SECONDS
     ) as processes:
         address, revoker = processes.address, processes.revoker
-        headers = await headers_of(address, processes.email, processes.org)
+        headers = await headers_of(processes, processes.email, processes.org)
         ticket = await ticket_for(address, headers)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             assert '"type":"hello"' in str(await ws.recv())
@@ -212,8 +213,8 @@ async def test_a_change_of_role_in_one_process_closes_the_socket_in_another(
         bob = await add_member(revoker, org.id, f"bob-{new_id().hex[-8:]}@example.test", Role.ADMIN)
         identity = await revoker.storage.get_tenancy_storage().read_identity(bob.identity_id)
         assert identity is not None
-        member = await headers_of(address, identity.email, org)
-        owner = await headers_of(address, processes.email, org)
+        member = await headers_of(processes, identity.email, org)
+        owner = await headers_of(processes, processes.email, org)
         ticket = await ticket_for(address, member)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             assert '"type":"hello"' in str(await ws.recv())
@@ -233,7 +234,7 @@ async def key_socket_on_team(processes: TwoProcesses) -> tuple[str, str]:
     """The org on Team, an api key of its owner, and a ticket minted on it:
     the key's headers' value and the ticket."""
     await on_plan(processes.revoker, processes.org.id, Plan.TEAM)
-    owner = await headers_of(processes.address, processes.email, processes.org)
+    owner = await headers_of(processes, processes.email, processes.org)
     async with httpx.AsyncClient(base_url=f"http://{processes.address}") as client:
         issued = await client.post(
             "/v1/api-keys", headers=owner, json={"name": "ci", "role": "member"}
@@ -253,7 +254,7 @@ async def downgrade(processes: TwoProcesses, announced: bool) -> None:
     if not announced:
         await billing.write_account(processes.org.id, downgraded, ())
         return
-    owner = await headers_of(processes.address, processes.email, processes.org)
+    owner = await headers_of(processes, processes.email, processes.org)
     ctx = await context_of(processes.revoker, owner)
     rows = (outbox_row(ctx, "billing.account.updated", account.id, {}),)
     await billing.write_account(processes.org.id, downgraded, rows)
@@ -325,7 +326,7 @@ async def test_the_pong_carries_the_head_heard_on_the_bus(tmp_path: Path) -> Non
             return await read(ctx)
 
         events.get_head = counted  # type: ignore[method-assign]
-        headers = await headers_of(address, processes.email, org)
+        headers = await headers_of(processes, processes.email, org)
         ticket = await ticket_for(address, headers)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             hello = await next_of(ws, "hello")
@@ -353,7 +354,7 @@ async def test_a_hint_b_never_heard_shows_once_the_head_is_too_old(tmp_path: Pat
         tmp_path, revoker_bus="memory", realtime_head_max_age_seconds=max_age
     ) as processes:
         address, writer, org = processes.address, processes.revoker, processes.org
-        headers = await headers_of(address, processes.email, org)
+        headers = await headers_of(processes, processes.email, org)
         ticket = await ticket_for(address, headers)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             hello = await next_of(ws, "hello")

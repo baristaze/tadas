@@ -42,9 +42,6 @@ class FakeApi:
         self,
         *,
         fail_on: str | None = None,
-        refuse_logins: int = 0,
-        retry_after: str | None = None,
-        dev_sign_in: bool = True,
         interfere: dict[str, list[str]] | None = None,
     ) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
@@ -55,22 +52,20 @@ class FakeApi:
         self.fail_on = fail_on
         """"METHOD path" answered 503 once; the path may be a route template
         (`DELETE /v1/tasks/{id}`), since a test knows no id in advance."""
-        self.refuse_logins = refuse_logins
-        """How many of the next logins answer 429, as the per-address rate
-        limit does while its window is full. A large count is a window that
-        never opens."""
-        self.dev_sign_in = dev_sign_in
-        """False is a stack whose local sign-in is off, answered as a route
-        that does not exist."""
-        self.retry_after = retry_after
-        """The `Retry-After`, in seconds, those refusals carry; none when the
-        answer asks for no particular wait."""
         self.interfere = interfere or {}
         """What another session does to a task just before a write to it
         lands, by the write's route template (`DELETE /v1/tasks/{id}`): one
         action per matching write, taken in order. `bump` is another write to
         the task, so the version the session holds is stale; `delete` is
         another session deleting it; `pass` leaves that write alone."""
+        self.minted: list[list[str]] = []
+        """The addresses of each call of the local mint, in order."""
+
+    def mint(self, emails: list[str]) -> list[str]:
+        """The local mint over this fake: a login per address, in order, each
+        one this fake's memberships route knows."""
+        self.minted.append(list(emails))
+        return [f"lgn_{n}" for n, _ in enumerate(emails, start=1)]
 
     def _event(self, kind: str, target_id: str) -> None:
         self.seq += 1
@@ -118,22 +113,16 @@ class FakeApi:
                 422, json={"error": {"code": "validation_failed", "message": "app"}}
             )
         body = json.loads(request.content) if request.content else {}
-        if (method, path) == ("POST", "/v1/auth/dev-sign-in"):
-            if self.refuse_logins > 0:
-                self.refuse_logins -= 1
+        if (method, path) == ("GET", "/v1/auth/memberships"):
+            if not request.headers.get("authorization", "").startswith("Bearer lgn_"):
                 return httpx.Response(
-                    429,
-                    json={"error": {"code": "rate_limited", "message": "rate limit exceeded"}},
-                    headers={"retry-after": self.retry_after} if self.retry_after else None,
+                    401, json={"error": {"code": "not_authenticated", "message": "no"}}
                 )
-            if not self.dev_sign_in or "@" not in str(body.get("email", "")):
-                return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
             return httpx.Response(
                 200,
                 json={
-                    "token": "lgn_1",
-                    "expires_at": NOW,
-                    "memberships": [{"org": ORG, "role": "owner", "user": USER}],
+                    "items": [{"org": ORG, "role": "owner", "user": USER}],
+                    "next_cursor": None,
                 },
             )
         if (method, path) == ("POST", "/v1/auth/sessions"):

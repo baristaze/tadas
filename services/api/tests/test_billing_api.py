@@ -175,7 +175,7 @@ async def test_a_member_reads_the_plan_and_is_refused_every_change(
 ) -> None:
     org_id = await org_id_of(client, free)
     await add_member(container, org_id, "bob@example.test", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", org_id)
+    bob = await sign_in_as(client, container, "bob@example.test", org_id)
     read = await client.get("/v1/billing", headers=bob)
     assert read.status_code == 200 and read.json()["can_manage"] is False
     assert read.json()["seats"] == 2
@@ -287,7 +287,7 @@ async def test_every_other_org_is_untouched_by_a_delivery(
         seed_request(), "Other", "other", "otto@example.test", "Otto"
     )
     await pay(client, container, free)
-    otto = await sign_in_as(client, "otto@example.test", other.id)
+    otto = await sign_in_as(client, container, "otto@example.test", other.id)
     assert (await client.get("/v1/billing", headers=otto)).json()["plan"] == "free"
 
 

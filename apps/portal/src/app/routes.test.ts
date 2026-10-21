@@ -188,3 +188,10 @@ it("lands on the new org's tasks after creating one at /orgs/new", async () => {
   expect(after.filter((read) => read.path === "/v1/me")).toHaveLength(1);
   expect(after.filter((read) => read.path.startsWith("/v1/tasks?status=open"))).toHaveLength(1);
 });
+
+it("shows the not-found page at an address no route serves", async () => {
+  await open("/login/elsewhere");
+  expect(container.textContent).toContain("Page not found");
+  expect(container.textContent).not.toContain("Sign in");
+  expect(net.calls).toHaveLength(0);
+});

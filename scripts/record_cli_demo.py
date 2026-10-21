@@ -1,25 +1,28 @@
 """Records the CLI demo GIF in the root README: two terminal panes side by
-side. On the left Bob (a member `make seed` creates) signs in and runs
-`tadas` one command at a time: a task due tomorrow, a task with an image
-attached, the list, a task done. On the right the owner runs `tadas listen`
-and each change shows up a moment later.
+side. On the left Bob (a member `make seed` creates) runs `tadas` one
+command at a time: a task due tomorrow, a task with an image attached, the
+list, a task done. On the right the owner runs `tadas listen` and each
+change shows up a moment later.
 
-Both are real subprocesses of the CLI on this checkout. Bob signs in on
-screen with `tadas login --dev-email`, the local stack's sign-in by address,
-into the seeded team org; the session file lands in a scratch directory the
-commands run in, next to the image he attaches, which is drawn here. The
-owner's listener gets a session token for the same org through the
-environment, over the Python client in `clients/python/`, the way
-`record_demo.py` signs in: nothing secret in the picture. The task list is
-emptied first. Every line is stamped when it is typed or when it
+Both are real subprocesses of the CLI on this checkout, each signed in to
+the seeded team org through the environment. A recorder has no browser to
+confirm `tadas login` in and no mailbox, so each person's login comes from
+the local mint, one `tadas-api mint-local-login` for both, on the local
+database (ADR 0104), and is exchanged for a session token over the Python
+client in `clients/python/`, the way `record_demo.py` signs in: nothing
+secret in the picture. Bob's commands run in a scratch directory, next to
+the image he attaches, which is drawn here. The task list is emptied
+first. Every line is stamped when it is typed or when it
 arrives from the pipe, and the panes are drawn from those stamps on one
 timeline into a GIF.
 
     make up
-    uv run python scripts/record_cli_demo.py docs/media/cli-demo.gif
+    make demo-cli-gif
 
-Every line fits its pane: the recorder stops, writing nothing, when a line
-would wrap. Other stacks: --api. --still writes a PNG per pane of the final
+`make demo-cli-gif` names the seeded owner and member, the plus-addresses
+of SEED_EMAIL, with --owner and --member. Every line fits its pane: the
+recorder stops, writing nothing, when a line would wrap. It runs on the
+local stack alone, since the mint does: --api names its other port. --still writes a PNG per pane of the final
 state instead of the GIF; --stills-dir writes those PNGs next to the GIF as
 well, to check the layout.
 """
@@ -40,7 +43,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from tadas.client.client import ApiClient
 from tadas.client.types.tasks import TaskScope, TaskStatus
-from tadas.client.types.tenancy import OrgKind
+from tadas.ops.traffic import mint_logins
 
 WIDTH, HEIGHT = 420, 360  # each pane in the GIF; the two match the portal GIF's width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
@@ -73,7 +76,7 @@ def font() -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 class Api:
-    """The two things the recorder asks of the API, over the Python client."""
+    """What the recorder asks of the API, over the Python client."""
 
     def __init__(self, base: str) -> None:
         self.base = base
@@ -81,13 +84,23 @@ class Api:
     def _client(self, token: str | None = None) -> ApiClient:
         return ApiClient(self.base, app="cli", app_version="cli@demo", token=token)
 
-    async def token(self, email: str) -> str:
-        """A session token for the person's team org, what `tadas login --org`
-        would keep; every person also has a personal org."""
-        async with self._client() as client:
-            login = await client.dev_sign_in(email)
-            org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
-            issued = await client.exchange_auth_session(login.token, org.id)
+    async def tokens(self, emails: list[str], org: str) -> list[str]:
+        """A session token in the org whose slug is `org` for each person, in
+        the order given: what `tadas login --org` would keep. One call of the
+        local mint makes every login."""
+        try:
+            logins = await asyncio.to_thread(mint_logins, emails)
+        except ValueError as refused:
+            raise SystemExit(f"the local mint signed nobody in: {refused}") from None
+        return [await self._token(login, org) for login in logins]
+
+    async def _token(self, login: str, org: str) -> str:
+        """A login exchanged for a session in the org; every person also has
+        a personal one."""
+        async with self._client(login) as client:
+            places = await client.every_membership()
+            org_id = next(m.org.id for m in places if m.org.slug == org)
+            issued = await client.exchange_auth_session(login, org_id)
         return issued.token
 
     async def clear_tasks(self, token: str) -> int:
@@ -139,19 +152,18 @@ class Pane:
 
 class Cli:
     """Runs the CLI on this checkout as one person, in a scratch directory
-    whose `.tadas` is the TADAS_HOME. With a token, the credential is in the
-    environment; without one, the person signs in with `tadas login`."""
+    whose `.tadas` is the TADAS_HOME, with the person's session token in the
+    environment."""
 
-    def __init__(self, api: str, token: str | None, directory: str) -> None:
+    def __init__(self, api: str, token: str, directory: str) -> None:
         self.directory = directory
         self.env = {
             **{k: v for k, v in os.environ.items() if k != "TADAS_TOKEN"},
             "TADAS_API_URL": api,
             "TADAS_HOME": ".tadas",
             "PYTHONUNBUFFERED": "1",
+            "TADAS_TOKEN": token,
         }
-        if token is not None:
-            self.env["TADAS_TOKEN"] = token
 
     async def spawn(self, *args: str, stderr: int | None) -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(
@@ -193,10 +205,9 @@ def short_id(added: list[str]) -> str:
     return added[0].split()[1]
 
 
-async def story(bob: Pane, cli: Cli, email: str, org: str) -> None:
-    """Bob's session: he signs in, adds a task due tomorrow, adds another and
-    attaches an image to it, lists the open tasks, and completes the first."""
-    await command(bob, cli, "login", "--dev-email", email, "--org", org)
+async def story(bob: Pane, cli: Cli) -> None:
+    """Bob's session: he adds a task due tomorrow, adds another and attaches
+    an image to it, lists the open tasks, and completes the first."""
     tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
     bank = short_id(await command(bob, cli, "add", "Call the bank", "--due", tomorrow))
     logo = short_id(await command(bob, cli, "add", "New logo"))
@@ -338,7 +349,7 @@ def stills(renderer: Renderer, panes: Sequence[Pane], out: str, directory: str) 
 
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
-    owner_token = await api.token(args.owner)
+    bob_token, owner_token = await api.tokens([args.member, args.owner], args.org)
     print(f"cleared {await api.clear_tasks(owner_token)} tasks")
 
     owner_directory = tempfile.mkdtemp(prefix="tadas-demo-cli-")
@@ -355,7 +366,7 @@ async def record(args: argparse.Namespace) -> None:
         following = asyncio.create_task(follow(listener, owner))
         await wait_for_first_line(owner)
         await asyncio.sleep(1.2)
-        await story(bob, Cli(args.api, None, bob_directory), args.member, args.org)
+        await story(bob, Cli(args.api, bob_token, bob_directory))
         await asyncio.sleep(1.5)
         end = time.monotonic()
         listener.send_signal(signal.SIGINT)
@@ -381,8 +392,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("out", help="the GIF to write, e.g. docs/media/cli-demo.gif")
     parser.add_argument("--api", default="http://127.0.0.1:8000")
-    parser.add_argument("--owner", default="owner@example.test")
-    parser.add_argument("--member", default="bob@example.test")
+    parser.add_argument("--owner", required=True, help="the seeded owner's address")
+    parser.add_argument("--member", required=True, help="the seeded member's address")
     parser.add_argument("--org", default="acme", help="the seeded team org's slug")
     parser.add_argument("--still", action="store_true", help="write a PNG per pane instead")
     parser.add_argument("--stills-dir", help="also write a PNG per pane into this directory")

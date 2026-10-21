@@ -167,7 +167,7 @@ async def test_mine_is_the_callers_tasks_and_a_viewer_changes_nothing(
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
     bob = await add_member(container, org_id, "bob@example.test", Role.MEMBER)
-    bobs = await sign_in_as(client, bob.email, org_id)
+    bobs = await sign_in_as(client, container, bob.email, org_id)
     await add(client, owner, "the owner's")
     await add(client, bobs, "bob's")
 
@@ -178,7 +178,7 @@ async def test_mine_is_the_callers_tasks_and_a_viewer_changes_nothing(
     assert await titles(client, owner, "open") == ["the owner's"]
 
     viewer = await add_member(container, org_id, "viewer@example.test", Role.VIEWER)
-    viewers = await sign_in_as(client, viewer.email, org_id)
+    viewers = await sign_in_as(client, container, viewer.email, org_id)
     refused = await bulk(
         client, viewers, {"action": "complete", "all": {"scope": "team", "status": "open"}}
     )

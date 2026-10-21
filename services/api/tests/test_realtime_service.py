@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from api_support import OWNER, add_member, build_container, on_plan, seed_request
+from api_support import OWNER, add_member, build_container, on_plan, provider_login, seed_request
 
 from tadas.infra.topics import EntityChangedPayload, Topics
 from tadas.om.base import new_id, utcnow
@@ -39,7 +39,7 @@ async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Pat
     bob = await add_member(container, org.id, "bob@example.test", Role.MEMBER)
 
     async def session_of(email: str) -> str:
-        login = await tenancy.sign_in.dev_sign_in(seed_request(), email)
+        login = await provider_login(container, email)
         identity = await tenancy.authenticate_login(seed_request(), login.token)
         return (await tenancy.sign_in.exchange_login(identity, org.id)).token
 
@@ -119,7 +119,7 @@ async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Pat
 
 async def session_of(container: AppContainer, org_id: UUID, email: str) -> str:
     tenancy = container.managers.tenancy
-    login = await tenancy.sign_in.dev_sign_in(seed_request(), email)
+    login = await provider_login(container, email)
     identity = await tenancy.authenticate_login(seed_request(), login.token)
     return (await tenancy.sign_in.exchange_login(identity, org_id)).token
 

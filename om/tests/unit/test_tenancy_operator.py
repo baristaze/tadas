@@ -15,7 +15,6 @@ import pytest
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.change_events.storage.impl.memory import ChangeEventStorageMemoryImpl
 from tadas.om.context import (
@@ -40,7 +39,6 @@ from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.root import build_tenancy
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor
 from tadas.om.tasks.types.task import Task, TaskStatus
@@ -54,8 +52,9 @@ from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 from contracts.change_event_storage import make_change_event
-from contracts.plans import ON_TEAM, GrantedEverywhere
+from contracts.plans import GrantedEverywhere
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
+from contracts.signing_in import provider_login, tenancy_signing_in
 
 APP = AppContext(type=AppType.CLI, version="cli@test")
 OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
@@ -93,14 +92,12 @@ class Plane:
         relay = RecordingRelay(self.outbox, self.events, infra.get_topics())
         self.relay = relay
         self.clock = SteppingClock()
-        self.manager = build_tenancy(
+        self.manager = tenancy_signing_in(
             self.storage,
             relay,
             infra.get_cache(CacheScope.REALTIME_TICKET),
-            TenancyOptions(dev_sign_in=True, totp_encryption_key=TOTP_KEY),
+            TenancyOptions(totp_encryption_key=TOTP_KEY),
             self.clock,
-            entitlements=ON_TEAM,
-            identity_provider=IdentityProviderAbsentImpl(),
         )
         self.operator = TenancyOperatorManagerImpl(
             self.storage,
@@ -210,7 +207,7 @@ async def test_create_org_lands_the_rows_bootstrap_lands(
         assert identity is not None and identity.operator_role is None
         assert identity.email == owner.email
     # And both owners sign in the same way.
-    login = await plane.manager.sign_in.dev_sign_in(request(), "bob@example.test")
+    login = await provider_login(plane.manager, "bob@example.test")
     assert [m.org.id for m in login.memberships if not m.org.personal] == [created.id]
     # Each new owner came with a personal org, the same way.
     personal = [m.org for m in login.memberships if m.org.personal]
@@ -281,7 +278,7 @@ async def test_an_operator_deletes_a_team_org_as_its_owner_does(
     bob = await plane.operator.add_member(writer, org.id, "bob@example.test", "Bob", Role.MEMBER)
     # The org's organization at the identity provider, as an invitation makes it.
     await plane.storage.write_org(org.id, org.model_copy(update={"provider_org_id": "org_ajax"}))
-    login = await plane.manager.sign_in.dev_sign_in(request(), "bob@example.test")
+    login = await provider_login(plane.manager, "bob@example.test")
     issued = await plane.manager.sign_in.exchange_login(
         await plane.manager.authenticate_login(request(), login.token), org.id
     )
@@ -294,7 +291,7 @@ async def test_an_operator_deletes_a_team_org_as_its_owner_does(
     assert await plane.storage.count_members(org.id) == 0
     with pytest.raises(NotAuthenticated):
         await plane.manager.authenticate(request(), issued.token)
-    login = await plane.manager.sign_in.dev_sign_in(request(), "bob@example.test")
+    login = await provider_login(plane.manager, "bob@example.test")
     assert org.id not in {m.org.id for m in login.memberships}
     # The org is live, let go of its provider organization, until the queue runs.
     stored = await plane.storage.read_org(org.id)
@@ -329,7 +326,7 @@ async def test_an_operator_never_deletes_a_personal_org_and_a_reader_never_delet
 ) -> None:
     """A personal org goes only with its person's account (ADR 0041)."""
     org = await plane.operator.create_org(writer, "Ajax", "ajax", "ann@example.test", "Ann")
-    login = await plane.manager.sign_in.dev_sign_in(request(), "ann@example.test")
+    login = await provider_login(plane.manager, "ann@example.test")
     home = next(m.org for m in login.memberships if m.org.personal)
     with pytest.raises(PersonalOrgFixed):
         await plane.operator.delete_org(writer, home.id)

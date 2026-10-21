@@ -4,25 +4,19 @@ bound, the calls Slack makes, and the work a write queued."""
 
 from datetime import timedelta
 from pathlib import Path
-from typing import cast
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
-from worker_support import request, signing
+from worker_support import provider_login, request
 
-from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
-from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.slack.requests import SlackInbound, inbound_command, inbound_event
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import AppContext, AppType, Role, TenantContext
-from tadas.om.root import build_tenancy
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
-from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.work.types.work_item import KindName, WorkItem
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import SlackInboundHandler
@@ -42,11 +36,9 @@ def build(tmp_path: Path) -> tuple[WorkerContainer, SlackTwinImpl]:
 
 async def prove(container: WorkerContainer, email: str) -> None:
     """The person signs in once through the identity provider's twin, which
-    proves the address: an address the seeding or the local sign-in typed
-    names nobody to an integration until then (ADR 0090)."""
-    twin = cast(IdentityProviderTwinImpl, container.identity_provider)
-    through = signing(container, twin)
-    await through.sign_in.sign_in_with_code(request(), twin.issue_code(email))
+    proves the address: an address the seeding typed names nobody to an
+    integration until then (ADR 0090)."""
+    await provider_login(container, email)
 
 
 async def owner_of(container: WorkerContainer, slug: str) -> TenantContext:
@@ -67,20 +59,12 @@ async def member_of(container: WorkerContainer, slug: str, email: str) -> Tenant
     tenancy = container.managers.tenancy
     await tenancy.add_member(request(), slug, email, "Member", Role.MEMBER)
     # The worker signs nobody in, so the sign-in runs through a manager over
-    # the same storage with the local sign-in on.
-    signing = build_tenancy(
-        container.storage.get_tenancy_storage(),
-        container.managers.outbox,
-        container.infra.get_cache(CacheScope.REALTIME_TICKET),
-        TenancyOptions(dev_sign_in=True),
-        identity_provider=IdentityProviderAbsentImpl(),
-        entitlements=container.managers.billing,
-    )
-    login = await signing.sign_in.dev_sign_in(request(), email)
+    # the same storage, through the identity provider's twin, which proves
+    # the address as it signs the person in.
+    login = await provider_login(container, email)
     identity = await tenancy.authenticate_login(request(), login.token)
     memberships = await tenancy.sign_in.get_identity_memberships(identity, None, 10)
     issued = await tenancy.sign_in.exchange_login(identity, memberships.items[0].org.id)
-    await prove(container, email)
     return await tenancy.authenticate(request(), issued.token)
 
 

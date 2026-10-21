@@ -19,7 +19,11 @@ from tadas.integrations.identity.deliveries import DELIVERY_NAMESPACE, SIGNATURE
 from tadas.integrations.identity.twin import TWIN_WEBHOOK_SECRET, IdentityProviderTwinImpl
 from tadas.integrations.identity.workos import IdentityProviderWorkOSImpl
 from tadas.integrations.impl import configured
-from tadas.integrations.impl.configured import IntegrationsConfiguredImpl, IntegrationsOverImpl
+from tadas.integrations.impl.configured import (
+    IntegrationsConfiguredImpl,
+    IntegrationsOverImpl,
+    absent_integrations,
+)
 from tadas.om.base import utcnow
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.container import AppContainer
@@ -137,7 +141,7 @@ async def test_a_process_with_no_secret_answers_503(tmp_path: Path, provider: st
     """A process that holds no signing secret cannot check a delivery, so it
     refuses every one as unavailable, the answer the provider retries."""
     if provider == "none":
-        container = build_container(tmp_path)
+        container = build_container(tmp_path, integrations=absent_integrations())
     else:
         workos = IdentityProviderWorkOSImpl(
             client_id="client_test",
