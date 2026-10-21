@@ -5,13 +5,15 @@ attaches an image to one and assigns it to the owner, and completes another;
 the owner's window follows live and opens the file Bob attached.
 
 It drives a headless Chrome over the DevTools protocol, one isolated browser
-context per person. Each signs in the way the portal's `/login/dev` does,
-through the local stack's dev sign-in rather than WorkOS, over the Python
-client in `clients/python/`, and lands on the seeded team org, not the
-personal org every person also has. The task
-list is emptied first, then both windows are screencast and the frames are
-composed on one timeline into a GIF. The attached image is drawn here, so
-the recording needs no file of its own.
+context per person. A recorder has no browser round trip to WorkOS and no
+mailbox, so each person's login comes from the local mint, one
+`tadas-api mint-local-login` for both, on the local database (ADR 0104).
+The recorder exchanges each login for a session in the seeded team org, not
+the personal org every person also has, over the Python client in
+`clients/python/`, and puts it where the portal keeps it. The task list is
+emptied first, then both windows are screencast and the frames are composed
+on one timeline into a GIF. The attached image is drawn here, so the
+recording needs no file of its own.
 
 Each window is under half the GIF's width, the size a README shows it at, and
 a task row stays on one line at that width: after every step the recorder
@@ -19,10 +21,12 @@ checks both windows and stops, writing nothing, when a row wraps or the page
 scrolls sideways.
 
     make up
-    uv run python scripts/record_demo.py docs/media/realtime-demo.gif
+    make demo-gif
 
-`make demo-gif` runs the second line. Other stacks: --api and --portal (the
-portal's build must point at the same API). Chrome: CHROME, or the default
+`make demo-gif` names the seeded owner and member, the plus-addresses of
+SEED_EMAIL, with --owner and --member. It runs on the local stack alone,
+since the mint does: --api and --portal name its other ports (the portal's
+build must point at the same API). Chrome: CHROME, or the default
 install path. --theme picks light (the default) or dark. --still writes a PNG
 per window instead, to check the layout.
 """
@@ -49,6 +53,7 @@ from PIL import Image, ImageDraw
 from tadas.client.client import ApiClient
 from tadas.client.types.tasks import TaskScope, TaskStatus
 from tadas.client.types.tenancy import OrgKind
+from tadas.ops.traffic import mint_logins
 
 WIDTH, HEIGHT = 420, 840  # each window in the GIF: portrait, height twice the width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
@@ -73,7 +78,7 @@ def chrome_path() -> str:
 
 
 class Api:
-    """The two things the recorder asks of the API, over the Python client."""
+    """What the recorder asks of the API, over the Python client."""
 
     def __init__(self, base: str) -> None:
         self.base = base
@@ -81,13 +86,23 @@ class Api:
     def _client(self, token: str | None = None) -> ApiClient:
         return ApiClient(self.base, app="portal", app_version="portal@demo", token=token)
 
-    async def auth_session(self, email: str) -> dict[str, Any]:
-        """What the portal keeps in session storage once someone has signed in
-        and chosen the seeded team; every person also has a personal org."""
-        async with self._client() as client:
-            login = await client.dev_sign_in(email)
-            org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
-            issued = await client.exchange_auth_session(login.token, org.id)
+    async def auth_sessions(self, emails: list[str]) -> list[dict[str, Any]]:
+        """What the portal keeps in session storage once each person has
+        signed in and chosen the seeded team, in the order given. One call of
+        the local mint makes every login."""
+        try:
+            logins = await asyncio.to_thread(mint_logins, emails)
+        except ValueError as refused:
+            raise SystemExit(f"the local mint signed nobody in: {refused}") from None
+        return [await self._auth_session(login) for login in logins]
+
+    async def _auth_session(self, login: str) -> dict[str, Any]:
+        """A login exchanged for a session in the seeded team org; every person
+        also has a personal org."""
+        async with self._client(login) as client:
+            places = await client.every_membership()
+            org = next(m.org for m in places if m.org.kind is OrgKind.team)
+            issued = await client.exchange_auth_session(login, org.id)
         return {"state": {"token": issued.token, "orgSlug": org.slug}, "version": 0}
 
     async def clear_tasks(self, token: str) -> int:
@@ -311,10 +326,9 @@ class Window:
 
 async def open_window(
     cdp: Cdp,
-    api: Api,
+    auth_session: dict[str, Any],
     portal: str,
     name: str,
-    email: str,
     zoom: float,
     theme: str,
 ) -> Window:
@@ -340,9 +354,11 @@ async def open_window(
     # one, so the GIF looks the same on every machine that records it.
     scheme = {"features": [{"name": "prefers-color-scheme", "value": theme}]}
     await cdp.send("Emulation.setEmulatedMedia", scheme, window.session)
-    await cdp.send("Page.navigate", {"url": f"{portal}/login/dev"}, window.session)
+    # A page of the portal's own origin that waits and calls nothing, so the
+    # session goes into that origin's storage before the portal loads.
+    await cdp.send("Page.navigate", {"url": f"{portal}/signed-out"}, window.session)
     await window.wait_for("document.readyState === 'complete'")
-    stored = json.dumps(json.dumps(await api.auth_session(email)))
+    stored = json.dumps(json.dumps(auth_session))
     scope = json.dumps(json.dumps({"state": {"taskScope": "team"}, "version": 0}))
     # The bearer lives in the tab's session storage, and the portal drops an
     # auth session it finds in local storage on load; the scope is a preference
@@ -473,8 +489,8 @@ async def still(window: Window, path: str) -> None:
 
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
+    bob_auth_session, owner_auth_session = await api.auth_sessions([args.member, args.owner])
     if not args.still:  # a still shows whatever the list holds; a recording starts empty
-        owner_auth_session = await api.auth_session(args.owner)
         cleared = await api.clear_tasks(owner_auth_session["state"]["token"])
         print(f"cleared {cleared} tasks")
 
@@ -499,8 +515,8 @@ async def record(args: argparse.Namespace) -> None:
             cdp = Cdp(ws)
             pump = asyncio.create_task(cdp.pump())
             windows = [
-                await open_window(cdp, api, args.portal, name, email, args.zoom, args.theme)
-                for name, email in (("bob", args.member), ("owner", args.owner))
+                await open_window(cdp, auth_session, args.portal, name, args.zoom, args.theme)
+                for name, auth_session in (("bob", bob_auth_session), ("owner", owner_auth_session))
             ]
             bob, owner = windows
             if args.still:
@@ -570,8 +586,8 @@ def main() -> None:
     parser.add_argument("out", help="the GIF to write, e.g. docs/media/realtime-demo.gif")
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--portal", default="http://localhost:55173")
-    parser.add_argument("--owner", default="owner@example.test")
-    parser.add_argument("--member", default="bob@example.test")
+    parser.add_argument("--owner", required=True, help="the seeded owner's address")
+    parser.add_argument("--member", required=True, help="the seeded member's address")
     parser.add_argument("--zoom", type=float, default=0.9, help="browser zoom, e.g. 0.9 for 90%%")
     parser.add_argument("--theme", choices=["light", "dark"], default="light")
     parser.add_argument("--still", action="store_true", help="write a PNG per window instead")
