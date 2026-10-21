@@ -38,7 +38,6 @@ from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.work.types.work_item import WorkKind, asks_for_work, work_row_kind
 
-from contracts.plans import ON_TEAM
 from contracts.second_factor import TOTP_KEY
 from contracts.signing_in import provider_login, tenancy_signing_in
 

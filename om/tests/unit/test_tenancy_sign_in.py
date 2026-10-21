@@ -37,7 +37,6 @@ from tadas.om.tenancy.types.org import Org, OrgKind
 from tadas.om.tenancy.types.user import User
 
 from contracts.factories import make_user
-from contracts.plans import ON_TEAM
 from contracts.second_factor import SteppingClock, enrolled_operator, second_factor
 from contracts.signing_in import provider_login, tenancy_signing_in
 from contracts.tenancy import (

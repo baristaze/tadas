@@ -52,7 +52,7 @@ from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 from contracts.change_event_storage import make_change_event
-from contracts.plans import ON_TEAM, GrantedEverywhere
+from contracts.plans import GrantedEverywhere
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 from contracts.signing_in import provider_login, tenancy_signing_in
 

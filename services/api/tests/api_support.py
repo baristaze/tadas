@@ -17,7 +17,7 @@ import httpx
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
-from tadas.integrations.impl.configured import IntegrationsOverImpl
+from tadas.integrations.impl.configured import IntegrationsOverImpl, payments_for, slack_for
 from tadas.integrations.root import IntegrationsInterface
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.impl.manager import BillingOptions, cached_accounts
@@ -55,11 +55,13 @@ def build_container(
 ) -> AppContainer:
     """The test container over the memory storage root, the local infra
     root, and the identity provider's twin, which every test signs people in
-    through. A test that needs a bound or a deadline of its own names the
-    settings it overrides, one that needs storage to behave a certain way
-    passes its own root, and one that needs no provider passes
-    `absent_integrations()`. The developer's `.env` is never read: its DSN
-    would send every error a test raises on purpose to the local tracker."""
+    through, beside the payment processor and the Slack app the settings
+    name: their twins, unless a test names another backend. A test that
+    needs a bound or a deadline of its own names the settings it overrides,
+    one that needs storage to behave a certain way passes its own root, and
+    one that needs no provider passes `absent_integrations()`. The
+    developer's `.env` is never read: its DSN would send every error a test
+    raises on purpose to the local tracker."""
     settings = ApiSettings.model_validate(
         {
             "_env_file": None,
@@ -74,7 +76,12 @@ def build_container(
         storage or StorageMemoryImpl(),
         InfraLocalImpl(tmp_path),
         settings,
-        integrations or IntegrationsOverImpl(IdentityProviderTwinImpl()),
+        integrations
+        or IntegrationsOverImpl(
+            IdentityProviderTwinImpl(),
+            payments_for(settings, settings.environment),
+            slack_for(settings, settings.environment),
+        ),
     )
 
 
@@ -169,14 +176,19 @@ async def sign_in(
     return await sign_in_as(client, container, OWNER["email"], org.id)
 
 
-async def minted_owner(client: httpx.AsyncClient, container: AppContainer) -> dict[str, str]:
+async def minted_owner(
+    client: httpx.AsyncClient, container: AppContainer, plan: Plan | None = Plan.TEAM
+) -> dict[str, str]:
     """Bootstraps an org and signs its owner in by the local mint, for a test
     whose container fronts no twin (no provider, or a stubbed WorkOS) and is
     about something past the sign-in; the container is built with
-    `local_login_mint` on. Returns the tenant headers."""
+    `local_login_mint` on. The org is on Team, as `sign_in`'s is, unless the
+    test names another plan, or None for Free. Returns the tenant headers."""
     _, org = await container.managers.tenancy.bootstrap(
         seed_request(), "Ajax", "ajax", OWNER["email"], OWNER["name"]
     )
+    if plan is not None:
+        await on_plan(container, org.id, plan)
     login = await container.managers.tenancy.sign_in.mint_local_login(
         seed_request(), OWNER["email"]
     )

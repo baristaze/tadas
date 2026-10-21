@@ -31,7 +31,6 @@ from tadas.om.tenancy.types.org import OrgKind
 from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
 
 from contracts.outbox_storage import claim_all
-from contracts.plans import ON_TEAM
 from contracts.signing_in import provider_login, tenancy_signing_in
 from contracts.tenancy import SpyRelay, add_member, make_manager, request, sign_in, signed_up
 

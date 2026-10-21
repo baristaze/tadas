@@ -128,7 +128,7 @@ def test_each_seeded_person_is_a_plus_address_of_the_base(tmp_path: Path) -> Non
     owner of the second (an admin of the first), and the member."""
     checkout = _checkout(tmp_path)
     assert _seeded(checkout, _shell(), "SEED_EMAIL=dev@example.com") == [
-        "dev+tadas+local+ajax@example.com",
+        "dev+tadas+local+acme@example.com",
         "dev+tadas+local+fabrikam@example.com",
         "dev+tadas+local+personal@example.com",
     ]
@@ -140,7 +140,7 @@ def test_with_no_base_the_seed_takes_gits_address(tmp_path: Path) -> None:
     git_config = tmp_path / "gitconfig"
     git_config.write_text("[user]\n\temail = me@example.org\n")
     shell = _shell(GIT_CONFIG_GLOBAL=str(git_config), GIT_CONFIG_NOSYSTEM="1")
-    assert _seeded(checkout, shell)[0] == "me+tadas+local+ajax@example.org"
+    assert _seeded(checkout, shell)[0] == "me+tadas+local+acme@example.org"
 
 
 def _seed(
@@ -195,7 +195,7 @@ def test_the_seed_takes_a_base_that_takes_mail(tmp_path: Path) -> None:
     (checkout / ".env").write_text("SEED_EMAIL=dev@example.com\n")
     done, ran = _seed(checkout, _shell())
     assert done.returncode == 0, done.stderr
-    assert "--email dev+tadas+local+ajax@example.com" in ran[0]
+    assert "--email dev+tadas+local+acme@example.com" in ran[0]
 
 
 def test_the_telemetry_job_seeds_on_a_runner_with_no_git_identity(tmp_path: Path) -> None:
@@ -213,4 +213,4 @@ def test_the_telemetry_job_seeds_on_a_runner_with_no_git_identity(tmp_path: Path
     done, ran = _seed(checkout, {**runner, **job_env})
     assert done.returncode == 0, done.stderr
     local, domain = job_env["SEED_EMAIL"].split("@")
-    assert f"--email {local}+tadas+local+ajax@{domain}" in ran[0]
+    assert f"--email {local}+tadas+local+acme@{domain}" in ran[0]

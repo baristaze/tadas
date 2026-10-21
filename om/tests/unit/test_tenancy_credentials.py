@@ -30,7 +30,6 @@ from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 
-from contracts.plans import ON_TEAM
 from contracts.signing_in import provider_login, tenancy_signing_in
 from contracts.tenancy import SpyRelay, add_member, make_manager, request, sign_in
 

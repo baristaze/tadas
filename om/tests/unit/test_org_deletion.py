@@ -34,7 +34,6 @@ from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.org import Org
 from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
-from contracts.plans import ON_TEAM
 from contracts.second_factor import TOTP_KEY
 from contracts.signing_in import provider_login, tenancy_signing_in
 

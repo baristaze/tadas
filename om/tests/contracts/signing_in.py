@@ -14,6 +14,7 @@ from tadas.infra.root import InfraInterface
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.context import AppContext, AppType, RequestContext
 from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.root import Managers, build_managers, build_tenancy
@@ -22,6 +23,8 @@ from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.issued import IssuedLogin
+
+from contracts.plans import ON_TEAM
 
 _TWINS: WeakKeyDictionary[TenancyManagerInterface, IdentityProviderTwinImpl] = WeakKeyDictionary()
 
@@ -63,11 +66,22 @@ def tenancy_signing_in(
     clock: Callable[[], datetime] = utcnow,
     *,
     twin: IdentityProviderTwinImpl | None = None,
+    entitlements: EntitlementsInterface = ON_TEAM,
 ) -> TenancyManagerInterface:
-    """`build_tenancy` over a twin of its own, or the one a test holds."""
+    """`build_tenancy` over a twin of its own, or the one a test holds, on
+    the plan `entitlements` reads: Team unless a test names another."""
     twin = twin or IdentityProviderTwinImpl()
     return signing_in(
-        build_tenancy(storage, relay, cache, options, clock, identity_provider=twin), twin
+        build_tenancy(
+            storage,
+            relay,
+            cache,
+            options,
+            clock,
+            identity_provider=twin,
+            entitlements=entitlements,
+        ),
+        twin,
     )
 
 
