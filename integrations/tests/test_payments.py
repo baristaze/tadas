@@ -96,6 +96,9 @@ def test_a_delivery_signed_with_the_secret_checks_out() -> None:
         sign(b"another body", SECRET),
         sign(event("invoice.paid", {}), "whsec_someone_else"),
     ],
+    # A signed header carries the second it was made in, so each case
+    # names its id: every worker of a parallel run collects the same ones.
+    ids=["absent", "empty", "another digest", "another body", "another secret"],
 )
 def test_a_delivery_that_does_not_check_out_is_refused(header: str | None) -> None:
     payload = event("invoice.paid", {})
