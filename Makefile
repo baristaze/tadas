@@ -62,7 +62,7 @@ SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 # follows, on the project's Python: the checker refuses a Python older than
 # .python-version. Offline, point it at a checkout:
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
-ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.63.0\#subdirectory=checkers" arch-check
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.64.0\#subdirectory=checkers" arch-check
 
 # pnpm at the version packageManager in package.json names. Node 25 and
 # later ship no corepack, so a Node installed or switched to has no pnpm
@@ -328,9 +328,12 @@ typecheck: ## Pyright over every distribution and the scripts
 arch-check: ## The guideline's static checks, configured in pyproject.toml
 	$(ARCH_CHECK)
 
+# One worker per core of the machine (ADR 0105); PYTEST_XDIST_AUTO_NUM_WORKERS=<n>
+# sets the count. Not quiet, so the run names its workers, and it ends on the ten
+# slowest tests.
 .PHONY: test-unit
-test-unit: ## Unit tests over the memory impls
-	uv run pytest -q -m "not integration and not e2e and not telemetry"
+test-unit: ## Unit tests over the memory impls, on every core
+	uv run pytest -n auto --durations=10 -m "not integration and not e2e and not telemetry"
 
 .PHONY: test-integration
 test-integration: ## Integration tests over the compose stack
