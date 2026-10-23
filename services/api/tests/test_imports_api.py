@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from api_support import add_member, seed_request, sign_in, sign_in_as
+from api_support import add_member, seed_request, send_upload, sign_in, sign_in_as
 
 from tadas.om.base import utcnow
 from tadas.om.context import Role, TenantContext
@@ -24,12 +24,14 @@ CSV = b"title,notes\n" + b"".join(f"Task {n},\n".encode() for n in range(1, 16))
 
 async def upload(
     client: httpx.AsyncClient,
+    container: AppContainer,
     headers: dict[str, str],
     data: bytes = CSV,
     name: str = "tasks.csv",
     content_type: str = "text/csv",
 ) -> httpx.Response:
-    """The whole upload a client makes against a store that cannot presign."""
+    """The whole upload a client makes: start, the parts straight to the
+    store, confirm."""
     started = await client.post(
         "/v1/tasks/imports/files",
         headers={**headers, "Idempotency-Key": str(uuid4())},
@@ -38,8 +40,7 @@ async def upload(
     if started.status_code != 201:
         return started
     file_id = started.json()["id"]
-    put = await client.put(f"/v1/media/files/{file_id}/content", headers=headers, content=data)
-    assert put.status_code == 200, put.text
+    await send_upload(client, container, headers, file_id, data)
     return await client.post(f"/v1/media/files/{file_id}/confirm", headers=headers)
 
 
@@ -68,7 +69,7 @@ async def worker_context(container: AppContainer, headers: dict[str, str]) -> Te
 async def test_an_import_is_started_read_listed_and_parks_on_free(
     client: httpx.AsyncClient, container: AppContainer, free_owner: dict[str, str]
 ) -> None:
-    stored = await upload(client, free_owner)
+    stored = await upload(client, container, free_owner)
     assert stored.status_code == 200, stored.text
     assert (stored.json()["purpose"], stored.json()["status"]) == ("task_import", "stored")
     accepted = await start(client, free_owner, stored.json()["id"])
@@ -99,7 +100,7 @@ async def test_an_import_is_started_read_listed_and_parks_on_free(
 async def test_whoever_may_resume_an_import_cancels_it_and_nobody_else(
     client: httpx.AsyncClient, container: AppContainer, free_owner: dict[str, str]
 ) -> None:
-    stored = await upload(client, free_owner)
+    stored = await upload(client, container, free_owner)
     started = (await start(client, free_owner, stored.json()["id"])).json()
     ctx = await worker_context(container, free_owner)
     record = await container.managers.orchestrations.get(ctx, UUID(started["id"]))
@@ -134,10 +135,10 @@ async def test_whoever_may_resume_an_import_cancels_it_and_nobody_else(
 
 
 async def test_a_file_that_is_not_an_import_is_refused(
-    client: httpx.AsyncClient, owner: dict[str, str]
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     refused = await upload(
-        client, owner, b"%PDF-1.7", name="plan.pdf", content_type="application/pdf"
+        client, container, owner, b"%PDF-1.7", name="plan.pdf", content_type="application/pdf"
     )
     assert refused.status_code == 422, refused.text
     too_large = await client.post(

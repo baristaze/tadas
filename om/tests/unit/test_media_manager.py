@@ -71,6 +71,7 @@ def tasks(
     members: Members,
     relay: OutboxRelayImpl,
     media: MediaManagerImpl,
+    infra: InfraLocalImpl,
 ) -> TasksManagerInterface:
     return build_tasks(
         TasksStorageMemoryImpl(outbox),
@@ -79,6 +80,7 @@ def tasks(
         relay,
         no_slack(),
         TasksOptions(),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
@@ -432,7 +434,7 @@ async def test_a_tenant_past_its_retention_loses_every_file(
 
 
 async def test_a_subjects_stored_files_list_apart_from_another_subjects(
-    media: MediaManagerImpl,
+    media: MediaManagerImpl, infra: InfraLocalImpl
 ) -> None:
     ctx = context(Role.MEMBER)
     one, two = new_id(), new_id()
@@ -447,7 +449,9 @@ async def test_a_subjects_stored_files_list_apart_from_another_subjects(
     )
 
 
-async def test_a_subjects_files_go_with_it_and_no_other_subjects(media: MediaManagerImpl) -> None:
+async def test_a_subjects_files_go_with_it_and_no_other_subjects(
+    media: MediaManagerImpl, infra: InfraLocalImpl
+) -> None:
     """What a namespace calls when its record goes: every live file of the
     subject, pending or stored, is deleted, and another subject's are kept."""
     ctx = context(Role.MEMBER)
@@ -464,7 +468,9 @@ async def test_a_subjects_files_go_with_it_and_no_other_subjects(media: MediaMan
     )
 
 
-async def test_another_tenants_subject_deletes_nothing(media: MediaManagerImpl) -> None:
+async def test_another_tenants_subject_deletes_nothing(
+    media: MediaManagerImpl, infra: InfraLocalImpl
+) -> None:
     ann, eve = context(Role.MEMBER), context(Role.OWNER)
     subject = new_id()
     stored = await uploaded(media, infra, ann, a_file(ann, subject_id=subject))
@@ -473,7 +479,9 @@ async def test_another_tenants_subject_deletes_nothing(media: MediaManagerImpl) 
     assert (await media.get_file(ann, stored.id)).deleted_at is None
 
 
-async def test_a_viewer_cannot_delete_a_subjects_files(media: MediaManagerImpl) -> None:
+async def test_a_viewer_cannot_delete_a_subjects_files(
+    media: MediaManagerImpl, infra: InfraLocalImpl
+) -> None:
     org = make_org()
     ann, viewer = context(Role.MEMBER, org), context(Role.VIEWER, org)
     subject = new_id()
@@ -514,7 +522,7 @@ async def test_a_missing_or_foreign_task_takes_no_attachment(tasks: TasksManager
 
 
 async def test_an_attachment_is_removed_from_its_own_task_only(
-    tasks: TasksManagerInterface, media: MediaManagerImpl
+    tasks: TasksManagerInterface, media: MediaManagerImpl, infra: InfraLocalImpl
 ) -> None:
     ctx = context(Role.MEMBER)
     one = await tasks.create_task(ctx, make_task(ctx, "one"))
@@ -528,7 +536,7 @@ async def test_an_attachment_is_removed_from_its_own_task_only(
 
 
 async def test_deleting_a_task_deletes_its_attachments(
-    tasks: TasksManagerInterface, media: MediaManagerImpl
+    tasks: TasksManagerInterface, media: MediaManagerImpl, infra: InfraLocalImpl
 ) -> None:
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))
@@ -547,6 +555,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
     members: Members,
     relay: OutboxRelayImpl,
     media: MediaManagerImpl,
+    infra: InfraLocalImpl,
 ) -> None:
     class Failing(MediaManagerImpl):
         async def delete_subject_files(
@@ -569,6 +578,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         relay,
         no_slack(),
         TasksOptions(),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
@@ -620,12 +630,13 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
         relay,
         no_slack(),
         TasksOptions(retention=timedelta(0)),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))
-    attached = await uploaded(flaky, ctx, a_file(ctx, subject_id=task.id))
+    attached = await uploaded(flaky, infra, ctx, a_file(ctx, subject_id=task.id))
     await tasks.delete_task(ctx, task.id, task.version)
     left = await files.read_file(ctx.org_id, attached.id)
     assert left is not None and left.deleted_at is None, "the detach failed"

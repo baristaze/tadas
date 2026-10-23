@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from store_support import send_parts
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
@@ -47,7 +48,8 @@ def request() -> RequestContext:
 class World:
     def __init__(self, tmp_path: Path, storage: StorageInterface | None = None) -> None:
         self.storage = storage or StorageMemoryImpl()
-        self.managers: Managers = build_managers(self.storage, InfraLocalImpl(tmp_path))
+        self.infra = InfraLocalImpl(tmp_path)
+        self.managers: Managers = build_managers(self.storage, self.infra)
 
     async def org(self, plan: Plan = Plan.FREE) -> TenantContext:
         slug = f"acme-{new_id().hex[-8:]}"
@@ -72,7 +74,8 @@ class World:
             purpose=FilePurpose.TASK_IMPORT,
         )
         started = await self.managers.tasks.imports.create_import_file(ctx, file)
-        await self.managers.media.put_content(ctx, started.id, data)
+        issued = await self.managers.media.issue_upload(ctx, started.id)
+        await send_parts(self.infra.get_buckets(), issued.parts, data)
         await self.managers.media.confirm_file(ctx, started.id)
         return started.id
 
