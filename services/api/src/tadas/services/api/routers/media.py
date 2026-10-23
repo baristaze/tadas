@@ -64,4 +64,3 @@ async def issue_download(
     """`inline=true` is a preview the page shows; otherwise the link saves the
     file under its own name."""
     return await media.issue_download(ctx, file_id, inline)
-
