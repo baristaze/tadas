@@ -1570,7 +1570,7 @@
     },
     "/v1/tasks/imports/files": {
       "post": {
-        "description": "Starts the upload of a CSV file to import (`text/csv`, a `.csv` name, at\nmost 1 MB). Then `POST /v1/media/files/{id}/upload`, the form, and\n`POST /v1/media/files/{id}/confirm`.",
+        "description": "Starts the multipart upload of a CSV file to import (`text/csv`, a\n`.csv` name, at most 1 MB). Then `POST /v1/media/files/{id}/upload`, the\nparts straight to the store, and `POST /v1/media/files/{id}/confirm`.",
         "operationId": "create_import_file",
         "parameters": [
           {
@@ -2412,6 +2412,7 @@
         ]
       },
       "post": {
+        "description": "A pending attachment, with the store's multipart upload of it started\nand nothing in the store yet: `POST /v1/media/files/{id}/upload` signs\nthe parts, which go straight to the store, and the confirm follows.",
         "operationId": "attach_file",
         "parameters": [
           {
