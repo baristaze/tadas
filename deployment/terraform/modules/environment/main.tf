@@ -55,6 +55,9 @@ locals {
     TADAS_AWS_REGION          = var.region
     TADAS_LOG_JSON            = "true"
     TADAS_DATABASE_POOL_SIZE  = tostring(var.database_pool_size)
+    # Opened only by a holder's call, so only a service that serves one
+    # opens it.
+    TADAS_DATABASE_POOL_RESERVE = tostring(var.database_pool_reserve)
     # Read by no code. A rotation (database_password_version raised) changes
     # the task definition through this line, so every service rolls and its
     # new tasks start with the new URL; without it the old tasks would keep
@@ -96,9 +99,11 @@ locals {
   # The API's admission bounds follow its pool, generously: a burst waits on
   # a checkout, which has a bound of its own, and only a flood is refused.
   # Thirty-two reads in flight per connection and half as many writes, which
-  # no demo, traffic run, or person clicking fast comes near.
+  # no demo, traffic run, or person clicking fast comes near, and a quarter
+  # of the writes for a holder's calls, which are short and few.
   admission_limit_reads  = 32 * var.database_pool_size
   admission_limit_writes = 16 * var.database_pool_size
+  admission_limit_holds  = 4 * var.database_pool_size
 
   process_policies = [
     module.queue.policy_arn,
@@ -168,8 +173,8 @@ module "buckets" {
   prefix      = var.bucket_prefix
   buckets     = ["user-file-uploads", "exports"] # tadas.infra.buckets.Buckets
   destroyable = var.destroyable
-  # The portal posts a file straight to the uploads bucket with a form the
-  # API signed, and fetches it back by a signed link.
+  # The portal sends each part of a file straight to the uploads bucket by
+  # a URL the API signed, and fetches it back by a signed link.
   browser_buckets = ["user-file-uploads"]
   browser_origins = concat(["https://${var.app_domain_name}"], var.cors_origins)
   # Every key the media namespace writes is <org_id>/media/<purpose>/<id>.
@@ -386,6 +391,7 @@ module "api" {
     TADAS_SERVICE_NAME           = "api"
     TADAS_ADMISSION_LIMIT_READS  = tostring(local.admission_limit_reads)
     TADAS_ADMISSION_LIMIT_WRITES = tostring(local.admission_limit_writes)
+    TADAS_ADMISSION_LIMIT_HOLDS  = tostring(local.admission_limit_holds)
     TADAS_HOST                   = "0.0.0.0"
     TADAS_PORT                   = "8000"
     # The portal calls the API same-origin and needs none of this; a tab

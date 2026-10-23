@@ -13,7 +13,9 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from api_support import (
+    a_dock,
     add_member,
+    ask,
     build_container,
     client_over,
     seed_request,
@@ -22,7 +24,6 @@ from api_support import (
 )
 
 from tadas.om import root
-from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.context import Role, TenantContext
 from tadas.om.exceptions import NotAuthorized, ValidationFailed
 from tadas.om.leases.hooks import AskCheckInterface
@@ -34,29 +35,6 @@ from tadas.services.api.container import AppContainer
 
 async def org_of(client: httpx.AsyncClient, headers: dict[str, str]) -> UUID:
     return UUID((await client.get("/v1/me", headers=headers)).json()["org"]["id"])
-
-
-async def a_dock(container: AppContainer, org_id: UUID, *labels: str) -> LeasableResource:
-    """A resource its owner namespace registers, as no route does."""
-    ctx = await container.managers.tenancy.service_context(seed_request(), org_id, EMPTY_UUID)
-    now = utcnow()
-    return await container.managers.leases.register(
-        ctx,
-        LeasableResource(
-            id=new_id(), created_at=now, updated_at=now, created_by=EMPTY_UUID,
-            updated_by=EMPTY_UUID, kind=LeasableResourceKind.NOOP, ref_id=new_id(), labels=labels,
-        ),
-    )  # fmt: skip
-
-
-async def ask(
-    client: httpx.AsyncClient, headers: dict[str, str], key: str | None = None, **body: Any
-) -> httpx.Response:
-    return await client.post(
-        "/v1/leases/requests",
-        headers={**headers, "Idempotency-Key": key or str(uuid4())},
-        json={"kind": "noop", **body},
-    )
 
 
 async def a_member(

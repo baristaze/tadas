@@ -8,7 +8,7 @@ uv run tadas login --org ajax        # confirm the code in the browser, on every
 uv run tadas whoami
 uv run tadas orgs                    # * marks the auth session's org
 uv run tadas switch fabrikam         # the old auth session ends
-uv run tadas upload spec.pdf         # --type, --json
+uv run tadas upload spec.pdf         # --type, --json; --resume ID goes on with one that stopped
 uv run tadas listen                  # who did what to which record
 uv run tadas logout
 ```
