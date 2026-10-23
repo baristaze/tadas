@@ -84,11 +84,24 @@ route are in no document:
   trace. A relay that fails, or whose push the bus drops, is logged,
   and the maintenance sweep relays the rows. The latency a route reports is the time to its
   answer.
-- **Admission.** The process bounds what it has in flight. Past the
-  bound a request is refused at once with a 503 and a `Retry-After`,
-  so a saturated process answers and says why instead of queueing
-  work it cannot start. Admission fails closed and is counted in the
-  process's own memory.
+- **Admission.** The process bounds what it has in flight, in three
+  lanes: reads, writes, and a holder's calls. Past a lane's bound a
+  request is refused at once with a 503 and a `Retry-After`, so a
+  saturated process answers and says why instead of queueing work it
+  cannot start. Admission fails closed and is counted in the process's
+  own memory.
+- **A holder's calls.** A route that keeps or settles what its caller
+  holds carries `HOLDER_CALL` in its dependencies: the lease's renewal
+  and its release. It is counted in the holds lane
+  (`TADAS_ADMISSION_LIMIT_HOLDS`) and spends its credential's holds
+  budget (`TADAS_CREDENTIAL_RATE_LIMIT_HOLDS`), so a write budget the
+  holder's own writes have spent does not refuse it at the rate limit,
+  and a full write lane does not refuse it at admission
+  ([ADR 0106](../../docs/adr/0106-a-holders-calls-are-counted-apart-from-its-writes.md)).
+  Admitted, it takes a connection of the pool when one is free and the
+  pool's reserve (`TADAS_DATABASE_POOL_RESERVE`) when none is, so a slow
+  database that fills the pool with writes still serves it
+  ([ADR 0108](../../docs/adr/0108-a-holders-call-has-a-reserve-at-the-database-pool.md)).
 - **A deadline on every admitted request.** A request gets one when it
   takes its slot, `TADAS_REQUEST_DEADLINE_SECONDS` (20) from then, and
   every call it makes to WorkOS, Stripe, Slack, or AWS shares it. A
@@ -103,10 +116,11 @@ route are in no document:
   `rate_limited`, in the one envelope, with a `Retry-After` in
   seconds: the time left on the window. There are three budgets.
   - **Per credential.** Every auth session and API key has a budget of
-    reads (`GET`, `HEAD`) and one of writes, spent once the credential
-    resolves (`TADAS_CREDENTIAL_RATE_LIMIT_READS`, `_WRITES`, over
-    `TADAS_CREDENTIAL_RATE_WINDOW_SECONDS`). Two people behind one
-    address never share it.
+    reads (`GET`, `HEAD`), one of writes, and one of a holder's calls,
+    spent once the credential resolves, in the lane admission counted
+    the request in (`TADAS_CREDENTIAL_RATE_LIMIT_READS`, `_WRITES`,
+    `_HOLDS`, over `TADAS_CREDENTIAL_RATE_WINDOW_SECONDS`). Two people
+    behind one address never share it.
   - **Per address, on failed authentications.** A bearer that is
     unknown, expired, or revoked answers 401 and counts against the
     client address (`TADAS_FAILED_AUTHENTICATION_LIMIT`). Once that is

@@ -5,7 +5,6 @@ from uuid import UUID
 
 from tadas.om.context import TenantContext
 from tadas.services.api.types.media import (
-    FileContentResponse,
     FileView,
     IssuedDownloadView,
     IssuedUploadView,
@@ -18,10 +17,10 @@ class MediaServiceInterface(ABC):
     async def get_file(self, ctx: TenantContext, file_id: UUID) -> FileView: ...
 
     @abstractmethod
-    async def issue_upload(self, ctx: TenantContext, file_id: UUID) -> IssuedUploadView: ...
-
-    @abstractmethod
-    async def put_content(self, ctx: TenantContext, file_id: UUID, data: bytes) -> FileView: ...
+    async def issue_upload(self, ctx: TenantContext, file_id: UUID) -> IssuedUploadView:
+        """The parts of the upload the store does not hold yet, each signed for
+        a PUT straight to the store."""
+        ...
 
     @abstractmethod
     async def confirm_file(self, ctx: TenantContext, file_id: UUID) -> FileView: ...
@@ -30,13 +29,6 @@ class MediaServiceInterface(ABC):
     async def issue_download(
         self, ctx: TenantContext, file_id: UUID, inline: bool
     ) -> IssuedDownloadView: ...
-
-    @abstractmethod
-    async def get_content(
-        self, ctx: TenantContext, file_id: UUID, inline: bool
-    ) -> FileContentResponse:
-        """The bytes through the API, for a store that cannot sign a link."""
-        ...
 
     @abstractmethod
     async def get_usage(self, ctx: TenantContext) -> StorageUsageView: ...

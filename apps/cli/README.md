@@ -16,7 +16,7 @@ uv run tadas add "Call the bank" --due 2026-10-01  # a date, never a time; remin
 uv run tadas edit 8b949fce --no-due  # clear the due date; --due moves it
 uv run tadas ls                      # open tasks; --done, --mine, --json
 uv run tadas done 8b949fce           # the short id `ls` shows
-uv run tadas attach 8b949fce spec.pdf     # the type from the name, or --type
+uv run tadas attach 8b949fce spec.pdf     # the type from the name, or --type; --resume ID goes on with one that stopped
 uv run tadas attachments 8b949fce         # id, size, type, name
 uv run tadas download 8b949fce 1c2d3e4f   # the file's short id; --out <path>
 uv run tadas detach 8b949fce 1c2d3e4f
@@ -54,9 +54,9 @@ uv run tadas logout
   longer reaches back to where the listener stood, stderr says some
   changes are gone, and the listener reads every task again and goes on
   from the stream's head. Only a dead credential ends the listener.
-- `import <file.csv>` uploads the file as the portal does (the form
-  straight to the store, or the bytes through the API where the store
-  cannot take one), starts its import, and follows it on the same channel
+- `import <file.csv>` uploads the file as the portal does (its parts
+  straight to the store, each by a URL the API signed for it), starts its
+  import, and follows it on the same channel
   `listen` uses: it reads the import once the channel is open and again on
   every push about it, printing `created N of M, skipped K` as it moves.
   It ends when the import does: exit 0 when it succeeded; exit 1 when it

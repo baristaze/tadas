@@ -22,7 +22,7 @@ it, and nothing else in Python calls `/v1/*`.
 
 ```python
 async with ApiClient(url, app="cli", app_version="cli@0.18.0", token=token) as api:
-    stored = await api.attach(task_id, "spec.pdf", "application/pdf", data)
+    stored = await api.attach(task_id, "spec.pdf", "application/pdf", path)  # the parts go straight to the store
     async for change in Channel(api):
         print(change.kind, change.target_id, change.actor_id)
 ```

@@ -72,7 +72,7 @@ BOUNDS: Mapping[FilePurpose, UploadBounds] = {
 }
 """The bounds of every purpose. The numbers are illustrative; the shape is
 that each purpose names its own ceiling and its own types, and a type
-outside the list is refused before any form is signed."""
+outside the list is refused before any part is signed."""
 
 SUBJECT_REQUIRED: frozenset[FilePurpose] = frozenset({FilePurpose.TASK_ATTACHMENT})
 """The purposes whose file belongs to a subject, the record of another

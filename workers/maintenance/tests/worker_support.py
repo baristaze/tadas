@@ -8,6 +8,8 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+from store_support import send_parts
+
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
@@ -96,8 +98,9 @@ async def upload(
     container: WorkerContainer, ctx: TenantContext, name: str = "note.webm", *, confirm: bool = True
 ) -> File:
     """A file the person stored in the org, a dictation, which has no subject:
-    its row, and its object in the store. Unconfirmed, the upload is started
-    and never finished: a pending row, and no object."""
+    its row, and its object in the store, its parts sent straight to the
+    store. Unconfirmed, the upload is started and never finished: a pending
+    row, the parts the store holds of it, and no object."""
     data = b"\x1aE\xdf\xa3" + b"0" * 64
     now = utcnow()
     media = container.managers.media
@@ -115,9 +118,10 @@ async def upload(
             purpose=FilePurpose.VOICE_DICTATION,
         ),
     )
+    issued = await media.issue_upload(ctx, file.id)
+    await send_parts(container.infra.get_buckets(), issued.parts, data)
     if not confirm:
         return file
-    await media.put_content(ctx, file.id, data)
     return await media.confirm_file(ctx, file.id)
 
 
@@ -140,7 +144,8 @@ async def start_import(container: WorkerContainer, ctx: TenantContext, rows: int
             purpose=FilePurpose.TASK_IMPORT,
         ),
     )
-    await container.managers.media.put_content(ctx, file.id, data)
+    issued = await container.managers.media.issue_upload(ctx, file.id)
+    await send_parts(container.infra.get_buckets(), issued.parts, data)
     await container.managers.media.confirm_file(ctx, file.id)
     return await container.managers.tasks.imports.start_import(ctx, new_id(), file.id)
 

@@ -1,38 +1,8 @@
 {
   "components": {
     "schemas": {
-      "AddFileRequest": {
-        "additionalProperties": false,
-        "description": "An upload to start: the file's name as the uploader had it, its type,\nand its size in bytes. The type must be one the purpose accepts and match\nthe name's extension; the size is the most the store will take.",
-        "properties": {
-          "content_type": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Content Type",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          },
-          "size_bytes": {
-            "exclusiveMinimum": 0.0,
-            "title": "Size Bytes",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "name",
-          "content_type",
-          "size_bytes"
-        ],
-        "title": "AddFileRequest",
-        "type": "object"
-      },
       "FilePageView": {
-        "description": "One page of files, oldest first. `next_cursor` fetches the next page and\nis null on the last one.",
+        "description": "One page of the org's stored files, oldest first. `next_cursor` fetches\nthe next page and is null on the last one.",
         "properties": {
           "items": {
             "items": {
@@ -63,9 +33,7 @@
       "FilePurpose": {
         "description": "Which context a file came from. The purpose decides the bounds an\nupload is held to and what `subject_id` names. A product adds a purpose\nper kind of file it keeps, with its bounds (`media.rules.BOUNDS`).",
         "enum": [
-          "task_attachment",
-          "voice_dictation",
-          "task_import"
+          "upload"
         ],
         "title": "FilePurpose",
         "type": "string"
@@ -160,7 +128,7 @@
         "type": "object"
       },
       "IssuedDownloadView": {
-        "description": "A link to the file's bytes that works until `expires_at`. A null `url`\nmeans the store cannot sign one: the bytes come from\n`GET /v1/media/files/{id}/content`.",
+        "description": "A link to the file's bytes, straight from the store, that works until\n`expires_at`.",
         "properties": {
           "expires_at": {
             "format": "date-time",
@@ -168,15 +136,8 @@
             "type": "string"
           },
           "url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Url"
+            "title": "Url",
+            "type": "string"
           }
         },
         "required": [
@@ -186,36 +147,63 @@
         "title": "IssuedDownloadView",
         "type": "object"
       },
+      "IssuedPartView": {
+        "description": "One part to send: the `size_bytes` bytes of the file from `offset`, as\nthe body of a PUT to `url`, straight to the store. The URL is signed for\nthat length, and the store refuses a body of any other.",
+        "properties": {
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "offset",
+          "size_bytes",
+          "url"
+        ],
+        "title": "IssuedPartView",
+        "type": "object"
+      },
       "IssuedUploadView": {
-        "description": "A form to post the file with, straight to the store: every field, in\norder, then the file as the last field, named `file`. The signed policy\nholds the post to the file's type and at most its size, until\n`expires_at`. A null `url` means the store cannot take a post: the bytes\ngo to `PUT /v1/media/files/{id}/content` instead. Then the upload is\nconfirmed.",
+        "description": "The parts of the upload the store does not hold yet, at most a window\nof them, each good until `expires_at`. `remaining` counts every part\nstill missing, these included: send these and ask again while it is\nabove zero, then confirm. Asked again after an upload was cut off, it\nsigns only the parts still missing, under the same `upload_id`.",
         "properties": {
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
             "type": "string"
           },
-          "fields": {
+          "parts": {
             "items": {
-              "$ref": "#/components/schemas/UploadFieldView"
+              "$ref": "#/components/schemas/IssuedPartView"
             },
-            "title": "Fields",
+            "title": "Parts",
             "type": "array"
           },
-          "url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Url"
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "upload_id": {
+            "title": "Upload Id",
+            "type": "string"
           }
         },
         "required": [
-          "url",
-          "fields",
+          "upload_id",
+          "parts",
+          "remaining",
           "expires_at"
         ],
         "title": "IssuedUploadView",
@@ -253,6 +241,36 @@
         "title": "PurposeUsageView",
         "type": "object"
       },
+      "StartUploadRequest": {
+        "additionalProperties": false,
+        "description": "An upload to start: the file's name as the uploader had it, its type,\nand its size in bytes. The type must be one the purpose accepts and match\nthe name's extension; the size is the most the store will take.",
+        "properties": {
+          "content_type": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "content_type",
+          "size_bytes"
+        ],
+        "title": "StartUploadRequest",
+        "type": "object"
+      },
       "StorageUsageView": {
         "description": "What the org keeps in the store, counted from its files: the stored ones\nper purpose and in total, and the uploads started and not yet confirmed.\nA removed file stops counting at once.",
         "properties": {
@@ -284,34 +302,331 @@
         ],
         "title": "StorageUsageView",
         "type": "object"
-      },
-      "UploadFieldView": {
-        "properties": {
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "value": {
-            "title": "Value",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "value"
-        ],
-        "title": "UploadFieldView",
-        "type": "object"
       }
     }
   },
   "info": {
     "title": "Tadas API: media",
-    "version": "0.18.0"
+    "version": "0.1.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/media/files": {
+      "get": {
+        "description": "The org's stored files, oldest first; a pending upload is not listed.",
+        "operationId": "list_files",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilePageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "common.json#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Files",
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "description": "A pending file, with the store's multipart upload of it started and\nnothing in the store yet: the parts and the confirm follow by its id.",
+        "operationId": "start_upload",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "common.json#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "feature_off: `media-uploads` is off"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "common.json#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Upload",
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/v1/media/files/{file_id}": {
+      "delete": {
+        "operationId": "delete_file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "File Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "common.json#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete File",
+        "tags": [
+          "media"
+        ]
+      },
       "get": {
         "operationId": "get_file",
         "parameters": [
@@ -480,215 +795,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "common.json#/components/schemas/HTTPValidationError"
+                  "$ref": "common.json#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "upload_refused: the parts the store holds do not sum to the size"
           }
         },
         "summary": "Confirm File",
-        "tags": [
-          "media"
-        ]
-      }
-    },
-    "/v1/media/files/{file_id}/content": {
-      "get": {
-        "operationId": "get_content",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "file_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "File Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "inline",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Inline",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-app",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-App"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-app-version",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-App-Version"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/octet-stream": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "common.json#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Content",
-        "tags": [
-          "media"
-        ]
-      },
-      "put": {
-        "operationId": "put_content",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "file_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "File Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-app",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-App"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-app-version",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-App-Version"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/octet-stream": {
-              "schema": {
-                "format": "binary",
-                "type": "string"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FileView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "common.json#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Put Content",
         "tags": [
           "media"
         ]
@@ -798,6 +912,7 @@
     },
     "/v1/media/files/{file_id}/upload": {
       "post": {
+        "description": "The parts the store does not hold yet. Asked again after an upload\nwas cut off, it signs only the parts still missing, under the same\nupload.",
         "operationId": "issue_upload",
         "parameters": [
           {
@@ -971,7 +1086,7 @@
   },
   "tags": [
     {
-      "description": "Media: the org's files, as references to objects in the store.\n\nA file; the form that posts its bytes straight to the store, or the bytes\nthrough the API where the store cannot take a form; the confirm once the\nupload is done; the link a download follows, or the bytes through the API;\nand the org's storage used (`/v1/media/files/{file_id}`, `.../upload`,\n`.../content`, `.../confirm`, `.../download`, `/v1/media/usage`). Each\nfunction is one call into the media service. A file is started by the\nnamespace it belongs to (a task's attachment by the task's route), never\nhere.",
+      "description": "Media: the org's files, as references to objects in the store.\n\nStarting an upload, under an Idempotency-Key; the org's stored files a page\nat a time; a file, and deleting it; the parts of an upload the store does not\nhold yet, each signed for a PUT straight to the store; the confirm once the\nparts are there; the link a download follows straight from the store; and\nthe org's storage used (`/v1/media/files`, `/v1/media/files/{file_id}`,\n`.../upload`, `.../confirm`, `.../download`, `/v1/media/usage`). No route\ntakes or serves a file's bytes. Each function is one call into the media\nservice; the start runs under the idempotency record. A file started here is\nof purpose `upload`: a file the org keeps, about no subject.",
       "name": "media"
     }
   ]
