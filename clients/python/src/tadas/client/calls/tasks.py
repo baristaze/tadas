@@ -3,8 +3,10 @@ import, and an org's tasks on the operator plane, whose bearer is an operator
 token. An attachment and an import file are media files, so these calls build
 on the media namespace's upload."""
 
+import asyncio
 from collections.abc import Sequence
 from datetime import date
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -197,10 +199,18 @@ class TasksCalls(MediaCalls):
         removed = await self.request("DELETE", f"/v1/tasks/{task_id}/attachments/{file_id}")
         return FileView.model_validate(removed)
 
-    async def attach(self, task_id: UUID, name: str, content_type: str, data: bytes) -> FileView:
-        """The whole upload of a task's attachment: start it, then `upload`."""
-        started = await self.start_attachment(task_id, name, content_type, len(data))
-        return await self.upload(started, data)
+    async def attach(
+        self, task_id: UUID, name: str, content_type: str, source: Path | bytes
+    ) -> FileView:
+        """The whole upload of a task's attachment: start it, then `upload`,
+        which sends its parts straight to the store a chunk at a time. An
+        upload cut off goes on with `upload` on the file this started."""
+        if isinstance(source, bytes):
+            size = len(source)
+        else:
+            size = (await asyncio.to_thread(source.stat)).st_size
+        started = await self.start_attachment(task_id, name, content_type, size)
+        return await self.upload(started, source)
 
     # Imports
 
