@@ -92,6 +92,7 @@ def manager(
         relay,
         no_slack(),
         TasksOptions(),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
@@ -466,6 +467,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
         relay,
         no_slack(),
         TasksOptions(),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
@@ -496,6 +498,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
         relay,
         no_slack(),
         TasksOptions(max_limit=2),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
@@ -566,6 +569,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
         relay,
         no_slack(),
         TasksOptions(),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
@@ -776,7 +780,7 @@ async def test_a_respace_whose_run_was_written_meanwhile_waits_for_the_next_pass
 
 
 async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
-    manager: TasksManagerInterface, members: Members
+    manager: TasksManagerInterface, members: Members, infra: InfraLocalImpl
 ) -> None:
     org = make_org()
     ctx = context(Role.MEMBER, org, members)
@@ -791,6 +795,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         manager._relay,  # type: ignore[attr-defined]
         no_slack(),
         TasksOptions(retention=timedelta(0)),
+        buckets=infra.get_buckets(),
         entitlements=ON_TEAM,
         orchestrations=manager.imports._orchestrations,  # type: ignore[attr-defined]
     )

@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
+from tadas.infra.buckets import Buckets, BucketsInterface
 from tadas.om.base import derived_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.context import Permission, TenantContext
@@ -52,10 +53,12 @@ class TasksImportsManagerImpl(TasksImportsManagerInterface):
         relay: OutboxRelayInterface,
         options: TasksOptions,
         *,
+        buckets: BucketsInterface,
         entitlements: EntitlementsInterface,
         orchestrations: OrchestrationsManagerInterface,
     ) -> None:
         self._orchestrations = orchestrations
+        self._buckets = buckets
         self._storage = storage
         self._tenancy = tenancy
         self._media = media
@@ -117,7 +120,11 @@ class TasksImportsManagerImpl(TasksImportsManagerInterface):
             return await self._orchestrations.fail(ctx, record, FailReason.FILE_GONE)
         if file.status is not FileStatus.STORED:
             return await self._orchestrations.fail(ctx, record, FailReason.FILE_GONE)
-        data = await self._media.get_content(ctx, file_id)
+        # The worker's own read of a stored file, from the store: no client
+        # transfer, so no presigned link.
+        data = await self._buckets.get(
+            ctx.org_id, Buckets.USER_FILE_UPLOADS, file.key, deadline=ctx.deadline
+        )
         try:
             rows = parse_import(data, BOUNDS[FilePurpose.TASK_IMPORT].max_bytes)
         except ImportFileRefused as refused:

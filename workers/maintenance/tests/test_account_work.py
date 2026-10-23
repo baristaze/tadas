@@ -15,6 +15,7 @@ from uuid import UUID
 
 import pytest
 from slack_support import build, install, make_task, on_team, owner_of
+from store_support import send_parts
 from test_billing_work import checkout, consumer_of, queued
 from worker_support import build_container, request, signing, start_import, upload
 
@@ -110,7 +111,8 @@ async def attach(container: WorkerContainer, ctx: TenantContext, task_id: UUID) 
             purpose=FilePurpose.TASK_ATTACHMENT,
         ),
     )
-    await container.managers.media.put_content(ctx, file.id, data)
+    issued = await container.managers.media.issue_upload(ctx, file.id)
+    await send_parts(container.infra.get_buckets(), issued.parts, data)
     return await container.managers.media.confirm_file(ctx, file.id)
 
 

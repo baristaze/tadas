@@ -1,19 +1,29 @@
 """Files over the live app, on the local store: a task's attachment started,
-its bytes moved through the API (the local store cannot presign), confirmed,
-listed, downloaded, and removed; the bounds; the usage; the tenant boundary;
-and the namespaces setting that mounts the media routes alone."""
+its parts sent straight to the store by their signed URLs, confirmed,
+listed, downloaded straight from the store, and removed; an upload cut off
+that resumes; the bounds; the usage; the tenant boundary; and the namespaces
+setting that mounts the media routes alone."""
 
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from api_support import add_member, build_container, seed_request, sign_in_as
+from api_support import (
+    add_member,
+    build_container,
+    seed_request,
+    send_parts,
+    send_upload,
+    sign_in_as,
+)
+from fastapi import FastAPI
+from store_support import local_store
 
+from tadas.infra.buckets import PART_BYTES
 from tadas.om.context import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
-from tadas.services.api.gateway.body import MAX_BODY_BYTES
 
 PDF = b"%PDF-1.7 the report"
 
@@ -40,24 +50,26 @@ async def start(
 
 
 async def attach(
-    client: httpx.AsyncClient, headers: dict[str, str], task_id: str, data: bytes = PDF
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    headers: dict[str, str],
+    task_id: str,
+    data: bytes = PDF,
 ) -> dict:
-    """The whole flow a client makes against a store that cannot presign."""
+    """The whole flow a client makes: start on the task, ask for the parts,
+    send each straight to the store, ask again until none is missing,
+    confirm."""
     started = await start(client, headers, task_id, size=len(data))
     assert started.status_code == 201, started.text
     file_id = started.json()["id"]
-    form = await client.post(f"/v1/media/files/{file_id}/upload", headers=headers)
-    assert form.status_code == 200, form.text
-    assert form.json()["url"] is None and form.json()["fields"] == []
-    put = await client.put(f"/v1/media/files/{file_id}/content", headers=headers, content=data)
-    assert put.status_code == 200, put.text
+    await send_upload(client, container, headers, file_id, data)
     confirmed = await client.post(f"/v1/media/files/{file_id}/confirm", headers=headers)
     assert confirmed.status_code == 200, confirmed.text
     return confirmed.json()
 
 
 async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
-    client: httpx.AsyncClient, owner: dict[str, str]
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     task_id = await a_task(client, owner)
     started = await start(client, owner, task_id)
@@ -73,9 +85,10 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     assert listed.status_code == 200, listed.text
     assert listed.json() == {"items": [], "next_cursor": None}, "a pending file is not listed"
     early = await client.post(f"/v1/media/files/{pending['id']}/confirm", headers=owner)
-    assert early.status_code == 422, "no object, no confirm"
+    assert early.status_code == 422, "no parts, no confirm"
+    assert early.json()["error"]["code"] == "upload_refused"
 
-    stored = await attach(client, owner, task_id)
+    stored = await attach(client, container, owner, task_id)
     assert (stored["status"], stored["name"], stored["extension"]) == (
         "stored",
         "report.pdf",
@@ -85,16 +98,18 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     assert [f["id"] for f in listed.json()["items"]] == [stored["id"]]
 
     link = await client.get(f"/v1/media/files/{stored['id']}/download", headers=owner)
-    assert link.status_code == 200 and link.json()["url"] is None, link.text
-    content = await client.get(f"/v1/media/files/{stored['id']}/content", headers=owner)
+    assert link.status_code == 200, link.text
+    preview = await client.get(
+        f"/v1/media/files/{stored['id']}/download", headers=owner, params={"inline": "true"}
+    )
+    async with local_store(container.infra.get_buckets()) as store:
+        content = await store.get(link.json()["url"])
+        shown = await store.get(preview.json()["url"])
     assert content.status_code == 200 and content.content == PDF
     assert content.headers["content-type"] == "application/pdf"
     assert content.headers["content-disposition"] == "attachment; filename*=UTF-8''report.pdf"
-    preview = await client.get(
-        f"/v1/media/files/{stored['id']}/content", headers=owner, params={"inline": "true"}
-    )
-    assert preview.headers["content-disposition"] == "inline"
-    assert preview.headers["content-type"] == "application/pdf"
+    assert shown.headers["content-disposition"] == "inline"
+    assert shown.headers["content-type"] == "application/pdf"
 
     removed = await client.delete(f"/v1/tasks/{task_id}/attachments/{stored['id']}", headers=owner)
     assert removed.status_code == 200 and removed.json()["deleted_at"] is not None
@@ -105,6 +120,48 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     assert gone.status_code == 404
     usage = (await client.get("/v1/media/usage", headers=owner)).json()
     assert usage["total_count"] == 0, "a deleted file stops counting at once"
+
+
+async def test_an_attachment_cut_off_resumes_sending_only_the_missing_parts(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    """A task attachment of two parts: the first reaches the store and the
+    upload stops. Asked again, the API signs the second part alone, under
+    the same upload; once it is sent, the confirm stores the file, and the
+    download's presigned GET answers every byte."""
+    data = b"%PDF-1.7 " + bytes(n % 251 for n in range(PART_BYTES + 1000))
+    task_id = await a_task(client, owner)
+    started = await start(client, owner, task_id, size=len(data))
+    assert started.status_code == 201, started.text
+    file_id = started.json()["id"]
+
+    first = await client.post(f"/v1/media/files/{file_id}/upload", headers=owner)
+    assert first.status_code == 200, first.text
+    planned = first.json()
+    assert [(p["number"], p["offset"], p["size_bytes"]) for p in planned["parts"]] == [
+        (1, 0, PART_BYTES),
+        (2, PART_BYTES, len(data) - PART_BYTES),
+    ]
+    assert all(p["url"].startswith("http://buckets.test/") for p in planned["parts"])
+    cut_off = {**planned, "parts": planned["parts"][:1]}
+    assert await send_parts(container, cut_off, data) == [1]
+    early = await client.post(f"/v1/media/files/{file_id}/confirm", headers=owner)
+    assert early.status_code == 422 and early.json()["error"]["code"] == "upload_refused"
+
+    resumed = await client.post(f"/v1/media/files/{file_id}/upload", headers=owner)
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["upload_id"] == planned["upload_id"]
+    assert [p["number"] for p in resumed.json()["parts"]] == [2], "only the missing part"
+    assert await send_parts(container, resumed.json(), data) == [2]
+    done = await client.post(f"/v1/media/files/{file_id}/upload", headers=owner)
+    assert done.json()["parts"] == [] and done.json()["remaining"] == 0
+
+    confirmed = await client.post(f"/v1/media/files/{file_id}/confirm", headers=owner)
+    assert confirmed.status_code == 200 and confirmed.json()["status"] == "stored"
+    link = await client.get(f"/v1/media/files/{file_id}/download", headers=owner)
+    async with local_store(container.infra.get_buckets()) as store:
+        fetched = await store.get(link.json()["url"])
+    assert fetched.status_code == 200 and fetched.content == data
 
 
 async def test_a_retried_start_lands_one_file(
@@ -130,6 +187,7 @@ async def test_a_retried_start_lands_one_file(
         ("report.png", "application/pdf", 10),
         ("report.pdf", "application/pdf", 100 * 1024 * 1024 + 1),
         ("a/b.pdf", "application/pdf", 10),
+        ("report.pdf", "application/pdf", 0),
     ],
 )
 async def test_an_upload_outside_the_bounds_never_starts(
@@ -141,54 +199,43 @@ async def test_an_upload_outside_the_bounds_never_starts(
     assert refused.json()["error"]["code"] == "validation_failed"
 
 
-async def test_bytes_past_the_declared_size_are_refused(
-    client: httpx.AsyncClient, owner: dict[str, str]
+async def test_no_route_takes_or_serves_a_files_bytes(
+    app: FastAPI, client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
+    """No route of the app carries a file's bytes, and the issued parts are
+    the store's URLs, each signed for its own length."""
+    for path, operations in app.openapi()["paths"].items():
+        for method, operation in operations.items():
+            body = operation.get("requestBody", {}).get("content", {})
+            assert set(body) <= {"application/json"}, f"{method} {path} takes {set(body)}"
+            for answer in operation.get("responses", {}).values():
+                kinds = set(answer.get("content", {}))
+                assert kinds <= {"application/json"}, f"{method} {path} serves {kinds}"
     task_id = await a_task(client, owner)
-    started = await start(client, owner, task_id, size=4)
-    file_id = started.json()["id"]
-    await client.post(f"/v1/media/files/{file_id}/upload", headers=owner)
-    over = await client.put(f"/v1/media/files/{file_id}/content", headers=owner, content=b"12345")
-    assert over.status_code == 422, over.text
-    huge = await client.put(
-        f"/v1/media/files/{file_id}/content",
-        headers={**owner, "Content-Length": str(MAX_BODY_BYTES + 1)},
-        content=b"x",
-    )
-    assert huge.status_code == 422, huge.text
-
-
-async def test_a_declared_length_that_is_no_number_is_no_exception(
-    client: httpx.AsyncClient, owner: dict[str, str]
-) -> None:
-    """A length in digits of another script declares nothing, and the body is
-    bounded as it runs; one with more digits than a number is read from is
-    past the bound."""
-    task_id = await a_task(client, owner)
-    started = await start(client, owner, task_id, size=4)
-    file_id = started.json()["id"]
-    await client.post(f"/v1/media/files/{file_id}/upload", headers=owner)
-    sent = [(name.encode(), value.encode()) for name, value in owner.items()]
-    endless = await client.put(
-        f"/v1/media/files/{file_id}/content",
-        headers=[*sent, (b"Content-Length", b"9" * 5000)],
-        content=b"1234",
-    )
-    assert endless.status_code == 422, endless.text
-    unread = await client.put(
-        f"/v1/media/files/{file_id}/content",
-        headers=[*sent, (b"Content-Length", b"\xb2")],
-        content=b"1234",
-    )
-    assert unread.status_code == 200, unread.text
+    started = (await start(client, owner, task_id, size=len(PDF))).json()
+    issued = await client.post(f"/v1/media/files/{started['id']}/upload", headers=owner)
+    (part,) = issued.json()["parts"]
+    assert part["url"].startswith("http://buckets.test/")
+    assert (part["number"], part["offset"], part["size_bytes"]) == (1, 0, len(PDF))
+    for method in ("PUT", "GET"):
+        bytes_in = await client.request(
+            method, f"/v1/media/files/{started['id']}/content", headers=owner, content=PDF
+        )
+        assert bytes_in.status_code in (404, 405), f"{method}: {bytes_in.status_code}"
+    async with local_store(container.infra.get_buckets()) as store:
+        longer = await store.put(part["url"], content=PDF + b"more")
+    assert longer.status_code == 403, "the store refuses a part past its length"
+    assert await send_parts(container, issued.json(), PDF) == [1]
+    confirmed = await client.post(f"/v1/media/files/{started['id']}/confirm", headers=owner)
+    assert confirmed.status_code == 200 and confirmed.json()["status"] == "stored"
 
 
 async def test_usage_is_counted_from_the_rows(
-    client: httpx.AsyncClient, owner: dict[str, str]
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     task_id = await a_task(client, owner)
-    await attach(client, owner, task_id)
-    await attach(client, owner, task_id, b"12345")
+    await attach(client, container, owner, task_id)
+    await attach(client, container, owner, task_id, b"12345")
     await start(client, owner, task_id, size=700)
     usage = await client.get("/v1/media/usage", headers=owner)
     assert usage.status_code == 200, usage.text
@@ -204,10 +251,10 @@ async def test_usage_is_counted_from_the_rows(
 
 
 async def test_deleting_a_task_removes_its_attachments_from_the_usage(
-    client: httpx.AsyncClient, owner: dict[str, str]
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     task_id = await a_task(client, owner)
-    await attach(client, owner, task_id)
+    await attach(client, container, owner, task_id)
     deleted = await client.delete(f"/v1/tasks/{task_id}", headers={**owner, "If-Match": '"1"'})
     assert deleted.status_code == 200, deleted.text
     usage = (await client.get("/v1/media/usage", headers=owner)).json()
@@ -219,7 +266,7 @@ async def test_a_viewer_reads_attachments_and_starts_none(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     task_id = await a_task(client, owner)
-    stored = await attach(client, owner, task_id)
+    stored = await attach(client, container, owner, task_id)
     org_id = UUID((await client.get("/v1/me", headers=owner)).json()["org"]["id"])
     await add_member(container, org_id, "vic@example.test", Role.VIEWER)
     viewer = await sign_in_as(client, container, "vic@example.test", org_id)
@@ -235,8 +282,8 @@ async def test_a_viewer_reads_attachments_and_starts_none(
 async def test_an_upload_is_its_starters_until_it_is_stored(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    """Another member reads a pending file but signs no form for it, moves no
-    bytes into it, and confirms it for nobody."""
+    """Another member reads a pending file but gets no part of it signed, and
+    confirms it for nobody."""
     task_id = await a_task(client, owner)
     started = (await start(client, owner, task_id)).json()
     org_id = UUID((await client.get("/v1/me", headers=owner)).json()["org"]["id"])
@@ -246,7 +293,6 @@ async def test_an_upload_is_its_starters_until_it_is_stored(
     assert (await client.get(f"/v1/media/files/{file_id}", headers=mia)).status_code == 200
     moves: list[tuple[str, str, dict]] = [
         ("POST", f"/v1/media/files/{file_id}/upload", {}),
-        ("PUT", f"/v1/media/files/{file_id}/content", {"content": PDF}),
         ("POST", f"/v1/media/files/{file_id}/confirm", {}),
     ]
     for method, path, extra in moves:
@@ -260,7 +306,7 @@ async def test_another_tenants_file_answers_as_a_missing_one(
     """Tenant B names A's task and A's file on every route that takes one; each
     answer is the 404 an unknown id gets, and A's file is as it was."""
     task_id = await a_task(client, owner)
-    stored = await attach(client, owner, task_id)
+    stored = await attach(client, container, owner, task_id)
     _, other = await container.managers.tenancy.bootstrap(
         seed_request(), "Other", "other", "eve@other.test", "Eve"
     )
@@ -270,10 +316,8 @@ async def test_another_tenants_file_answers_as_a_missing_one(
     swept: list[tuple[str, str, dict]] = [
         ("GET", f"/v1/media/files/{file_id}", {}),
         ("POST", f"/v1/media/files/{file_id}/upload", {}),
-        ("PUT", f"/v1/media/files/{file_id}/content", {"content": PDF}),
         ("POST", f"/v1/media/files/{file_id}/confirm", {}),
         ("GET", f"/v1/media/files/{file_id}/download", {}),
-        ("GET", f"/v1/media/files/{file_id}/content", {}),
         ("GET", f"/v1/tasks/{task_id}/attachments", {}),
         ("DELETE", f"/v1/tasks/{task_id}/attachments/{file_id}", {}),
         ("DELETE", f"/v1/tasks/{own_task}/attachments/{file_id}", {}),

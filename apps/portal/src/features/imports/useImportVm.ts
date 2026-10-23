@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { storeFetch } from "@tadas/client";
+import { uploadFile, UploadStopped } from "@tadas/client";
+import { api } from "../../app/api";
 import { errorMessage } from "../../app/errorMessage";
-import { mediaCalls } from "../../queries/attachments";
 import { useBilling } from "../../queries/billing";
 import { importCalls, useCancelImport, useRecentImports, useResumeImport } from "../../queries/imports";
 import { keys } from "../../queries/keys";
@@ -15,10 +15,7 @@ import { activeTasksLimit, importCard, shownImports } from "./importModel";
 
 const effects: ImportEffects = {
   startFile: importCalls.startFile,
-  issueUpload: mediaCalls.issueUpload,
-  postToStore: (url, form) => storeFetch(url, { method: "POST", body: form }),
-  putContent: mediaCalls.putContent,
-  confirm: mediaCalls.confirm,
+  send: (file, fileId, contentType) => uploadFile(api, file, { fileId, contentType }),
   start: importCalls.start,
 };
 
@@ -35,6 +32,8 @@ export function useImportVm(canWrite: boolean) {
   const openUpgrade = useUpgradeStore((s) => s.open);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [picked, setPicked] = useState<File | null>(null);
+  // The upload of the picked file that stopped: starting again goes on with it.
+  const [stoppedId, setStoppedId] = useState<string | undefined>(undefined);
   const [starting, setStarting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   // The import whose Cancel asks before it ends it: a cancel is final.
@@ -58,6 +57,7 @@ export function useImportVm(canWrite: boolean) {
 
   const openDialog = () => {
     setPicked(null);
+    setStoppedId(undefined);
     setFailure(null);
     setDialogOpen(true);
   };
@@ -71,10 +71,16 @@ export function useImportVm(canWrite: boolean) {
     setStarting(true);
     setFailure(null);
     try {
-      await startImport({ name: picked.name, type: picked.type, size: picked.size, bytes: picked }, effects);
+      await startImport(picked, effects, stoppedId);
+      setStoppedId(undefined);
       setDialogOpen(false);
     } catch (caught) {
-      setFailure(errorMessage(caught, `Could not import ${picked.name}.`));
+      if (caught instanceof UploadStopped) {
+        setStoppedId(caught.fileId);
+        setFailure(`${picked.name} stopped uploading. Start again to send the rest.`);
+      } else {
+        setFailure(errorMessage(caught, `Could not import ${picked.name}.`));
+      }
     } finally {
       setStarting(false);
       refresh();
@@ -114,6 +120,7 @@ export function useImportVm(canWrite: boolean) {
     picked,
     pick: (file: File | null) => {
       setPicked(file);
+      setStoppedId(undefined);
       setFailure(null);
     },
     starting,

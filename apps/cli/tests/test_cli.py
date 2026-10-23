@@ -5,6 +5,8 @@ files, JSON output, and the exit codes."""
 import asyncio
 import json
 from pathlib import Path
+from urllib.parse import parse_qs
+from uuid import UUID
 
 import httpx
 import pytest
@@ -16,6 +18,7 @@ from typer.testing import CliRunner
 from tadas.apps.cli import config, main
 from tadas.client.client import ApiClient
 from tadas.client.transport import ApiError
+from tadas.infra.buckets import PART_BYTES
 from tadas.om.base import new_id, utcnow
 from tadas.om.context import Role
 from tadas.om.tasks.types.task import Task
@@ -720,33 +723,101 @@ def test_switch_needs_a_kept_session(stack: Stack) -> None:
 def test_a_file_is_attached_listed_downloaded_and_detached(
     stack: Stack, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The whole round over the in-process API, whose local store cannot sign a
-    form: the client moves the bytes through the API instead, held to the
-    same bounds."""
+    """The whole round over the in-process API: a multipart upload whose parts
+    go straight to the store by their signed URLs, read from the file a chunk
+    at a time, and a download straight from the store. No request to the API
+    carries the file's bytes."""
     added = stack.tadas("add", "Read the spec", "--json")
     task_id = json.loads(added.output)["id"]
+    data = bytes(range(256)) * (PART_BYTES // 256) + b"%PDF the rest"
     spec = tmp_path / "spec.pdf"
-    spec.write_bytes(b"%PDF-1.7 the spec")
+    spec.write_bytes(data)
     attached = stack.tadas("attach", task_id[-8:], str(spec))
     assert attached.exit_code == 0, attached.output
-    assert attached.output.endswith("  spec.pdf (17 B)\n")
+    assert attached.output.endswith("  spec.pdf (8.0 MB)\n")
     file_short = attached.output.split()[1]
+    puts = [r for r in stack.store.sent if r.method == "PUT"]
+    assert [(parse_qs(r.url.query.decode())["partNumber"], len(r.content)) for r in puts] == [
+        (["1"], PART_BYTES),
+        (["2"], len(data) - PART_BYTES),
+    ]
+    assert all(r.headers["content-length"] == str(len(r.content)) for r in puts)
+    moved = [
+        (r.method, r.url.path.rsplit("/", 1)[-1])
+        for r in stack.api.sent
+        if r.method == "POST" and ("/attachments" in r.url.path or "/media/" in r.url.path)
+    ]
+    assert moved == [
+        ("POST", "attachments"),
+        ("POST", "upload"),
+        ("POST", "upload"),
+        ("POST", "confirm"),
+    ]
+    assert max(len(r.content) for r in stack.api.sent) < 200, (
+        "no request to the API carries the file"
+    )
 
     listed = stack.tadas("attachments", task_id[-8:])
     assert listed.exit_code == 0, listed.output
     header, line = listed.output.splitlines()
     assert header.split() == ["ID", "SIZE", "TYPE", "NAME"]
-    assert line.split() == [file_short, "17", "B", "application/pdf", "spec.pdf"]
+    assert line.split() == [file_short, "8.0", "MB", "application/pdf", "spec.pdf"]
 
     monkeypatch.chdir(tmp_path)
     out = tmp_path / "copy.pdf"
     fetched = stack.tadas("download", task_id[-8:], file_short, "--out", str(out))
     assert fetched.exit_code == 0, fetched.output
-    assert out.read_bytes() == b"%PDF-1.7 the spec"
+    assert out.read_bytes() == data
+    assert [r.method for r in stack.store.sent][-1] == "GET", "straight from the store"
 
     detached = stack.tadas("detach", task_id[-8:], file_short)
     assert detached.exit_code == 0 and detached.output == f"detached {file_short}  spec.pdf\n"
     assert stack.tadas("attachments", task_id, "--json").output.strip() == "[]"
+
+
+def test_an_attachment_that_stopped_resumes_with_only_the_missing_parts(
+    stack: Stack, tmp_path: Path
+) -> None:
+    """The wire drops on the second part. The command says how to go on, and
+    `--resume` sends the second and the third under the same upload, never
+    the first again. A resume names an upload of this task, of this file's
+    size."""
+    task_id = json.loads(stack.tadas("add", "Read the spec", "--json").output)["id"]
+    data = bytes(range(256)) * (2 * PART_BYTES // 256) + b"%PDF tail"
+    spec = tmp_path / "spec.pdf"
+    spec.write_bytes(data)
+    stack.store.cut_at = 2
+    stopped = stack.tadas("attach", task_id[-8:], str(spec))
+    assert stopped.exit_code == main.EXIT_UNREACHABLE, stopped.output
+    hint = next(line for line in stopped.output.splitlines() if "--resume" in line)
+    file_id = hint.split("--resume ")[1].split("`")[0]
+    stack.store.cut_at = None
+    elsewhere = json.loads(stack.tadas("add", "Another", "--json").output)["id"]
+    foreign = stack.tadas("attach", elsewhere[-8:], str(spec), "--resume", file_id)
+    assert foreign.exit_code == main.EXIT_USAGE, foreign.output
+    resumed = stack.tadas("attach", task_id[-8:], str(spec), "--resume", file_id)
+    assert resumed.exit_code == 0, resumed.output
+    assert resumed.output.endswith("  spec.pdf (16.0 MB)\n")
+    numbers = [
+        parse_qs(r.url.query.decode())["partNumber"][0]
+        for r in stack.store.sent
+        if r.method == "PUT"
+    ]
+    assert numbers == ["1", "2", "2", "3"], "the first part is sent once"
+    ids = {
+        parse_qs(r.url.query.decode())["uploadId"][0] for r in stack.store.sent if r.method == "PUT"
+    }
+    assert len(ids) == 1, "one upload, resumed under its id"
+
+    async def stored() -> bytes:
+        async with stack.client(stack.auth_session_token(BOB["email"])) as as_bob:
+            return await as_bob.download(UUID(file_id))
+
+    assert asyncio.run(stored()) == data
+    other = tmp_path / "other.pdf"
+    other.write_bytes(b"%PDF short")
+    mismatched = stack.tadas("attach", task_id[-8:], str(other), "--resume", file_id)
+    assert mismatched.exit_code == main.EXIT_USAGE, mismatched.output
 
 
 def test_a_file_of_a_type_no_task_takes_is_refused(stack: Stack, tmp_path: Path) -> None:

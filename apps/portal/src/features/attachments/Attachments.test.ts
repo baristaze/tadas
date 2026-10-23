@@ -11,9 +11,14 @@ const vm: AttachmentsVm = {
     { id: "f2", name: "photo.png", size: "2.0 MB", kind: "PNG", contentType: "image/png", preview: "image" },
   ],
   hasMore: false,
-  uploading: [{ key: "k1", name: "big.zip", size: "20.0 MB" }],
+  uploading: [
+    { key: "k1", name: "big.zip", size: "20.0 MB", file: new File([], "big.zip") },
+    { key: "k2", name: "film.mp4", size: "90.0 MB", file: new File([], "film.mp4"), stoppedId: "f9" },
+  ],
   busyId: null,
   upload: vi.fn(async () => undefined),
+  resume: vi.fn(async () => undefined),
+  dismiss: vi.fn(),
   download: vi.fn(async () => undefined),
   destroy: vi.fn(async () => undefined),
 };
@@ -45,6 +50,16 @@ it("lists each file with its name, size, and type, and the uploads in flight", a
   expect(vm.download).toHaveBeenCalledWith("f2");
   buttons("remove")[0]!.click();
   expect(vm.destroy).toHaveBeenCalledWith("f1");
+});
+
+it("offers to resume an upload that stopped, or to let it go", async () => {
+  await act(async () => root.render(createElement(Attachments, { taskId: "t1", canWrite: true })));
+  expect(container.textContent).toContain("film.mp4stopped, 90.0 MB");
+  expect(buttons("resume")).toHaveLength(1);
+  buttons("resume")[0]!.click();
+  expect(vm.resume).toHaveBeenCalledWith("k2");
+  buttons("dismiss")[0]!.click();
+  expect(vm.dismiss).toHaveBeenCalledWith("k2");
 });
 
 it("uploads what is chosen in the picker", async () => {

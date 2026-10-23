@@ -45,6 +45,7 @@ from tadas.apps.cli.model import (
 from tadas.client.client import ApiClient
 from tadas.client.realtime import ChannelRefused
 from tadas.client.transport import UNSET, ApiError, Unset
+from tadas.client.types.media import FileView
 from tadas.client.types.tasks import TaskScope, TaskStatus, TaskView
 from tadas.client.types.tenancy import IssuedAuthSessionView, IssuedLoginView, UserView
 
@@ -609,18 +610,49 @@ def attach(
     content_type: Annotated[
         str | None, typer.Option("--type", help="Its type, else guessed from the name.")
     ] = None,
+    resume: Annotated[
+        UUID | None,
+        typer.Option("--resume", help="The id of an attachment of this file whose upload stopped."),
+    ] = None,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
-    """Attach a file to a task. The bytes go straight to the store."""
+    """Attach a file to a task. Its parts go straight to the store, read from
+    the file a chunk at a time, and never through the API. An upload that
+    stopped goes on with `--resume`, which sends only the parts the store
+    does not hold."""
     kind = content_type or mimetypes.guess_type(path.name)[0]
-    if kind is None:
+    if kind is None and resume is None:
         _fail(f"cannot tell the type of {path.name}; give --type", EXIT_USAGE)
-    data = path.read_bytes()
+    size = path.stat().st_size
+
+    async def begin(client: ApiClient, task_id: UUID) -> FileView:
+        """The attachment this command uploads: a new one, or the one it
+        resumes, which must be this task's and of this file's size."""
+        if resume is None:
+            return await client.start_attachment(task_id, path.name, kind or "", size)
+        started = await client.file(resume)
+        if started.subject_id != task_id:
+            _fail(f"upload {resume} is not an attachment of this task", EXIT_USAGE)
+        if started.size_bytes != size:
+            _fail(
+                f"{path.name} is {size} bytes; upload {resume} is of {started.size_bytes}",
+                EXIT_USAGE,
+            )
+        return started
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
-        file = await client.attach(task.id, path.name, kind, data)
+        started = await begin(client, task.id)
+        try:
+            file = await client.upload(started, path)
+        except ApiError, httpx.TransportError:
+            typer.echo(
+                f"the upload of {path.name} stopped; "
+                f"`tadas attach {ref} {path} --resume {started.id}` sends the rest",
+                err=True,
+            )
+            raise
         if as_json:
             typer.echo(file.model_dump_json(indent=2))
         else:

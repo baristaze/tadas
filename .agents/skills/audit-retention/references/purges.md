@@ -90,7 +90,7 @@ Across tenants, once a pass:
 | slack | `purge` | deleted installations, expired or redeemed install states, recorded posts | `slack_retention_days`, 30 |
 | orchestrations | `purge_settled` | settled records | the options' `retention`, 30 days |
 | leases | `purge_settled` | ended leases; settled requests; retired leasable resources no lease holds | the options' `retention`, 30 days |
-| media | `read_purgeable`, then `purge_files_across_tenants` | a deleted file's object and row; an upload never confirmed | `media_retention_days`, 1; `media_pending_expiry_hours`, 24 |
+| media | `read_purgeable`, then `purge_files_across_tenants` | a deleted file's object and row; an upload never confirmed, its parts in the store aborted | `media_retention_days`, 1; `media_pending_expiry_hours`, 24 |
 | outbox | `purge_done` | relayed rows, and rows that failed for good, in two statements | `outbox_retention_days`, 8 |
 | work | `purge_items` | done and failed items | `work_retention_days`, 30 |
 

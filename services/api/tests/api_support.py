@@ -1,7 +1,7 @@
-"""Helpers the API tests share: the test container and the sign-in flow,
+"""Helpers the API tests share: the test container, the sign-in flow,
 which goes through the identity provider's twin as the portal's goes through
-the provider: the twin issues the code a browser brings back, and the
-callback route exchanges it."""
+the provider (the twin issues the code a browser brings back, and the
+callback route exchanges it), and a lease to hold."""
 
 import asyncio
 import base64
@@ -10,20 +10,22 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
+from store_support import local_store
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.impl.configured import IntegrationsOverImpl, payments_for, slack_for
 from tadas.integrations.root import IntegrationsInterface
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.impl.manager import BillingOptions, cached_accounts
 from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.plan import Plan
 from tadas.om.context import AppContext, AppType, OperatorRole, RequestContext, Role
+from tadas.om.leases.types.leasable_resource import LeasableResource, LeasableResourceKind
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tenancy.rules import totp_code, totp_step
@@ -304,6 +306,44 @@ async def enrolled_sign_in(
     return bearer(login.json()["token"]), secret
 
 
+async def a_dock(container: AppContainer, org_id: UUID, *labels: str) -> LeasableResource:
+    """A resource its owner namespace registers, as no route does."""
+    ctx = await container.managers.tenancy.service_context(seed_request(), org_id, EMPTY_UUID)
+    now = utcnow()
+    return await container.managers.leases.register(
+        ctx,
+        LeasableResource(
+            id=new_id(), created_at=now, updated_at=now, created_by=EMPTY_UUID,
+            updated_by=EMPTY_UUID, kind=LeasableResourceKind.NOOP, ref_id=new_id(), labels=labels,
+        ),
+    )  # fmt: skip
+
+
+async def ask(
+    client: httpx.AsyncClient, headers: dict[str, str], key: str | None = None, **body: Any
+) -> httpx.Response:
+    return await client.post(
+        "/v1/leases/requests",
+        headers={**headers, "Idempotency-Key": key or str(uuid4())},
+        json={"kind": "noop", **body},
+    )
+
+
+async def a_held_lease(
+    client: httpx.AsyncClient, container: AppContainer, headers: dict[str, str]
+) -> str:
+    """The id of a lease the caller holds: a resource of the caller's org,
+    asked for and granted at once, since no one waits for it. The org is read
+    from the credential, not from a route, so no budget but the ask's write
+    is spent."""
+    token = headers["Authorization"].removeprefix("Bearer ")
+    ctx = await container.managers.tenancy.authenticate(seed_request(), token)
+    dock = await a_dock(container, ctx.org_id)
+    granted = await ask(client, headers, leasable_resource_id=str(dock.id))
+    assert granted.status_code == 201, granted.text
+    return str(granted.json()["lease"]["id"])
+
+
 SMALL_BUDGET = 5
 """A rate limit's budget in a test that spends it: the settings' own is
 sized for a crowd behind one address, far past what a test should send."""
@@ -325,3 +365,59 @@ async def client_over(container: AppContainer) -> AsyncIterator[httpx.AsyncClien
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
     """For the few sync tests that need a manager call before the app runs."""
     return asyncio.run(coro)
+
+
+async def send_parts(container: AppContainer, issued: dict[str, Any], data: bytes) -> list[int]:
+    """Each part an issue answered, its slice of `data` PUT straight to the
+    local store by its signed URL, as a browser sends it, and never through
+    the API. Answers the numbers it sent."""
+    sent: list[int] = []
+    async with local_store(container.infra.get_buckets()) as store:
+        for part in issued["parts"]:
+            body = data[part["offset"] : part["offset"] + part["size_bytes"]]
+            put = await store.put(part["url"], content=body)
+            assert put.status_code == 200, put.text
+            sent.append(part["number"])
+    return sent
+
+
+async def send_upload(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    headers: dict[str, str],
+    file_id: str,
+    data: bytes,
+) -> None:
+    """The bytes of a started upload: ask for the parts the store does not
+    hold, send each straight to the store, and ask again until none is
+    missing. The confirm is the caller's."""
+    while True:
+        issued = await client.post(f"/v1/media/files/{file_id}/upload", headers=headers)
+        assert issued.status_code == 200, issued.text
+        if not issued.json()["parts"]:
+            return
+        await send_parts(container, issued.json(), data)
+
+
+async def upload_file(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    headers: dict[str, str],
+    data: bytes,
+    *,
+    name: str = "report.pdf",
+    content_type: str = "application/pdf",
+) -> dict[str, Any]:
+    """The whole flow a client makes: start, ask for the parts, send each
+    straight to the store, ask again until none is missing, confirm."""
+    started = await client.post(
+        "/v1/media/files",
+        headers={**headers, "Idempotency-Key": str(new_id())},
+        json={"name": name, "content_type": content_type, "size_bytes": len(data)},
+    )
+    assert started.status_code == 201, started.text
+    file_id = started.json()["id"]
+    await send_upload(client, container, headers, file_id, data)
+    confirmed = await client.post(f"/v1/media/files/{file_id}/confirm", headers=headers)
+    assert confirmed.status_code == 200, confirmed.text
+    return confirmed.json()

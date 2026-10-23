@@ -21,6 +21,7 @@ from api_support import (
     on_plan,
     run,
     seed_request,
+    send_upload,
     sign_in_as,
 )
 from starlette.testclient import TestClient
@@ -89,17 +90,20 @@ class Tenant:
 
 
 async def stored_file(
-    client: httpx.AsyncClient, headers: dict[str, str], task_id: str, name: str
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    headers: dict[str, str],
+    task_id: str,
+    name: str,
 ) -> str:
-    """An upload started on a task, its bytes moved, and confirmed: a file the
-    task's attachments show."""
+    """An upload started on a task, its parts sent to the store, and
+    confirmed: a file the task's attachments show."""
     started = await client.post(
         f"/v1/tasks/{task_id}/attachments", headers=headers, json={**UPLOAD, "name": name}
     )
     assert started.status_code == 201, started.text
     file_id = started.json()["id"]
-    put = await client.put(f"/v1/media/files/{file_id}/content", headers=headers, content=PDF)
-    assert put.status_code == 200, put.text
+    await send_upload(client, container, headers, file_id, PDF)
     confirmed = await client.post(f"/v1/media/files/{file_id}/confirm", headers=headers)
     assert confirmed.status_code == 200, confirmed.text
     return file_id
@@ -149,7 +153,9 @@ async def seed_tenant(
     )
     assert carried.status_code == 200 and carried.json()["status"] == "done", carried.text
     for index in range(2):
-        files.append(await stored_file(client, headers, done_task_id, f"{slug}-{index}.pdf"))
+        files.append(
+            await stored_file(client, container, headers, done_task_id, f"{slug}-{index}.pdf")
+        )
     pending = await client.post(
         f"/v1/tasks/{done_task_id}/attachments", headers=headers, json=UPLOAD
     )
@@ -239,11 +245,9 @@ def by_id_routes(other: Tenant) -> list[tuple[str, str, dict[str, Any]]]:
         ("DELETE", f"/v1/invitations/{other.invitation_ids[0]}", {}),
         ("GET", f"/v1/media/files/{stored}", {}),
         ("GET", f"/v1/media/files/{stored}/download", {}),
-        ("GET", f"/v1/media/files/{stored}/content", {}),
         ("DELETE", f"/v1/tasks/{other.done_task_id}/attachments/{stored}", {}),
         ("GET", f"/v1/media/files/{pending}", {}),
         ("POST", f"/v1/media/files/{pending}/upload", {}),
-        ("PUT", f"/v1/media/files/{pending}/content", {"content": PDF}),
         ("POST", f"/v1/media/files/{pending}/confirm", {}),
     ]
 

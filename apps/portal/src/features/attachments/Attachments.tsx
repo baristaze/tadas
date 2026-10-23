@@ -80,7 +80,15 @@ export function Attachments({ taskId, canWrite }: { taskId: string; canWrite: bo
         {vm.uploading.map((u) => (
           <li key={u.key} style={{ listStyle: "none", display: "flex", gap: tokens.space.sm }}>
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name}</span>
-            <Muted style={{ fontSize: tokens.font.size.sm }}>uploading {u.size}</Muted>
+            {u.stoppedId ? (
+              <>
+                <Muted style={{ fontSize: tokens.font.size.sm }}>stopped, {u.size}</Muted>
+                <LinkButton onClick={() => void vm.resume(u.key)}>resume</LinkButton>
+                <LinkButton onClick={() => vm.dismiss(u.key)}>dismiss</LinkButton>
+              </>
+            ) : (
+              <Muted style={{ fontSize: tokens.font.size.sm }}>uploading {u.size}</Muted>
+            )}
           </li>
         ))}
       </ul>

@@ -127,9 +127,9 @@ async def change_tasks(
 async def create_import_file(
     ctx: Ctx, tasks: TasksService, body: AddFileRequest, idem: Idem
 ) -> Response:
-    """Starts the upload of a CSV file to import (`text/csv`, a `.csv` name, at
-    most 1 MB). Then `POST /v1/media/files/{id}/upload`, the form, and
-    `POST /v1/media/files/{id}/confirm`."""
+    """Starts the multipart upload of a CSV file to import (`text/csv`, a
+    `.csv` name, at most 1 MB). Then `POST /v1/media/files/{id}/upload`, the
+    parts straight to the store, and `POST /v1/media/files/{id}/confirm`."""
     return await idem.run(
         201, lambda attempt: tasks.create_import_file(ctx, body, attempt.target_id)
     )
@@ -234,6 +234,9 @@ async def list_attachments(
 async def attach_file(
     ctx: Ctx, tasks: TasksService, task_id: UUID, body: AddFileRequest, idem: Idem
 ) -> Response:
+    """A pending attachment, with the store's multipart upload of it started
+    and nothing in the store yet: `POST /v1/media/files/{id}/upload` signs
+    the parts, which go straight to the store, and the confirm follows."""
     return await idem.run(
         201, lambda attempt: tasks.attach_file(ctx, task_id, body, attempt.target_id)
     )

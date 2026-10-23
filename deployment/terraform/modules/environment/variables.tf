@@ -110,6 +110,11 @@ variable "database_pool_size" {
   type        = number
 }
 
+variable "database_pool_reserve" {
+  description = "Connections beside each of a serving process's pools that only a holder's call takes when the pool is full (TADAS_DATABASE_POOL_RESERVE): a lease's renewal or release. Only a service that serves such a call opens it, so the connection budget counts the reserve for that service's replicas alone (deployment/cloud/README.md)."
+  type        = number
+}
+
 variable "cache_node_type" {
   type = string
 }

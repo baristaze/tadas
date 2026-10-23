@@ -66,6 +66,7 @@ class Stack:
             relay,
             no_slack(),
             TasksOptions(),
+            buckets=infra.get_buckets(),
             entitlements=plan,
             orchestrations=orchestrations_of(
                 OrchestrationsStorageMemoryImpl(), self.members, relay

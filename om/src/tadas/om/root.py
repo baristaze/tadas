@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+from tadas.infra.buckets import BucketsInterface
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.read import ReadCache
 from tadas.infra.root import InfraInterface
@@ -208,6 +209,7 @@ def build_managers(
         outbox,
         slack,
         tasks_options or TasksOptions(),
+        buckets=infra.get_buckets(),
         entitlements=billing,
         orchestrations=orchestrations,
     )
@@ -482,13 +484,15 @@ def build_tasks(
     slack: SlackManagerInterface,
     options: TasksOptions,
     *,
+    buckets: BucketsInterface,
     entitlements: EntitlementsInterface,
     orchestrations: OrchestrationsManagerInterface,
 ) -> TasksManagerInterface:
     """The tasks manager with its delegates, each built here and handed to
     it, as `build_tenancy` builds the tenancy manager's. `entitlements` is
-    what the plan's bound on active tasks is read from, and `orchestrations`
-    keeps the records of an import and of a cleanup."""
+    what the plan's bound on active tasks is read from, `orchestrations`
+    keeps the records of an import and of a cleanup, and `buckets` is the
+    store an import reads its stored file from."""
     # An attachment is a live task's, and the read of one is the manager's.
     # The manager holds this delegate, so that one edge is bound at call time.
     attachments = TasksAttachmentsManagerImpl(
@@ -500,6 +504,7 @@ def build_tasks(
         media,
         relay,
         options,
+        buckets=buckets,
         entitlements=entitlements,
         orchestrations=orchestrations,
     )
