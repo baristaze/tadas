@@ -1,70 +1,50 @@
 // The two flows that move a file's bytes, with their effects handed in, so
 // each runs in a test without React, the network, or a browser download.
 //
-// An upload starts on the API, posts the bytes straight to the store with the
-// form the API signed (every field in order, then the file, last, named
-// `file`), and is confirmed on the API, which looks for the object before it
-// says stored. When the store cannot take a post (the form has no URL), the
-// bytes go through the API instead, held to the same bounds. A download
-// follows the link the API signed, or reads the bytes through the API when
-// there is no link.
+// An upload starts on the task, then goes the one way a file goes: a
+// multipart upload whose parts go straight to the store, each a slice of the
+// file PUT to the URL the API signed for its length, then the confirm. An
+// upload that stopped goes on under its file's id, and the store is sent only
+// the parts it does not hold. A download follows the link the API signed,
+// straight from the store. No byte of a file crosses the API.
 import type { media } from "@tadas/client";
 import { contentTypeOf } from "./attachmentsModel";
 
-/** The store answered, and not with a success: the form refused the body
- * (too large, another type) or the link has expired. */
+/** The store answered a download, and not with a success: the link has
+ * expired, or the object is gone. */
 export class StoreRefused extends Error {
   constructor(readonly status: number) {
-    super(
-      status === 400
-        ? "The store refused the file: it is larger than it said."
-        : `The store refused the transfer (HTTP ${status}).`,
-    );
+    super(`The store refused the transfer (HTTP ${status}).`);
     this.name = "StoreRefused";
   }
 }
 
 export interface UploadEffects {
   start(taskId: string, body: media.AddFileRequest): Promise<media.FileView>;
-  issueUpload(fileId: string): Promise<media.IssuedUploadView>;
-  postToStore(url: string, form: FormData): Promise<{ ok: boolean; status: number }>;
-  putContent(fileId: string, bytes: Blob, contentType: string): Promise<media.FileView>;
-  confirm(fileId: string): Promise<media.FileView>;
+  /** The parts of a started upload the store does not hold, straight to the
+   * store, then its confirm: the client's `uploadFile`, which throws
+   * `UploadStopped` with the file's id when the upload stops. */
+  send(file: File, fileId: string, contentType: string): Promise<media.FileView>;
 }
 
-export interface Picked {
-  name: string;
-  type: string;
-  size: number;
-  bytes: Blob;
-}
-
-export function storeForm(upload: media.IssuedUploadView, file: Picked, contentType: string): FormData {
-  const form = new FormData();
-  for (const field of upload.fields) form.append(field.name, field.value);
-  // The file is the last field: the store reads the fields before it and
-  // ignores any after.
-  form.append("file", new Blob([file.bytes], { type: contentType }), file.name);
-  return form;
-}
-
-export async function uploadAttachment(taskId: string, file: Picked, effects: UploadEffects): Promise<media.FileView> {
+/** A task's attachment: started on the task and sent, or, given the id of an
+ * upload that stopped, sent on from where it stopped. */
+export async function uploadAttachment(
+  taskId: string,
+  file: File,
+  effects: UploadEffects,
+  stoppedId?: string,
+): Promise<media.FileView> {
   const contentType = contentTypeOf(file.name, file.type);
-  const started = await effects.start(taskId, { name: file.name, content_type: contentType, size_bytes: file.size });
-  const upload = await effects.issueUpload(started.id);
-  if (upload.url === null) {
-    await effects.putContent(started.id, file.bytes, contentType);
-  } else {
-    const posted = await effects.postToStore(upload.url, storeForm(upload, file, contentType));
-    if (!posted.ok) throw new StoreRefused(posted.status);
-  }
-  return effects.confirm(started.id);
+  const fileId =
+    stoppedId ??
+    (await effects.start(taskId, { name: file.name, content_type: contentType, size_bytes: file.size })).id;
+  return effects.send(file, fileId, contentType);
 }
 
 export interface DownloadEffects {
   issueDownload(fileId: string): Promise<media.IssuedDownloadView>;
   fetchFromStore(url: string): Promise<{ ok: boolean; status: number; blob(): Promise<Blob> }>;
-  getContent(fileId: string): Promise<Blob>;
   save(blob: Blob, name: string): void;
 }
 
@@ -73,15 +53,9 @@ export interface DownloadEffects {
  * object by its id. */
 export async function downloadAttachment(file: media.FileView, effects: DownloadEffects): Promise<void> {
   const link = await effects.issueDownload(file.id);
-  let blob: Blob;
-  if (link.url === null) {
-    blob = await effects.getContent(file.id);
-  } else {
-    const fetched = await effects.fetchFromStore(link.url);
-    if (!fetched.ok) throw new StoreRefused(fetched.status);
-    blob = await fetched.blob();
-  }
-  effects.save(blob, file.name);
+  const fetched = await effects.fetchFromStore(link.url);
+  if (!fetched.ok) throw new StoreRefused(fetched.status);
+  effects.save(await fetched.blob(), file.name);
 }
 
 /** Hands a blob to the browser as a download under `name`. */

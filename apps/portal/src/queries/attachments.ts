@@ -16,37 +16,28 @@ export function useAttachments(taskId: string, enabled = true) {
   });
 }
 
-/** The API calls an upload and a download are made of. The flows in
+/** The API calls an upload starts with and a download asks for. The parts
+ * and the confirm are the client's `uploadFile`; the flows in
  * `features/attachments/transfer.ts` take these as their effects. */
 export const mediaCalls = {
   start: (taskId: string, body: media.AddFileRequest) =>
     api.post<media.FileView>(`/v1/tasks/${taskId}/attachments`, body, { idempotencyKey: crypto.randomUUID() }),
-  issueUpload: (fileId: string) => api.post<media.IssuedUploadView>(`/v1/media/files/${fileId}/upload`),
-  putContent: (fileId: string, bytes: Blob, contentType: string) =>
-    api.putBytes<media.FileView>(`/v1/media/files/${fileId}/content`, bytes, contentType),
-  confirm: (fileId: string) => api.post<media.FileView>(`/v1/media/files/${fileId}/confirm`),
   issueDownload: (fileId: string, inline = false) =>
     api.get<media.IssuedDownloadView>(`/v1/media/files/${fileId}/download${inline ? "?inline=true" : ""}`),
-  getContent: (fileId: string, inline = false) =>
-    api.getBlob(`/v1/media/files/${fileId}/content${inline ? "?inline=true" : ""}`),
 };
 
 /** A preview link lives five minutes on the server; it is signed again
  * before it runs out, and never while it is fresh. */
 const PREVIEW_FRESH_MS = 4 * 60 * 1000;
 
-/** The URL a preview loads: the store's short-lived inline link, or, where
- * the store cannot sign one, the bytes through the API as an object URL. */
+/** The URL a preview loads: the store's short-lived inline link. */
 export function usePreviewUrl(fileId: string, enabled: boolean) {
   return useQuery({
     queryKey: keys.files.preview(fileId),
     enabled,
     staleTime: PREVIEW_FRESH_MS,
     refetchInterval: PREVIEW_FRESH_MS,
-    queryFn: async () => {
-      const link = await mediaCalls.issueDownload(fileId, true);
-      return link.url ?? URL.createObjectURL(await mediaCalls.getContent(fileId, true));
-    },
+    queryFn: async () => (await mediaCalls.issueDownload(fileId, true)).url,
   });
 }
 

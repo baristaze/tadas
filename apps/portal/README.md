@@ -110,22 +110,26 @@ sign-in, the org chip and switch, settings, and one realtime channel.
   counts them, "You missed 5 reminders while you were away"
   (`reminder.ts`, ADR 0075).
 - A task's files are `src/features/attachments/`, shown in the task's
-  open view: dropped or picked, started on the API, posted straight to
-  the store, confirmed, listed with name, size, and type, downloaded and
+  open view: dropped or picked, started on the API, sent straight to the
+  store as a multipart upload, a part at a time by the URLs the API signed
+  (the client's `uploadFile`), confirmed, listed with name, size, and type,
+  downloaded straight from the store and
   saved under the file's own name, removed. Each file with a preview
   shows it inline, through the store's short-lived inline link: an image
   as a thumbnail that opens larger in the page, a video and a sound in
   the browser's player, a PDF in a frame; anything else (text, documents,
   archives) is download-only, and download stays beside every preview.
   Someone who cannot write opens a task's files read-only with its
-  `files` link. The flows (`transfer.ts`) take their effects as
-  arguments and run in a test without React. Where the store cannot
-  take a form, the bytes go through the API instead.
+  `files` link. An upload that stops stays listed with a resume, which
+  sends only the parts the store does not hold. The flows (`transfer.ts`)
+  take their effects as arguments and run in a test without React. No
+  byte of a file crosses the API.
 - An import is `src/features/imports/`: the tasks page's Import action (a
   button of its own beside the page's heading; the quick-add form stays one
   text box) opens a small dialog that picks a CSV file. The file goes up
-  the way an attachment does (`importFlow.ts`, its effects handed in), and
-  the import starts naming it. The rows are read in the worker; the page
+  the way an attachment does (`importFlow.ts`, its effects handed in): one
+  that stopped goes on when the person starts again. The import starts
+  naming it. The rows are read in the worker; the page
   follows the org's recent imports by what the channel pushes
   (`orchestrations.orchestration.updated`, whose entity keys
   `queries/imports.ts`), with no polling. A second import stacks beside

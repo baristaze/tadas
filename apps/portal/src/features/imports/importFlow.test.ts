@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { media, tasks } from "@tadas/client";
-import { StoreRefused } from "../attachments/transfer";
+import { UploadStopped, type media, type tasks } from "@tadas/client";
 import { CSV_TYPE, startImport, type ImportEffects } from "./importFlow";
 
 const FILE: media.FileView = {
@@ -35,29 +34,18 @@ const STARTED: tasks.ImportView = {
 };
 
 // Windows names a CSV file as Excel's; the import sends the one type it takes.
-const picked = { name: "tasks.csv", type: "application/vnd.ms-excel", size: 12, bytes: new Blob(["title\nShip\n"]) };
+const picked = new File(["title\nShip\n"], "tasks.csv", { type: "application/vnd.ms-excel" });
 
-function effectsFor(form: media.IssuedUploadView, storeStatus = 204) {
+function effectsFor(sendFails = false) {
   const calls: string[] = [];
   const effects: ImportEffects = {
     startFile: vi.fn(async (body) => {
       calls.push(`file ${body.name} ${body.content_type} ${body.size_bytes}`);
       return FILE;
     }),
-    issueUpload: vi.fn(async (fileId) => {
-      calls.push(`form ${fileId}`);
-      return form;
-    }),
-    postToStore: vi.fn(async (url) => {
-      calls.push(`post ${url}`);
-      return { ok: storeStatus < 300, status: storeStatus };
-    }),
-    putContent: vi.fn(async (fileId, _bytes, contentType) => {
-      calls.push(`put ${fileId} ${contentType}`);
-      return FILE;
-    }),
-    confirm: vi.fn(async (fileId) => {
-      calls.push(`confirm ${fileId}`);
+    send: vi.fn(async (file, fileId, contentType) => {
+      calls.push(`send ${file.name} ${fileId} ${contentType}`);
+      if (sendFails) throw new UploadStopped(fileId, "part 1 did not reach the store");
       return { ...FILE, status: "stored" as const };
     }),
     start: vi.fn(async (body) => {
@@ -68,35 +56,22 @@ function effectsFor(form: media.IssuedUploadView, storeStatus = 204) {
   return { effects, calls };
 }
 
-const signed: media.IssuedUploadView = {
-  url: "https://store.example.test/bucket",
-  fields: [{ name: "key", value: "org/media/task_import/f1" }],
-  expires_at: "2026-09-25T10:15:00Z",
-};
-
 describe("startImport", () => {
-  it("uploads the file to the store, confirms it, and starts its import", async () => {
-    const { effects, calls } = effectsFor(signed);
+  it("uploads the file's parts to the store, confirms it, and starts its import", async () => {
+    const { effects, calls } = effectsFor();
     expect(await startImport(picked, effects)).toEqual(STARTED);
-    expect(calls).toEqual([
-      "file tasks.csv text/csv 12",
-      "form f1",
-      "post https://store.example.test/bucket",
-      "confirm f1",
-      "import f1",
-    ]);
+    expect(calls).toEqual(["file tasks.csv text/csv 11", "send tasks.csv f1 text/csv", "import f1"]);
   });
 
-  it("sends the bytes through the API where the store takes no form", async () => {
-    const { effects, calls } = effectsFor({ url: null, fields: [], expires_at: signed.expires_at });
-    await startImport(picked, effects);
-    expect(calls).toContain("put f1 text/csv");
-    expect(calls).not.toContain("post https://store.example.test/bucket");
+  it("goes on with an upload that stopped and starts no other file", async () => {
+    const { effects, calls } = effectsFor();
+    await startImport(picked, effects, "f1");
+    expect(calls).toEqual(["send tasks.csv f1 text/csv", "import f1"]);
   });
 
-  it("starts nothing when the store refuses the file", async () => {
-    const { effects, calls } = effectsFor(signed, 400);
-    await expect(startImport(picked, effects)).rejects.toBeInstanceOf(StoreRefused);
+  it("starts no import when the upload stops", async () => {
+    const { effects, calls } = effectsFor(true);
+    await expect(startImport(picked, effects)).rejects.toBeInstanceOf(UploadStopped);
     expect(calls).not.toContain("import f1");
   });
 });
