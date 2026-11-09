@@ -383,17 +383,49 @@ def test_nuke_refuses_production_without_its_typed_name(tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+def _release_reading(tmp_path: Path, protection: str | None) -> str:
+    """A repository whose origin/release holds production's root reading
+    `database_deletion_protection = <protection>`, or, for None, a repository
+    with no origin/release. The script reads it through GIT_DIR, so a test
+    never depends on what this clone's own release branch says."""
+    repo = tmp_path / "repo"
+    root = repo / "deployment" / "terraform" / "environments" / "prod"
+    root.mkdir(parents=True)
+    (root / "main.tf").write_text(f"  database_deletion_protection = {protection or 'true'}\n")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@tadas.example"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "r"], check=True)
+    if protection is not None:
+        subprocess.run([*git, "update-ref", "refs/remotes/origin/release", "HEAD"], check=True)
+    return str(repo / ".git")
+
+
+@pytest.mark.parametrize("protection", ["true", None])
 def test_nuke_refuses_production_while_release_still_protects_the_database(
-    tmp_path: Path,
+    tmp_path: Path, protection: str | None
 ) -> None:
-    # Production applies release, and there the root reads
-    # database_deletion_protection = true, so the typed name alone is not
-    # enough. A checkout without origin/release refuses too, on the reading.
-    result = _run(NUKE, "production", "--confirm", "production", "--dry-run", home=tmp_path)
+    # Production applies release, so the typed name alone is not enough: the
+    # root there must read database_deletion_protection = false. A release
+    # that still reads true is refused, and so is a checkout without
+    # origin/release, on the reading.
+    git_dir = _release_reading(tmp_path, protection)
+    result = _run(
+        NUKE, "production", "--confirm", "production", "--dry-run", home=tmp_path, GIT_DIR=git_dir
+    )
     assert result.returncode == 2
     assert "refused" in result.stderr
     assert "origin/release" in result.stderr
     assert result.stdout == ""
+
+
+def test_nuke_dry_runs_production_once_release_lifts_the_protection(tmp_path: Path) -> None:
+    git_dir = _release_reading(tmp_path, "false")
+    result = _run(
+        NUKE, "production", "--confirm", "production", "--dry-run", home=tmp_path, GIT_DIR=git_dir
+    )
+    assert result.returncode == 0, result.stderr
+    assert "== 4. Destroy production" in result.stdout
 
 
 @pytest.mark.parametrize(

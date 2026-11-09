@@ -1,8 +1,7 @@
 # Production: the `release` branch's environment. The graph is
 # ../../modules/environment, the same one staging runs; this call is the
 # parameter set that makes it production. Nothing here differs from staging
-# but the numbers, the names, and the deletion protection a production
-# database carries.
+# but the numbers and the names.
 
 module "environment" {
   source    = "../../modules/environment"
