@@ -50,7 +50,7 @@ module "environment" {
   bucket_prefix                = "tadas-production"
   database_instance_class      = "db.t4g.small"
   database_multi_az            = false
-  database_deletion_protection = true
+  database_deletion_protection = false
   database_pool_size           = 10
   database_pool_reserve        = 2
   cache_node_type              = "cache.t4g.micro"
