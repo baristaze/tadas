@@ -1,8 +1,7 @@
 # Production: the `release` branch's environment. The graph is
 # ../../modules/environment, the same one staging runs; this call is the
 # parameter set that makes it production. Nothing here differs from staging
-# but the numbers, the names, and the deletion protection a production
-# database carries.
+# but the numbers and the names.
 
 module "environment" {
   source    = "../../modules/environment"
@@ -50,7 +49,7 @@ module "environment" {
   bucket_prefix                = "tadas-production"
   database_instance_class      = "db.t4g.small"
   database_multi_az            = false
-  database_deletion_protection = true
+  database_deletion_protection = false
   database_pool_size           = 10
   database_pool_reserve        = 2
   cache_node_type              = "cache.t4g.micro"
