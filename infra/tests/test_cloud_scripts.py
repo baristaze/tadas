@@ -1,7 +1,8 @@
 """The administrator's two scripts, dry-run and refused.
 
 No cloud is needed: a dry run prints every command instead of running it,
-and a refusal happens before any command. HOME is a temporary directory so a
+a refusal happens before any command, and a run past the dry run meets
+stand-ins for aws, git, and terraform. HOME is a temporary directory so a
 dry run that wrote a profile or an env file by mistake would be caught.
 """
 
@@ -426,6 +427,76 @@ def test_nuke_dry_runs_production_once_release_lifts_the_protection(tmp_path: Pa
     )
     assert result.returncode == 0, result.stderr
     assert "== 4. Destroy production" in result.stdout
+
+
+def _stubbed_cloud(tmp_path: Path, protection: bool | None) -> dict[str, str]:
+    """Stand-ins for aws, git, and terraform, so a real run of production's
+    destroy reaches its read of the applied state and stops at the apply.
+    The state holds production's task definitions and a database whose
+    deletion_protection is `protection`, or, for None, no database at all."""
+    resources: list[dict] = [
+        {
+            "type": "aws_ecs_task_definition",
+            "values": {"container_definitions": json.dumps([{"name": name, "image": f"{name}:1"}])},
+        }
+        for name in ("api", "maintenance")
+    ]
+    if protection is not None:
+        resources.append({"type": "aws_db_instance", "values": {"deletion_protection": protection}})
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps({"values": {"root_module": {"child_modules": [{"resources": resources}]}}})
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stubs = {
+        "aws": f'[ "$2" = get-caller-identity ] && echo {PRODUCTION["account_id"]}\n',
+        "git": (
+            'case "$1" in fetch) exit 0 ;; worktree) [ "$2" = add ] && mkdir -p "$5"; exit 0 ;; esac\n'
+            f'exec {shutil.which("git")} "$@"\n'
+        ),
+        "terraform": (
+            'case "$2" in\n'
+            "  init) exit 0 ;;\n"
+            "  state) echo module.environment.module.database.aws_db_instance.this ;;\n"
+            f"  show) cat {state} ;;\n"
+            "  output) exit 1 ;;\n"
+            '  apply) echo "applied"; exit 7 ;;\n'
+            "  *) exit 9 ;;\n"
+            "esac\n"
+        ),
+    }
+    for name, body in stubs.items():
+        stub = bin_dir / name
+        stub.write_text(f"#!/usr/bin/env bash\n{body}")
+        stub.chmod(0o755)
+    return {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "GIT_DIR": _release_reading(tmp_path, "false"),
+    }
+
+
+def test_nuke_goes_on_to_the_apply_once_production_state_reads_no_protection(
+    tmp_path: Path,
+) -> None:
+    # A database whose deletion_protection is false in the applied state
+    # passes the check: the run reaches its apply, where the stub stops it.
+    env = _stubbed_cloud(tmp_path, protection=False)
+    result = _run(NUKE, "production", "--confirm", "production", home=tmp_path, **env)
+    assert "refused" not in result.stderr, result.stderr
+    assert "applied" in result.stdout
+    assert result.returncode == 7
+
+
+@pytest.mark.parametrize(("protection", "reads"), [(True, "true"), (None, "missing")])
+def test_nuke_refuses_production_while_its_state_still_protects_the_database(
+    tmp_path: Path, protection: bool | None, reads: str
+) -> None:
+    env = _stubbed_cloud(tmp_path, protection)
+    result = _run(NUKE, "production", "--confirm", "production", home=tmp_path, **env)
+    assert result.returncode == 2
+    assert f"deletion_protection = {reads}" in result.stderr
+    assert "applied" not in result.stdout
 
 
 @pytest.mark.parametrize(
