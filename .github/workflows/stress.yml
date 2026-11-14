@@ -135,7 +135,7 @@ jobs:
           done
           [ -n "${PROVISIONER_EMAIL:-}" ] || {
             echo "::error::the staging environment's PROVISIONER_EMAIL is empty. Grant the provisioner with grant-operator.yml, then set the variable: gh variable set PROVISIONER_EMAIL --env staging --body <email>"; exit 1; }
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - run: uv sync --all-packages
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
