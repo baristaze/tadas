@@ -250,8 +250,10 @@ fi
 if [ "$environment" = "production" ] && ! $root_destroyed; then
   say "+ terraform -chdir=$root_dir show -json  (expect the database's deletion_protection false)"
   if ! $dry_run; then
+    # jq's `//` takes false for absent, so only null reads as missing.
     protected="$(terraform -chdir="$root_dir" show -json | jq -r '
-      [.. | objects | select(.type? == "aws_db_instance") | .values.deletion_protection] | first // "missing"')"
+      [.. | objects | select(.type? == "aws_db_instance") | .values.deletion_protection]
+      | first | if . == null then "missing" else tostring end')"
     [ "$protected" = "false" ] || refuse "production's database in state reads deletion_protection = $protected; the release that lifts it has not applied yet"
   fi
 fi
